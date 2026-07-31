@@ -1,10 +1,10 @@
 import os
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import QEvent
-from PyQt6.QtGui import QPaintEvent
 from PyQt6.QtWidgets import QApplication
 
 from kotonoha.config import Config
@@ -16,16 +16,6 @@ from kotonoha.state import LyricsState
 class UnavailableController(LayerShellController):
     def __init__(self) -> None:
         super().__init__("", "wayland", "GNOME")
-
-
-class RecordingOverlay(LyricsOverlay):
-    def __init__(self, *args, **kwargs):
-        self.paint_calls = 0
-        super().__init__(*args, **kwargs)
-
-    def paintEvent(self, a0: QPaintEvent | None) -> None:
-        self.paint_calls += 1
-        super().paintEvent(a0)
 
 
 @pytest.fixture(scope="module")
@@ -297,21 +287,18 @@ def test_window_stays_opaque_and_frost_uses_its_own_opacity(qapp):
     qapp.processEvents()
 
 
-def test_container_move_repaints_translucent_surface(qapp):
-    overlay = RecordingOverlay(
+@pytest.mark.parametrize("event_type", (QEvent.Type.Move, QEvent.Type.Resize))
+def test_container_geometry_change_schedules_surface_repaint(qapp, event_type):
+    overlay = LyricsOverlay(
         LyricsState(),
         Config(passthrough=False, panel_style="pill"),
         UnavailableController(),
     )
-    overlay.show()
-    qapp.processEvents()
-    overlay.paint_calls = 0
 
-    overlay.eventFilter(overlay._container, QEvent(QEvent.Type.Move))
-    qapp.processEvents()
+    with patch.object(overlay, "update") as update:
+        overlay.eventFilter(overlay._container, QEvent(event_type))
 
-    assert overlay.paint_calls > 0
+    update.assert_called_once_with()
     overlay._render_timer.stop()
-    overlay.close()
     overlay.deleteLater()
     qapp.processEvents()

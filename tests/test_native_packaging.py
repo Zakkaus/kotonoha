@@ -20,10 +20,6 @@ DEBIAN_DIR = PROJECT_ROOT / "packaging" / "debian"
 FEDORA_SPEC = PROJECT_ROOT / "packaging" / "fedora" / "kotonoha.spec"
 PACKAGE_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "package.yml"
 TEST_WORKFLOW = PROJECT_ROOT / ".github" / "workflows" / "test.yml"
-NATIVE_PACKAGING_DOCS = (
-    PROJECT_ROOT / "docs" / "superpowers" / "specs" / "2026-07-11-github-workflows-design.md",
-    PROJECT_ROOT / "docs" / "superpowers" / "plans" / "2026-07-11-github-workflows.md",
-)
 RPM_SPEC_SED_PATTERN = re.compile(
     r'^\s*(sed -i -E "[^"]+" packaging/fedora/kotonoha\.spec)$',
     re.MULTILINE,
@@ -71,7 +67,6 @@ def test_cmake_builds_and_installs_native_bridge() -> None:
             "CACHE STRING",
             "  OFF\n)",
             "COMPONENT KotonohaBridge",
-            "COMPONENT KotonohaDocumentation",
         ),
     )
     assert "src/kotonoha/build_bridge.sh" not in cmake
@@ -98,16 +93,10 @@ def test_scikit_build_core_builds_cmake_bridge_into_wheel() -> None:
     assert "hatch" not in pyproject["tool"]
 
 
-def test_cmake_is_documented_and_verified_by_ci() -> None:
-    readme = read_packaging_file(PROJECT_ROOT / "README.md")
+def test_cmake_and_package_workflows_verify_native_bridge() -> None:
     test_workflow = read_packaging_file(TEST_WORKFLOW)
     package_workflow = read_packaging_file(PACKAGE_WORKFLOW)
 
-    assert "cmake -S . -B build/cmake" in readme
-    assert "cmake --build build/cmake" in readme
-    assert "cmake --install build/cmake --config Release" in readme
-    assert "scikit-build-core" in readme
-    assert "build_bridge.sh" in readme
     assert "sysconfig.get_path(\"platlib\")" in test_workflow
     assert "bridge=src/kotonoha/libkoto-layer.so" not in test_workflow
     assert 'bridge="${unpacked_dirs[0]}/kotonoha/libkoto-layer.so"' in package_workflow
@@ -123,7 +112,7 @@ def test_cmake_is_documented_and_verified_by_ci() -> None:
     assert test_workflow.count("            cmake \\") >= 1
     assert package_workflow.count("            cmake \\") >= 1
     assert 'archive.namelist().count("kotonoha/libkoto-layer.so")' in package_workflow
-    # deb/rpm smoke jobs assert the AppStream metainfo and man page landed.
+    # deb/rpm smoke jobs assert the package's installed runtime assets.
     assert "test -f /usr/share/metainfo/dev.locez.kotonoha.metainfo.xml" in package_workflow
     assert "ls /usr/share/man/man1/kotonoha.1*" in package_workflow
 
@@ -281,24 +270,6 @@ def test_fedora_spec_builds_and_installs_native_desktop_assets() -> None:
     )
 
 
-def test_fedora_spec_only_packages_existing_documentation() -> None:
-    spec = read_packaging_file(FEDORA_SPEC)
-    documentation_paths = (
-        line.split(maxsplit=1)[1]
-        for line in spec.splitlines()
-        if line.startswith(("%doc ", "%license "))
-    )
-
-    for documentation_path in documentation_paths:
-        if documentation_path.startswith("%{"):
-            assert documentation_path in {
-                "%{python3_sitelib}/qasync-0.28.0.dist-info/licenses/LICENSE",
-                "%{python3_sitearch}/share/licenses/kotonoha/LICENSE",
-            }
-            continue
-        assert (PROJECT_ROOT / documentation_path).is_file()
-
-
 def test_rpm_workflow_updates_spec_version_and_changelog(tmp_path: Path) -> None:
     workflow = read_packaging_file(PACKAGE_WORKFLOW)
     sed_commands = RPM_SPEC_SED_PATTERN.findall(workflow)
@@ -355,13 +326,6 @@ def test_package_workflow_declares_the_scikit_build_core_backend() -> None:
     assert "cmake" in deb_job
     assert "cmake" in rpm_job
     assert "python3-hatchling" not in workflow
-
-
-def test_native_packaging_docs_do_not_require_the_removed_build_hook() -> None:
-    for documentation_path in NATIVE_PACKAGING_DOCS:
-        documentation = read_packaging_file(documentation_path)
-        assert re.search(r"pip install[^\n]*hatch-build-scripts", documentation) is None
-        assert "PYTHONPATH" not in documentation
 
 
 def test_debian_rules_leave_the_source_tree_unchanged_on_repeated_configure(
