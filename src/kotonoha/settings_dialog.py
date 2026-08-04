@@ -1067,6 +1067,7 @@ class SettingsDialog(QDialog):
             anchor_top=bool(self._anchor.currentData()),
             margin_edge=self._margin_edge.value(),
             margin_x=self._margin_x.value(),
+            screen_name=self._config.screen_name,
             passthrough=self._passthrough.isChecked(),
             lyrics_sources=self._selected_sources(),
             prefer_best_lyrics=self._prefer_best.isChecked(),

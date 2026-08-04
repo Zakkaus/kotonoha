@@ -4,7 +4,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6.QtCore import QEvent
+from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
+from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
 from kotonoha.config import Config
@@ -16,6 +17,18 @@ from kotonoha.state import LyricsState
 class UnavailableController(LayerShellController):
     def __init__(self) -> None:
         super().__init__("", "wayland", "GNOME")
+
+
+class FakeScreen:
+    def __init__(self, name: str, x: int, y: int, width: int, height: int) -> None:
+        self._name = name
+        self._geometry = QRect(x, y, width, height)
+
+    def name(self) -> str:
+        return self._name
+
+    def geometry(self) -> QRect:
+        return self._geometry
 
 
 @pytest.fixture(scope="module")
@@ -299,6 +312,136 @@ def test_container_geometry_change_schedules_surface_repaint(qapp, event_type):
         overlay.eventFilter(overlay._container, QEvent(event_type))
 
     update.assert_called_once_with()
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
+    source = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    target = FakeScreen("DP-1", 2048, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._active_screen = source
+    overlay._layer_pos = QPoint(1900, 100)
+    overlay._dragging = True
+    overlay._drag_local = QPoint(20, 20)
+
+    event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(200, 20),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    with patch.object(QGuiApplication, "screens", return_value=[source, target]), patch.object(
+        overlay, "_recreate_layer_surface"
+    ) as recreate:
+        overlay.mouseMoveEvent(event)
+
+    assert overlay._layer_pos == QPoint(2080, 100)
+    assert overlay._active_screen is source
+    assert LyricsOverlay._screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
+    recreate.assert_not_called()
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_click_without_motion_does_not_persist_a_new_horizontal_offset(qapp):
+    overlay = LyricsOverlay(
+        LyricsState(), Config(margin_x=37), UnavailableController()
+    )
+    emitted: list[tuple[int, int, str]] = []
+    overlay.position_changed.connect(lambda edge, margin_x, name: emitted.append((edge, margin_x, name)))
+    press = QMouseEvent(
+        QEvent.Type.MouseButtonPress,
+        QPointF(10, 10),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    release = QMouseEvent(
+        QEvent.Type.MouseButtonRelease,
+        QPointF(10, 10),
+        Qt.MouseButton.LeftButton,
+        Qt.MouseButton.NoButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    overlay.mousePressEvent(press)
+    overlay.mouseReleaseEvent(release)
+
+    assert overlay._config.margin_x == 37
+    assert emitted == []
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
+    source = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    target = FakeScreen("DP-1", 2048, 0, 1920, 1080)
+    overlay = LyricsOverlay(
+        LyricsState(), Config(margin_x=37), UnavailableController()
+    )
+    overlay._active_screen = source
+    overlay._layer_pos = QPoint(2100, 100)  # global x = 2100, on DP-1
+    overlay._drag_local = QPoint(100, 40)
+    emitted: list[tuple[int, int, str]] = []
+    overlay.position_changed.connect(lambda edge, margin_x, name: emitted.append((edge, margin_x, name)))
+
+    with patch.object(QGuiApplication, "screens", return_value=[source, target]), patch.object(
+        overlay, "_window_size", return_value=(500, 140)
+    ), patch.object(overlay, "_recreate_layer_surface") as recreate:
+        overlay._commit_drag_position(QPoint(100, 40))
+
+    assert overlay._config.margin_x == -658
+    assert overlay._config.screen_name == "DP-1"
+    assert overlay._layer_pos == QPoint(52, 100)
+    recreate.assert_called_once_with(target)
+    assert emitted == [(100, -658, "DP-1")]
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
+    screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._active_screen = screen
+    overlay._layer_pos = QPoint(-1100, 100)
+    overlay._drag_local = QPoint(20, 40)
+
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay, "_window_size", return_value=(1100, 140)
+    ), patch.object(overlay, "_recreate_layer_surface"):
+        overlay._commit_drag_position(QPoint(20, 40))
+
+    assert overlay._layer_pos == QPoint(-1020, 100)
+    assert overlay._config.margin_x == -1494
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_drag_keeps_the_original_vertical_bottom_range(qapp):
+    screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._active_screen = screen
+    overlay._layer_pos = QPoint(400, 1000)
+    overlay._dragging = True
+    overlay._drag_local = QPoint(20, 20)
+
+    event = QMouseEvent(
+        QEvent.Type.MouseMove,
+        QPointF(20, 200),
+        Qt.MouseButton.NoButton,
+        Qt.MouseButton.LeftButton,
+        Qt.KeyboardModifier.NoModifier,
+    )
+    with patch.object(QGuiApplication, "screens", return_value=[screen]):
+        overlay.mouseMoveEvent(event)
+
+    assert overlay._layer_pos == QPoint(400, 1180)
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

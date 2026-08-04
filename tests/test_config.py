@@ -14,6 +14,12 @@ def test_roundtrip(tmp_path):
     assert loaded.show_translation is False
 
 
+def test_screen_name_roundtrips(tmp_path):
+    path = tmp_path / "config.json"
+    save_config(Config(screen_name="DP-1"), path)
+    assert load_config(path).screen_name == "DP-1"
+
+
 def test_frost_panel_style_survives_clamp():
     assert Config(panel_style="frost").clamped().panel_style == "frost"
     assert Config(panel_style="bogus").clamped().panel_style == "pill"

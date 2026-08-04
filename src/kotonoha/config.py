@@ -47,6 +47,7 @@ class Config:
     anchor_top: bool = True          # True -> top edge, False -> bottom edge
     margin_edge: int = 64            # distance from the anchored edge (px)
     margin_x: int = 0                # horizontal nudge (px)
+    screen_name: str = ""            # Qt output name; empty means choose the current/primary screen
     # Typography / appearance
     font_family: str = "Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif"
     font_style: str = "Regular"     # named style/weight for the family (e.g. "Bold", "Light Italic")
@@ -95,6 +96,7 @@ class Config:
             anchor_top=bool(self.anchor_top),
             margin_edge=_clamp_int(self.margin_edge, 0, 4000, 64),
             margin_x=_clamp_int(self.margin_x, -4000, 4000, 0),
+            screen_name=str(self.screen_name),
             font_family=str(self.font_family),
             font_style=str(self.font_style),
             # All three ranges match the Appearance spin boxes (8..120), so opening

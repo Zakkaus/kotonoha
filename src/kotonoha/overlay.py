@@ -67,8 +67,10 @@ class LyricsOverlay(QWidget):
     passthrough_toggle_requested = pyqtSignal()
     # Emitted when the on-HUD gear button is clicked.
     settings_requested = pyqtSignal()
-    # Emitted after a drag, with the new (margin_edge, margin_x) so config can persist.
-    position_changed = pyqtSignal(int, int)
+    # Emitted after a drag, with the edge margin, horizontal offset relative to
+    # the target output's center, and output name. The offset is output-local;
+    # virtual-desktop origins are deliberately excluded.
+    position_changed = pyqtSignal(int, int, str)
 
     def __init__(self, state: LyricsState, config: Config, controller: LayerShellController | None = None) -> None:
         super().__init__()
@@ -77,7 +79,10 @@ class LyricsOverlay(QWidget):
         self._clock = MediaClock()
         self._passthrough = config.passthrough
         self._layer_pos = QPoint()  # screen-local top-left of the surface
+        self._active_screen = None
+        self._preserve_layer_pos_on_show = False
         self._dragging = False
+        self._drag_moved = False
         self._drag_local = QPoint()
         app = QApplication.instance()
         desktop = app.property("xdg_current_desktop") if app is not None else ""
@@ -212,8 +217,10 @@ class LyricsOverlay(QWidget):
     # --- config ---
 
     def apply_config(self, config: Config) -> None:
+        previous_screen = self._active_screen
         self._config = config
         self._passthrough = config.passthrough
+        self._active_screen = self._configured_screen() or self._active_screen or self.screen()
         self._update_lock_icon()
         self._settings_btn.setIcon(settings_icon(self._control_icon_color()))
         # Configure the pill width for the fit/fixed mode; `avail` is the inner width
@@ -274,6 +281,13 @@ class LyricsOverlay(QWidget):
         self._apply_window_geometry()
         self.update()
         QTimer.singleShot(0, self._apply_blur)  # panel_style may have changed
+        if (
+            self.isVisible()
+            and self._controller.available
+            and self._active_screen is not None
+            and not self._same_screen(previous_screen, self._active_screen)
+        ):
+            self._recreate_layer_surface(self._active_screen)
 
     # --- geometry (fixed-size, margin-positioned panel) ---
 
@@ -309,8 +323,48 @@ class LyricsOverlay(QWidget):
         chrome = 22 + 24 + 34  # control bar + container v-margins + spacing/slack
         return max(140, lines + chrome)
 
+    def _configured_screen(self):
+        if not self._config.screen_name:
+            return None
+        return next(
+            (screen for screen in QGuiApplication.screens() if screen.name() == self._config.screen_name),
+            None,
+        )
+
     def _target_screen(self):
-        return self.screen() or QApplication.primaryScreen()
+        screens = QGuiApplication.screens()
+        if self._active_screen is not None and self._active_screen in screens:
+            return self._active_screen
+        screen = self._configured_screen() or self.screen() or QApplication.primaryScreen()
+        self._active_screen = screen
+        return screen
+
+    @staticmethod
+    def _same_screen(first, second) -> bool:
+        if first is second:
+            return True
+        if first is None or second is None:
+            return False
+        return first.name() == second.name() and first.geometry() == second.geometry()
+
+    @staticmethod
+    def _screen_for_global_point(point: QPoint, screens, fallback):
+        for screen in screens:
+            if screen.geometry().contains(point):
+                return screen
+        if not screens:
+            return fallback
+
+        # Multi-monitor layouts can leave a small gap between outputs. Keep the
+        # drag attached to the nearest output instead of losing the target screen
+        # while the pointer crosses that gap.
+        def distance_squared(screen) -> int:
+            geo = screen.geometry()
+            dx = max(geo.left() - point.x(), 0, point.x() - geo.right())
+            dy = max(geo.top() - point.y(), 0, point.y() - geo.bottom())
+            return dx * dx + dy * dy
+
+        return min(screens, key=distance_squared)
 
     def _window_size(self) -> tuple[int, int]:
         screen = self._target_screen()
@@ -330,9 +384,9 @@ class LyricsOverlay(QWidget):
         screen_h = geo.height() if geo else 720
         x = (screen_w - width) // 2 + self._config.margin_x
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
-        return QPoint(x, max(0, y))
+        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=True)
 
-    def _apply_window_geometry(self) -> None:
+    def _apply_window_geometry(self, *, reset_position: bool = True) -> None:
         """Fix the surface size and compute its position.
 
         In layer-shell mode the position is applied as left/top margins by
@@ -344,10 +398,20 @@ class LyricsOverlay(QWidget):
             return
         width, height = self._window_size()
         self.setFixedSize(width, height)
-        self._layer_pos = self._compute_layer_pos(width, height)
+        self._bind_widget_screen(screen)
+        if reset_position:
+            self._layer_pos = self._compute_layer_pos(width, height)
         if not self._controller.available:
             geo = screen.geometry()
             self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+
+    def _bind_widget_screen(self, screen) -> None:
+        if screen is None:
+            return
+        self.setScreen(screen)
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.setScreen(screen)
 
     # --- snapshot handling ---
 
@@ -434,7 +498,8 @@ class LyricsOverlay(QWidget):
 
     def showEvent(self, a0: QShowEvent | None) -> None:
         super().showEvent(a0)
-        self._apply_window_geometry()
+        self._apply_window_geometry(reset_position=not self._preserve_layer_pos_on_show)
+        self._preserve_layer_pos_on_show = False
         QTimer.singleShot(0, self.activate_layer_shell)
         QTimer.singleShot(100, self.activate_layer_shell)
 
@@ -447,6 +512,7 @@ class LyricsOverlay(QWidget):
 
     def activate_layer_shell(self) -> None:
         """Promote to a layer surface. MUST be called before the first show()."""
+        self._bind_widget_screen(self._target_screen())
         ptr = self._window_ptr()
         if ptr is None:
             return
@@ -457,6 +523,30 @@ class LyricsOverlay(QWidget):
             self._apply_blur()
         else:
             self._fallback_position()
+
+    def _recreate_layer_surface(self, screen) -> None:
+        """Recreate a mapped layer surface on ``screen``.
+
+        wl-layer-shell binds an output when ``get_layer_surface`` is called; the
+        output cannot be changed by updating margins on the existing surface.
+        Destroying the QWindow surface makes LayerShellQt create a new layer
+        surface with the QWindow's selected screen on the next activation.
+        """
+        self._active_screen = screen
+        if not self._controller.available or not self.isVisible():
+            self._bind_widget_screen(screen)
+            self._apply_window_geometry(reset_position=False)
+            return
+
+        self._preserve_layer_pos_on_show = True
+        self.hide()
+        handle = self.windowHandle()
+        if handle is not None:
+            handle.destroy()
+        self._bind_widget_screen(screen)
+        self._apply_window_geometry(reset_position=False)
+        self.activate_layer_shell()
+        self.show()
 
     def _fallback_position(self) -> None:
         """Position manually when layer-shell is unavailable (X11 / GNOME)."""
@@ -529,6 +619,7 @@ class LyricsOverlay(QWidget):
     def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         if a0 is not None and not self._passthrough and a0.button() == Qt.MouseButton.LeftButton:
             self._dragging = True
+            self._drag_moved = False
             self._drag_local = a0.position().toPoint()
             self._render_timer.stop()  # pause the sweep so it isn't repainted mid-drag
             a0.accept()
@@ -537,8 +628,19 @@ class LyricsOverlay(QWidget):
 
     def mouseMoveEvent(self, a0: QMouseEvent | None) -> None:
         if a0 is not None and self._dragging and a0.buttons() & Qt.MouseButton.LeftButton:
-            diff = a0.position().toPoint() - self._drag_local
-            self._layer_pos = self._clamp_to_screen(self._layer_pos + diff)
+            screen = self._target_screen()
+            if screen is None:
+                a0.accept()
+                return
+            local = a0.position().toPoint()
+            diff = local - self._drag_local
+            if not diff.isNull():
+                self._drag_moved = True
+
+            # Keep the surface alive for the entire pointer grab. Recreating it
+            # at an output boundary destroys the Wayland pointer grab and makes
+            # the next mouse event disappear.
+            self._layer_pos += diff
             if self._controller.available:
                 ptr = self._window_ptr()
                 if ptr is not None:
@@ -547,47 +649,109 @@ class LyricsOverlay(QWidget):
                     # just re-positions the cached buffer — so the heavy lyric text
                     # isn't re-rendered every frame, which is what killed tracking.
             else:
-                screen = self._target_screen()
-                if screen is not None:
-                    geo = screen.geometry()
-                    self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+                geo = screen.geometry()
+                self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
             a0.accept()
         else:
             super().mouseMoveEvent(a0)
 
     def mouseReleaseEvent(self, a0: QMouseEvent | None) -> None:
         if self._dragging:
+            moved = self._drag_moved
             self._dragging = False
+            self._drag_moved = False
             self._render_timer.start()  # resume the sweep
-            self._commit_drag_position()
+            if moved:
+                self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)
             if a0 is not None:
                 a0.accept()
         else:
             super().mouseReleaseEvent(a0)
 
-    def _clamp_to_screen(self, pos: QPoint) -> QPoint:
-        screen = self._target_screen()
+    def _clamp_to_screen(
+        self,
+        pos: QPoint,
+        *,
+        screen=None,
+        width: int | None = None,
+        height: int | None = None,
+        allow_partial: bool = True,
+    ) -> QPoint:
+        screen = screen or self._target_screen()
         if screen is None:
             return pos
         geo = screen.geometry()
-        width, height = self._window_size()
-        x = max(-width + 80, min(pos.x(), geo.width() - 80))
-        y = max(0, min(pos.y(), geo.height() - 60))
+        if width is None or height is None:
+            width, height = self._window_size()
+        if allow_partial:
+            # Keep enough of the original local-margin range for the pointer and
+            # surface to cross an adjacent output during a grab. The position is
+            # normalized back to the target output when the button is released.
+            min_x, max_x = -width + 80, geo.width() - 80
+            min_y, max_y = 0, geo.height() - 60
+        else:
+            min_x, max_x = 0, max(0, geo.width() - width)
+            # Keep the established bottom drag range; only horizontal placement
+            # is normalized to the fully visible edge on commit.
+            min_y, max_y = 0, geo.height() - 60
+        x = max(min_x, min(pos.x(), max_x))
+        y = max(min_y, min(pos.y(), max_y))
         return QPoint(x, y)
 
-    def _commit_drag_position(self) -> None:
-        """Persist the dragged position back into config margins/offsets."""
-        screen = self._target_screen()
-        if screen is None:
+    def _commit_drag_position(self, cursor_local: QPoint | None = None) -> None:
+        """Persist the output and edge placement after a drag.
+
+        The layer surface can cross output boundaries while it is grabbed. Only
+        after release do we select the output under the cursor and remap the
+        surface, when necessary, so the next drag starts with that output as its
+        local coordinate system.
+        """
+        surface_screen = self._target_screen()
+        if surface_screen is None:
             return
-        geo = screen.geometry()
+        surface_geo = surface_screen.geometry()
+        surface_top_left = QPoint(
+            surface_geo.x() + self._layer_pos.x(),
+            surface_geo.y() + self._layer_pos.y(),
+        )
+        local = cursor_local if cursor_local is not None else self._drag_local
+        cursor_global = QPoint(surface_top_left.x() + local.x(), surface_top_left.y() + local.y())
+        target_screen = self._screen_for_global_point(cursor_global, QGuiApplication.screens(), surface_screen)
+        if target_screen is None:
+            target_screen = surface_screen
+
+        # Work in the target output's local coordinates only after the pointer
+        # grab has ended. This keeps the live drag independent of output origins.
+        target_geo = target_screen.geometry()
+        global_pos = surface_top_left
+        self._active_screen = target_screen
         width, height = self._window_size()
-        self._config.margin_x = self._layer_pos.x() - (geo.width() - width) // 2
+        self._layer_pos = self._clamp_to_screen(
+            QPoint(global_pos.x() - target_geo.x(), global_pos.y() - target_geo.y()),
+            screen=target_screen,
+            width=width,
+            height=height,
+            allow_partial=True,
+        )
         if self._config.anchor_top:
             self._config.margin_edge = max(0, self._layer_pos.y())
         else:
-            self._config.margin_edge = max(0, geo.height() - height - self._layer_pos.y())
-        self.position_changed.emit(self._config.margin_edge, self._config.margin_x)
+            self._config.margin_edge = max(0, target_geo.height() - height - self._layer_pos.y())
+        # Persist the target output's local horizontal offset using the same
+        # center-relative coordinate system used by _compute_layer_pos().
+        self._config.margin_x = self._layer_pos.x() - (target_geo.width() - width) // 2
+        self._config.screen_name = target_screen.name()
+        if not self._same_screen(surface_screen, target_screen):
+            self._recreate_layer_surface(target_screen)
+        elif self._controller.available:
+            ptr = self._window_ptr()
+            if ptr is not None:
+                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        self.position_changed.emit(
+            self._config.margin_edge,
+            self._config.margin_x,
+            self._config.screen_name,
+        )
 
     @property
     def passthrough(self) -> bool:

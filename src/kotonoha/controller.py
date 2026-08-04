@@ -112,9 +112,10 @@ class AppController:
         self._config.passthrough = checked
         self._persist()
 
-    def _on_position_changed(self, margin_edge: int, margin_x: int) -> None:
+    def _on_position_changed(self, margin_edge: int, margin_x: int, screen_name: str) -> None:
         self._config.margin_edge = margin_edge
         self._config.margin_x = margin_x
+        self._config.screen_name = screen_name
         self._persist()
 
     # --- settings ---
