@@ -329,7 +329,7 @@ _PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
     ("panel_style", "panel_width_mode", "panel_width", "opacity", "frost_opacity", "panel_accent_tint"),  # Panel
     ("accent_start", "accent_end", "accent_sweep", "fx_animate", "fx_transition",
      "fx_glow", "fx_word_pop", "fx_intensity"),                                          # Effects
-    ("karaoke", "lead_ms", "show_translation", "lyrics_script"),                         # Lyrics
+    ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script"),  # Lyrics
     ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
     ("lyrics_sources", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),             # Sources
 )
@@ -815,6 +815,11 @@ class SettingsDialog(QDialog):
         self._translation.setChecked(c.show_translation)
         form.addRow(self._translation)
 
+        self._current_line_only = QCheckBox(t("set.current_line_only"))
+        self._current_line_only.setChecked(c.current_line_only)
+        form.addRow(self._current_line_only)
+        form.addRow(self._hint(t("set.current_line_only_hint")))
+
         # Display-side 簡/繁 conversion of the shown lyrics (belongs with the lyrics,
         # not with the app-wide General options where it used to sit).
         self._lyrics_script = QComboBox()
@@ -1064,6 +1069,7 @@ class SettingsDialog(QDialog):
             karaoke=self._karaoke.isChecked(),
             lead_ms=self._lead.value(),
             show_translation=self._translation.isChecked(),
+            current_line_only=self._current_line_only.isChecked(),
             anchor_top=bool(self._anchor.currentData()),
             margin_edge=self._margin_edge.value(),
             margin_x=self._margin_x.value(),

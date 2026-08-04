@@ -272,6 +272,7 @@ class LyricsOverlay(QWidget):
         )
         self._translation.set_max_width(avail)
         self._translation.setVisible(config.show_translation)
+        self._update_context_visibility()
 
         # Opacity is the panel's own fill translucency (see paintEvent / _panel_alpha),
         # so the window itself stays fully opaque — the lyric text is always crisp and
@@ -317,11 +318,16 @@ class LyricsOverlay(QWidget):
 
     def _band_height(self) -> int:
         main = self._config.font_size
-        context = self._config.context_font_size
+        context = 0 if self._config.current_line_only else self._config.context_font_size
         translation = self._config.translation_font_size if self._config.show_translation else 0
         lines = int(main * 1.6) + 2 * int(context * 1.4) + int(translation * 1.6)
         chrome = 22 + 24 + 34  # control bar + container v-margins + spacing/slack
         return max(140, lines + chrome)
+
+    def _update_context_visibility(self) -> None:
+        visible = not self._config.current_line_only
+        self._prev_label.setVisible(visible)
+        self._next_label.setVisible(visible)
 
     def _configured_screen(self):
         if not self._config.screen_name:

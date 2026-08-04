@@ -98,6 +98,44 @@ def test_effects_apply_to_current_line_only_and_paint_safely(qapp):
     qapp.processEvents()
 
 
+def test_current_line_only_hides_context_and_keeps_current_translation(qapp):
+    from kotonoha.model import LyricLine, LyricsSnapshot
+
+    previous = LyricLine(0, "p", 0.0, 2.0, "previous", "", ())
+    current = LyricLine(1, "c", 2.0, 4.0, "current", "译文", ())
+    next_line = LyricLine(2, "n", 4.0, 6.0, "next", "", ())
+    snapshot = LyricsSnapshot(
+        found=True,
+        current=current,
+        previous=previous,
+        next=next_line,
+        current_time=2.5,
+        is_playing=True,
+    )
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._on_snapshot(snapshot)
+    full_height = overlay._band_height()
+    assert overlay._prev_label.text() == "previous"
+    assert overlay._next_label.text() == "next"
+    assert overlay._translation.text == "译文"
+
+    overlay.apply_config(Config(current_line_only=True))
+    assert overlay._prev_label.isHidden() is True
+    assert overlay._next_label.isHidden() is True
+    assert overlay._current.text == "current"
+    assert overlay._translation.text == "译文"
+    assert overlay._band_height() < full_height
+
+    overlay.apply_config(Config())
+    assert overlay._prev_label.isHidden() is False
+    assert overlay._next_label.isHidden() is False
+    assert overlay._prev_label.text() == "previous"
+    assert overlay._next_label.text() == "next"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_long_title_marquee_scrolls_then_holds(qapp):
     from kotonoha.karaoke_label import _MARQUEE_PAUSE_S, _MARQUEE_SPEED_PX_S, KaraokeLabel
     from kotonoha.model import LyricLine

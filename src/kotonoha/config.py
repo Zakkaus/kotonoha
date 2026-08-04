@@ -67,6 +67,7 @@ class Config:
     karaoke: bool = True             # per-word sweep when timing == "Word"
     lead_ms: int = 120               # advance the sweep by this many ms (compensate pipeline latency)
     show_translation: bool = True    # bilingual
+    current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
     prefer_best_lyrics: bool = True  # query sources concurrently and pick the best-quality match
@@ -116,6 +117,7 @@ class Config:
             karaoke=bool(self.karaoke),
             lead_ms=_clamp_int(self.lead_ms, -2000, 2000, 120),
             show_translation=bool(self.show_translation),
+            current_line_only=bool(self.current_line_only),
             translation_language=str(self.translation_language),
             accent_start=str(self.accent_start),
             accent_end=str(self.accent_end),

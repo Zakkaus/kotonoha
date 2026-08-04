@@ -30,6 +30,14 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     dialog.close()
 
 
+def test_current_line_only_control_roundtrips(qapp):
+    dialog = SettingsDialog(Config(current_line_only=True))
+    assert dialog._current_line_only.isChecked() is True
+    dialog._current_line_only.setChecked(False)
+    assert dialog.current_config().current_line_only is False
+    dialog.close()
+
+
 def _indicator_white_pixels(qss: str, *, checked: bool) -> int:
     from PyQt6.QtWidgets import QCheckBox
 
@@ -385,7 +393,7 @@ def test_tray_and_window_icons_are_chosen_independently(qapp):
 
 def test_reset_tab_restores_only_current_page(qapp):
     dialog = SettingsDialog(
-        Config(font_size=90, context_font_size=80, margin_edge=999, karaoke=False)
+        Config(font_size=90, context_font_size=80, margin_edge=999, karaoke=False, current_line_only=True)
     )
     dialog._nav.setCurrentRow(2)  # Text page (0 General, 1 Icon, 2 Text)
     dialog._reset_current_page()
@@ -394,9 +402,20 @@ def test_reset_tab_restores_only_current_page(qapp):
     # Text fields reset...
     assert cfg.font_size == defaults.font_size
     assert cfg.context_font_size == defaults.context_font_size
+    assert cfg.current_line_only is True  # Lyrics-page edits survive a Text-page reset.
     # ...but other pages' edits are untouched.
     assert cfg.margin_edge == 999
     assert cfg.karaoke is False
+    dialog.close()
+
+
+def test_reset_lyrics_tab_restores_current_line_only(qapp):
+    dialog = SettingsDialog(Config(current_line_only=True, margin_edge=999))
+    dialog._nav.setCurrentRow(5)  # Lyrics page
+    dialog._reset_current_page()
+    cfg = dialog.current_config()
+    assert cfg.current_line_only is False
+    assert cfg.margin_edge == 999  # Position-page edits survive a Lyrics-page reset.
     dialog.close()
 
 

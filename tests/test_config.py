@@ -36,6 +36,14 @@ def test_lyrics_script_clamps_unknown_to_off():
     assert Config(lyrics_script="bogus").clamped().lyrics_script == "off"
 
 
+def test_current_line_only_roundtrips_and_coerces(tmp_path):
+    path = tmp_path / "c.json"
+    save_config(Config(current_line_only=True), path)
+    assert load_config(path).current_line_only is True
+    assert Config.from_dict({"current_line_only": 0}).current_line_only is False
+    assert Config.from_dict({"current_line_only": 1}).current_line_only is True
+
+
 def test_typography_and_panel_size_roundtrip(tmp_path):
     path = tmp_path / "c.json"
     cfg = Config(
