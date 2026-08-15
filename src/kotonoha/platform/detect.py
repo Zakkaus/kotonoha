@@ -6,11 +6,17 @@ can be unit-tested without a display.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 LAYER_SHELL_LIBRARY_NAME = "libkoto-layer.so"
 LAYER_SHELL_LIBRARY_PREFIX = "libkoto-layer."
 LAYER_SHELL_LIBRARY_SUFFIX = ".so"
+
+
+def current_desktop() -> str:
+    """Return the desktop identifier published by the current session."""
+    return os.environ.get("XDG_CURRENT_DESKTOP", "")
 
 
 def should_disable_layer_shell(platform_name: str, current_desktop: str) -> bool:

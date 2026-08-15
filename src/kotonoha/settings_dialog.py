@@ -8,7 +8,6 @@ from :mod:`kotonoha.strings`.
 
 from __future__ import annotations
 
-import os
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -63,7 +62,7 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
-from .platform import LayerShellController, default_package_dir
+from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, WindowRectangle
 from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
@@ -342,7 +341,13 @@ class SettingsDialog(QDialog):
     restart_requested = pyqtSignal()
 
     def __init__(
-        self, config: Config, parent: QWidget | None = None, *, players: list[PlayerInfo] | None = None
+        self,
+        config: Config,
+        parent: QWidget | None = None,
+        *,
+        players: list[PlayerInfo] | None = None,
+        platform_factory: OverlayPlatformFactory | None = None,
+        platform_name: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
@@ -361,15 +366,17 @@ class SettingsDialog(QDialog):
         # org_kde_kwin_blur and denied Mutter, which speaks the replacement. Where
         # nothing can blur the window stays a solid panel, so it is never turned
         # see-through in front of a backdrop that will not be blurred.
-        desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
-        platform = QGuiApplication.platformName() or ""
-        self._blur = LayerShellController(default_package_dir(), platform, desktop)
-        capabilities = self._blur.capabilities
-        self._blur_capable = capabilities.blur
-        self._blur_reason = capabilities.blur_reason
+        self._platform: OverlayPlatform | None = None
+        if platform_factory is not None:
+            self._platform = platform_factory(QtWindowHost(self))
+        capabilities = self._platform.capabilities if self._platform is not None else None
+        self._blur_capable = capabilities is not None and capabilities.blur
+        # The cause travels with the capability, so the window can say which of the
+        # four situations it is rather than repeating the requirement.
+        self._blur_reason = capabilities.blur_reason if capabilities is not None else "bridge"
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
-        self._window_opacity_ok = "wayland" not in platform.lower()
+        self._window_opacity_ok = "wayland" not in (platform_name or "").lower()
         self._frosted = self._blur_capable and config.frost_window
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -507,17 +514,19 @@ class SettingsDialog(QDialog):
         return sip.unwrapinstance(handle) if handle is not None else None
 
     def _apply_blur(self) -> None:
-        if not self._frosted:
+        if not self._frosted or self._platform is None:
             return
         ptr = self._window_ptr()
         if ptr is not None:
-            self._blur.set_blur_region(ptr, 0, 0, self.width(), self.height(), _RADIUS)
+            self._platform.set_blur_region(
+                WindowRectangle(0, 0, self.width(), self.height()), _RADIUS
+            )
 
     def hideEvent(self, a0: QHideEvent | None) -> None:
-        if self._frosted:
+        if self._frosted and self._platform is not None:
             ptr = self._window_ptr()
             if ptr is not None:
-                self._blur.clear_blur(ptr)
+                self._platform.set_blur_region(None)
         super().hideEvent(a0)
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
@@ -1140,14 +1149,14 @@ class SettingsDialog(QDialog):
         # Toggle the frosted backdrop live: apply/clear the KWin blur to match the
         # new setting, so the re-skin below can pick the right (translucent) card.
         frosted = self._blur_capable and self._config.frost_window
-        if frosted != self._frosted:
+        if frosted != self._frosted and self._platform is not None:
             self._frosted = frosted
             ptr = self._window_ptr()
             if ptr is not None:
                 if frosted:
                     self._apply_blur()
                 else:
-                    self._blur.clear_blur(ptr)
+                    self._platform.set_blur_region(None)
         # Re-skin the dialog itself so an accent OR theme change is visible right
         # away (tab underline, checkbox fill, light/dark palette) rather than only
         # after Settings is closed and reopened.

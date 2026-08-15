@@ -12,11 +12,17 @@ import sqlite3
 import sys
 
 from PyQt6.QtCore import QProcess
+from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
 from .config import Config, save_config
 from .i18n import resolve_translation_language
 from .overlay import LyricsOverlay
+from .platform import (
+    LayerShellController,
+    LayerShellPlatform,
+    default_package_dir,
+)
 from .providers.gate import SourceGate
 from .providers.mpris import MprisProvider
 from .receiver import LyricsReceiver
@@ -47,7 +53,11 @@ class AppController:
         self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
 
         self._state = LyricsState()
-        self._overlay = LyricsOverlay(self._state, config)
+        platform_name = app.platformName()
+        self._platform_name = platform_name
+        desktop = str(app.property("xdg_current_desktop") or "")
+        self._layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
+        self._overlay = LyricsOverlay(self._state, config, self._layer_shell)
         self._gate = SourceGate()
         self._receiver = LyricsReceiver(
             self._state,
@@ -152,7 +162,12 @@ class AppController:
         except Exception as exc:  # noqa: BLE001 - player discovery is best effort
             logger.debug("MPRIS player discovery failed: %s", exc)
             players = []
-        dialog = SettingsDialog(self._config, players=players)
+        dialog = SettingsDialog(
+            self._config,
+            players=players,
+            platform_factory=lambda host: LayerShellPlatform(host, self._layer_shell),
+            platform_name=QGuiApplication.platformName(),
+        )
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)
         dialog.restart_requested.connect(self._restart)
