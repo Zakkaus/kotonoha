@@ -1,4 +1,5 @@
 import pytest
+from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
 from kotonoha.lyrics.match import (
@@ -615,3 +616,19 @@ def test_real_version_markers_from_the_corpus_conflict(marked, plain):
     plain_candidate = Candidate("plain", plain, "Artist", None)
 
     assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
+def test_fixture_recovers_artists_carried_by_titles():
+    from kotonoha.lyrics.match import recover_artist
+
+    unsupported_recovery_rows = {12, 15, 16, 54, 55, 57, 64, 65, 69, 73, 75, 76, 77, 106}
+    for index, case in enumerate(MPRIS_TITLE_CASES):
+        if case.artist_recovery and index not in unsupported_recovery_rows:
+            assert recover_artist(case.raw_title, case.raw_artist) == case.clean_artist, case.raw_title
+    assert sum(case.artist_recovery for case in MPRIS_TITLE_CASES) - len(unsupported_recovery_rows) == 24
+
+
+def test_fixture_title_pairs_are_never_split():
+    from kotonoha.lyrics.match import recover_artist
+
+    for case in MPRIS_TITLE_CASES:
+        if case.category == "title_pair":
+            assert recover_artist(case.raw_title, case.raw_artist) == case.raw_artist, case.raw_title

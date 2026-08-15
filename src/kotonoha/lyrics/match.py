@@ -27,6 +27,10 @@ _ARTIST_SEPARATOR = re.compile(
 # so splitting it makes two different artists who merely share a given name
 # (ジョン・レノン / ジョン・デンバー) collide — a confident wrong-lyrics match.
 _AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
+_TITLE_DASH = re.compile(r"\s+[-–—－]\s+")
+_UPLOADER_ARTIST = re.compile(
+    r"(?i)(?:channel|頻道|频道|label(?:s)?|records?|music(?:channel)?|vevo|animation|studio|工作室)"
+)
 _KEEP = re.compile(r"[^\w一-鿿]+")
 _VERSION_TAGS = {
     # "acounstic" is not a typo here: it is how the upload spells it, and the
@@ -258,6 +262,52 @@ def artist_tokens(artist: str) -> frozenset[str]:
 def primary_artist(artist: str) -> str:
     parts = _artist_parts(artist)
     return parts[0].strip() if parts else artist.strip()
+
+
+def _is_title_pair(left: str, right: str) -> bool:
+    left_has_cjk = bool(_CJK_ONE.search(left))
+    right_has_latin = bool(re.search(r"[A-Za-z]", right))
+    return left_has_cjk and right_has_latin
+
+
+def _artist_from_prefix(prefix: str) -> str:
+    prefix = prefix.strip(" \t\r\n-–—－")
+    prefix = re.sub(r"(?i)\b(?:feat(?:uring)?|ft)\b.*$", "", prefix).strip()
+    if "（" in prefix:
+        if re.search(r"[一-鿿ぁ-ヿ]", prefix.split("（", 1)[1]):
+            return prefix
+        return prefix.split("（", 1)[0].strip()
+    if "(" in prefix:
+        return prefix.split("(", 1)[0].strip()
+    # A bilingual display name usually puts the Latin alias after the real CJK name.
+    cjk = re.findall(rf"[{_CJK_CLASS}]+", prefix)
+    if cjk:
+        return cjk[-1]
+    return prefix
+
+
+def recover_artist(title: str, artist: str) -> str:
+    """Recover a leading title credit only when generic upload grammar supports it."""
+    fallback = artist.strip()
+    value = title.strip()
+    if " / " in fallback:
+        return fallback
+    dash_parts = _TITLE_DASH.split(value, maxsplit=1)
+    if len(dash_parts) == 2 and _is_title_pair(dash_parts[0], dash_parts[1]) and not (
+        _TITLE_NOISE_LATIN.search(dash_parts[1]) or _TITLE_NOISE_CJK.search(dash_parts[1])
+    ):
+        return fallback
+    # Recover only a leading title credit when generic upload grammar distinguishes it from the song title.
+    if not (_UPLOADER_ARTIST.search(fallback) or _TITLE_NOISE_LATIN.search(value)):
+        return fallback
+    prefix = dash_parts[0] if len(dash_parts) == 2 else value
+    quoted = _TITLE_QUOTE.search(prefix)
+    if quoted:
+        prefix = prefix[: quoted.start()]
+    for marker in ("《", "『", "【", "「"):
+        prefix = prefix.split(marker, 1)[0]
+    candidate = _artist_from_prefix(prefix)
+    return candidate or fallback
 
 
 def _fuzzy_contains(candidate: Candidate, track: TrackMetadata) -> bool:

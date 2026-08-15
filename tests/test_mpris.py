@@ -70,6 +70,23 @@ def test_parse_artist_as_plain_string():
     assert parse_metadata({"xesam:artist": "Solo"}).artist == "Solo"
 
 
+def test_parse_recovers_artist_from_title_without_splitting_artist_field():
+    info = parse_metadata(
+        {
+            "xesam:title": "BTS (방탄소년단) '2.0' Official MV",
+            "xesam:artist": ["HYBE LABELS"],
+        }
+    )
+    assert info.title == "2.0"
+    assert info.artist == "BTS"
+
+
+def test_parse_keeps_title_pair_as_one_title():
+    info = parse_metadata({"xesam:title": "螺旋 - RASEN", "xesam:artist": ["9Lana"]})
+    assert info.title == "螺旋 - RASEN"
+    assert info.artist == "9Lana"
+
+
 def test_parse_strips_chrome_badge_and_youtube_suffix():
     info = parse_metadata({"xesam:title": "(309) 志铭 | YouTube Music", "xesam:artist": [""]})
     assert info.title == "志铭"
