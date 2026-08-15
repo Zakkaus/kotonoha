@@ -53,6 +53,7 @@ def test_parse_basic():
             "xesam:album": "Your Name",
             "mpris:length": 215_000_000,
             "mpris:trackid": "/track/1",
+            "xesam:url": "https://music.example/1",
         }
     )
     assert info.title == "Bloom"
@@ -60,6 +61,7 @@ def test_parse_basic():
     assert info.album == "Your Name"
     assert info.length_s == 215.0
     assert info.track_id == "/track/1"
+    assert info.url == "https://music.example/1"
 
 
 def test_parse_multiple_artists_joined():

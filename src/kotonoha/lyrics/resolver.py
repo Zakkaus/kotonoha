@@ -17,6 +17,7 @@ from ..providers.gate import CiderMatch, SourceGate
 from . import kugou, lrclib, netease
 from .artifact import LyricsArtifact
 from .cache import LyricsCache
+from .hint import LyricsHint
 from .match import MatchConfidence, TrackMetadata, artist_tokens, normalize, split_title
 
 logger = logging.getLogger(__name__)
@@ -126,6 +127,21 @@ class LyricsResolver:
         finally:
             if task.done() and self._inflight.get(key) is task:
                 self._inflight.pop(key, None)
+
+    async def resolve_hint(
+        self, session: aiohttp.ClientSession, track: TrackMetadata, sources: Sequence[str], hint: LyricsHint
+    ) -> ResolvedLyrics | None:
+        if hint.provider != "netease" or hint.song_id is None or "netease" not in sources:
+            return None
+        try:
+            payload = await netease.fetch_payload(session, hint.song_id)
+        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, ValueError) as exc:
+            logger.warning("netease exact lyrics fetch failed: %s: %s", type(exc).__name__, exc)
+            return None
+        lines = netease.parse_payload(payload)
+        if not lines:
+            return None
+        return ResolvedLyrics("netease", lines=lines, confidence=MatchConfidence.HIGH)
 
     async def _resolve_once(
         self,

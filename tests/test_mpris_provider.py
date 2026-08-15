@@ -52,6 +52,9 @@ class RecordingResolver:
         self.tracks.append(track)
         return self.result
 
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
+
     def reset_memory(self):
         return None
 
@@ -86,6 +89,9 @@ class BlockingResolver(RecordingResolver):
             raise
 
 
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
+
 class DeferredResolver(RecordingResolver):
     def __init__(self, result=None):
         super().__init__(result)
@@ -98,6 +104,9 @@ class DeferredResolver(RecordingResolver):
         await self.release.wait()
         return self.result
 
+
+    async def resolve_hint(self, _session, _track, _sources, _hint):
+        return None
 
 def track_commit(generation, title, artist):
     return TrackCommit(

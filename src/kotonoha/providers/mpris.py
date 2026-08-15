@@ -12,6 +12,7 @@ from typing import Any, Protocol
 import aiohttp
 
 from ..config import DEFAULT_LYRICS_SOURCES
+from ..lyrics.hint import LyricsHint, from_player
 from ..lyrics.match import TrackMetadata
 from ..lyrics.resolver import LyricsResolver, ResolvedLyrics
 from ..lyrics.select import build_snapshot, find_current_index
@@ -90,6 +91,10 @@ class ResolverLike(Protocol):
     def set_fuzzy(self, enabled: bool, /) -> None: ...
 
     async def clear_cache(self) -> None: ...
+
+    async def resolve_hint(
+        self, session: Any, track: TrackMetadata, sources: list[str], hint: LyricsHint, /
+    ) -> ResolvedLyrics | None: ...
 
 
 async def _connect() -> Any:
@@ -279,6 +284,16 @@ class MprisProvider:
             logger.debug("status read failed: %s", exc)
             return ""
 
+    async def _safe_identity(self) -> str:
+        try:
+            if self._props_iface is None:
+                return ""
+            identity = await self._props_iface.call_get("org.mpris.MediaPlayer2", "Identity")
+            return str(getattr(identity, "value", identity))
+        except Exception as exc:  # noqa: BLE001 - D-Bus boundary
+            logger.debug("identity read failed: %s", exc)
+            return ""
+
     @staticmethod
     async def _safe_info(player: Any) -> TrackInfo | None:
         try:
@@ -423,6 +438,7 @@ class MprisProvider:
             return
 
         try:
+            identity = await self._safe_identity()
             first_info = parse_metadata(_unwrap(await player.get_metadata()))
         except Exception as exc:  # noqa: BLE001 - D-Bus boundary
             logger.debug("metadata sample failed: %s", exc)
@@ -455,7 +471,7 @@ class MprisProvider:
             return
 
         info = second_info
-        observation = TrackObservation(name, info, status, position, observed_at)
+        observation = TrackObservation(name, info, status, position, observed_at, identity)
         commit = self._stabilizer.observe(observation)
         if not info.title and not info.artist:
             if status == "Playing":
@@ -581,7 +597,16 @@ class MprisProvider:
             return
         track = info.metadata()
         try:
-            result = await self._resolver.resolve(self._session, track, self._lyrics_sources)
+            hint = from_player(
+                commit.player_identity, commit.player_name, commit.info.track_id, commit.info.url
+            )
+            result = (
+                await self._resolver.resolve_hint(self._session, track, self._lyrics_sources, hint)
+                if hint is not None
+                else None
+            )
+            if result is None:
+                result = await self._resolver.resolve(self._session, track, self._lyrics_sources)
         except asyncio.CancelledError:
             raise
         if self._current_commit != commit:
@@ -614,7 +639,14 @@ class MprisProvider:
         current = self._current_commit
         if current is None:
             return
-        self._schedule_load(TrackCommit(current.generation + 1, current.player_name, current.info))
+        self._schedule_load(
+            TrackCommit(
+                current.generation + 1,
+                current.player_name,
+                current.info,
+                player_identity=current.player_identity,
+            )
+        )
 
     def _ensure_content_owner(self) -> None:
         if self._content_owner == "cider" and not self._gate.cider_active:
