@@ -36,6 +36,8 @@ MPRIS_PATH = "/org/mpris/MediaPlayer2"
 PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
 DBUS_NAME = "org.freedesktop.DBus"
 DBUS_PATH = "/org/freedesktop/DBus"
+# One second filters out same-poll observation jitter without delaying a deliberate new start.
+RECENT_PLAYER_MARGIN = 1.0
 
 MPRIS_INTROSPECTION = """<!DOCTYPE node PUBLIC "-//freedesktop//DTD D-BUS Object Introspection 1.0//EN"
  "http://www.freedesktop.org/standards/dbus/1.0/introspect.dtd">
@@ -140,6 +142,7 @@ class MprisProvider:
         self._lines: list[LyricLine] = []
         self._last_index = -2
         self._current_name: str | None = None
+        self._playing_since: dict[str, float] = {}
         self._props_iface: Any = None
         self._subscribed_name: str | None = None
         self._load_task: asyncio.Task[None] | None = None
@@ -286,17 +289,30 @@ class MprisProvider:
             logger.debug("metadata read failed while selecting player: %s", exc)
             return None
 
-    def _selection_score(self, record: tuple[Any, str, str, TrackInfo]) -> tuple[int, int, int]:
-        """Rank a Playing candidate: fuller metadata first, then stay put."""
+    def _selection_score(self, record: tuple[Any, str, str, TrackInfo]) -> tuple[int, int, int, int]:
+        """Rank a Playing candidate by recency, metadata completeness, then continuity."""
         _player, name, _status, info = record
+        current_started = self._playing_since.get(self._current_name or "")
+        candidate_started = self._playing_since.get(name)
+        started_more_recently = int(
+            current_started is not None
+            and candidate_started is not None
+            and candidate_started - current_started > RECENT_PLAYER_MARGIN
+        )
         return (
+            started_more_recently,
             1 if info.artist else 0,  # a real artist beats a title-only source
             1 if info.title else 0,
             1 if name == self._current_name else 0,  # break ties toward the current source
         )
 
-    async def _active_player(self) -> tuple[Any, str] | None:
+    async def _active_player(self, *, now: float | None = None) -> tuple[Any, str] | None:
+        observed_at = time.monotonic() if now is None else now
         names = await list_players(self._bus)
+        present = set(names)
+        for name in tuple(self._playing_since):
+            if name not in present:
+                del self._playing_since[name]
         ordered = list(names)
         if self._current_name in ordered:
             ordered.remove(self._current_name)
@@ -310,8 +326,13 @@ class MprisProvider:
         for name in ordered:
             player = await self._safe_iface(name)
             if player is None:
+                self._playing_since.pop(name, None)
                 continue
             status = await self._safe_status(player)
+            if status == "Playing":
+                self._playing_since.setdefault(name, observed_at)
+            else:
+                self._playing_since.pop(name, None)
             if status not in {"Playing", "Paused"}:
                 continue
             info = await self._safe_info(player)
@@ -391,7 +412,7 @@ class MprisProvider:
 
     async def _poll_once(self, *, now: float | None = None) -> None:
         observed_at = time.monotonic() if now is None else now
-        active = await self._active_player()
+        active = await self._active_player(now=observed_at)
         if active is None:
             self._handle_no_player(observed_at)
             return
