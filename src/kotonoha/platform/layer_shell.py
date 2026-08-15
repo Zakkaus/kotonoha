@@ -48,7 +48,10 @@ class LayerShellAnchorDragStrategy:
         except (OSError, RuntimeError):
             return OverlayOperationResult.failure("Layer Shell position update failed")
         self._position = position
-        self._drag_local = local_position
+        # The anchor stays where the press landed. The surface follows the pointer,
+        # so the pointer's local position re-settles toward that anchor by itself;
+        # advancing it here counts that settling twice and the panel accelerates
+        # away, which is the runaway drag #7 and #9 were about.
         return OverlayOperationResult.success()
 
     def end_drag(self) -> None:

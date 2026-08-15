@@ -224,3 +224,23 @@ def test_ordinary_window_strategy_moves_from_local_anchor() -> None:
     assert strategy.update_drag(WindowPoint(25, 17), WindowPoint(125, 217)).succeeded
     assert host.moves == [WindowPoint(115, 207)]
     strategy.end_drag()
+
+
+def test_anchor_drag_does_not_oscillate_when_the_surface_follows_the_pointer() -> None:
+    # On a compositor that applies the move immediately, the surface follows the
+    # pointer, so the pointer's local position re-settles to where the press
+    # landed. The anchor must stay at that press point: advancing it makes the
+    # next settled report read as an equal and opposite delta, which is the
+    # jitter-then-runaway drag #7 and #9 were about.
+    controller = _FakeController(available=True)
+    strategy = LayerShellAnchorDragStrategy(_FakeHost(), controller)
+    strategy.set_position(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    for _ in range(3):                                             # surface caught up
+        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    moves = [(x, y) for name, (_ptr, x, y) in controller.calls if name == "set_anchor_position"]
+    assert moves[0] == (120, 100), "the first delta should move the surface"
+    assert all(move == (120, 100) for move in moves[1:]), f"surface oscillated: {moves}"
