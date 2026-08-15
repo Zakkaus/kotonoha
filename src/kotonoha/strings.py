@@ -191,6 +191,7 @@ STRINGS: dict[str, dict[str, str]] = {
     "src.lrclib": {"en": "lrclib", "zh-Hans": "lrclib", "zh-Hant": "lrclib", "ja": "lrclib"},
     "src.kugou": {"en": "Kugou", "zh-Hans": "酷狗", "zh-Hant": "酷狗", "ja": "酷狗（Kugou）"},
     "src.cider": {"en": "Cider", "zh-Hans": "Cider 自带", "zh-Hant": "Cider 自帶", "ja": "Cider 内蔵"},
+    "src.qqmusic": {"en": "QQ Music", "zh-Hans": "QQ 音乐", "zh-Hant": "QQ 音樂", "ja": "QQ 音楽"},
     "set.prefer_best": {
         "en": "Prefer best-matching lyrics",
         "zh-Hans": "优先匹配最佳歌词",
