@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import subprocess
-import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    tomllib = importlib.import_module("tomli")
 
 PROJECT_ROOT = Path(__file__).parents[1]
 CMAKE_PROJECT = PROJECT_ROOT / "CMakeLists.txt"
@@ -388,3 +382,12 @@ def test_the_release_check_imports_a_module_that_exists():
     workflow = read_packaging_file(PACKAGE_WORKFLOW)
     for module in set(re.findall(r"from (kotonoha[\w.]*) import", workflow)):
         importlib.import_module(module)
+def test_the_declared_python_floor_matches_what_ci_runs():
+    # A floor the CI matrix contradicts is not a supported version, it is a claim.
+    pyproject = tomllib.loads(read_packaging_file(PROJECT_ROOT / "pyproject.toml"))
+    requires = pyproject["project"]["requires-python"]
+    assert requires == ">=3.11"
+
+    workflow = read_packaging_file(TEST_WORKFLOW)
+    assert '- "3.10"' not in workflow, "CI still runs a version the project no longer supports"
+    assert '- "3.11"' in workflow, "the declared floor is not covered by CI"

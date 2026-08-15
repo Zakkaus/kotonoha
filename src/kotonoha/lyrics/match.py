@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass
 from difflib import SequenceMatcher
-from enum import Enum
+from enum import StrEnum
 from unicodedata import normalize as unicode_normalize
 
 from .hanzi_fold import fold_to_simplified
@@ -115,7 +115,7 @@ _VERSION_SUFFIX_PATTERNS = tuple(
 NORMALIZER_VERSION = 2
 
 
-class MatchConfidence(str, Enum):
+class MatchConfidence(StrEnum):
     NONE = "none"
     MEDIUM = "medium"
     HIGH = "high"
