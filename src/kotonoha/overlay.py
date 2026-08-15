@@ -12,6 +12,7 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
+import PyQt6.sip as sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PyQt6.QtWidgets import (
@@ -759,9 +760,7 @@ class LyricsOverlay(QWidget):
         The bridge keys the effect on the wl_surface. A rebuilt surface gets a new
         address, so an effect left behind is never found again and its proxy stays
         alive for the life of the process — one leaked per output switch."""
-        ptr = self._window_ptr()
-        if ptr is not None:
-            self._controller.clear_blur(ptr)
+        self._platform.set_blur_region(None)
 
     def _apply_blur(self) -> None:
         """Blur the compositor content behind the pill for the frosted-glass style;

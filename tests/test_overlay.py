@@ -713,13 +713,11 @@ def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
     overlay._active_screen = screen
     overlay.show()
 
-    cleared: list[int] = []
-    with patch.object(overlay._controller, "clear_blur", cleared.append), patch.object(
-        overlay, "_window_ptr", return_value=4242
-    ):
+    cleared: list[object] = []
+    with patch.object(overlay._platform, "set_blur_region", lambda region, radius=0: cleared.append(region)):
         overlay._on_screen_removed(screen)
 
-    assert cleared == [4242], "the surface was destroyed with its effect still registered"
+    assert cleared == [None], "the surface was destroyed with its effect still registered"
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
