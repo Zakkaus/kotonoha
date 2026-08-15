@@ -74,15 +74,15 @@ def _embedded_texts(tags: object) -> list[str]:
     if not callable(get):
         return candidates
 
-    for key in ("LYRICS", "UNSYNCEDLYRICS"):
-        values = get(key, [])
-        if isinstance(values, str):
-            values = [values]
-        if isinstance(values, (list, tuple)):
-            candidates.extend(value for value in values if isinstance(value, str))
-
-    for key in ("©lyr", b"\xa9lyr"):
-        values = get(key, [])
+    # Vorbis comments (FLAC, Ogg) accept only printable ASCII keys and raise
+    # ValueError on anything else, so probing the MP4 key on a FLAC threw before
+    # the LYRICS value already found here could be returned — every FLAC with
+    # embedded lyrics came back empty. Each lookup is therefore isolated.
+    for key in ("LYRICS", "UNSYNCEDLYRICS", "\u00a9lyr", b"\xa9lyr"):
+        try:
+            values = get(key, [])
+        except (KeyError, TypeError, ValueError):
+            continue
         if isinstance(values, str):
             values = [values]
         if isinstance(values, (list, tuple)):

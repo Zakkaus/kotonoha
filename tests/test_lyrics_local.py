@@ -148,3 +148,19 @@ def test_a_root_path_has_no_sidecar_and_does_not_raise():
     # where with_suffix raises ValueError rather than the OSError this function
     # handles, so the exception escaped the resolver.
     assert load_sidecar(Path("/")) == []
+
+
+def test_loads_embedded_lyrics_from_a_real_vorbis_comment(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    # A dict tolerates any key. A real Vorbis comment accepts only printable ASCII
+    # and raises on the MP4 key probed alongside it, which used to abort the whole
+    # lookup and made every FLAC with embedded lyrics come back empty.
+    mutagen = pytest.importorskip("mutagen")
+    from mutagen.flac import VCFLACDict
+
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    tags = VCFLACDict()
+    tags["LYRICS"] = ["[00:01.00]embedded"]
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
+
+    assert [line.text for line in load_sidecar(audio)] == ["embedded"]
