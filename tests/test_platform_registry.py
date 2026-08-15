@@ -364,3 +364,20 @@ def test_qt_window_output_events_are_explicitly_ignored() -> None:
     platform = QtWindowPlatform(_FakeHost())
     platform.output_removed(_output("DP-1"), (), None)
     platform.output_added((_output("DP-1"),), "DP-1")
+
+
+def test_the_blur_object_is_released_before_its_surface_is_destroyed() -> None:
+    # The bridge keys the compositor-side effect on the wl_surface. A rebuilt
+    # surface gets a new address, so one left behind can never be found again and
+    # leaks for the life of the process — once per output change.
+    host = _FakeHost()
+    controller = _FakeController(available=True, blur_available=True)
+    platform = LayerShellPlatform(host, controller)
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+
+    platform.output_removed(active, (), None)
+
+    cleared = [call for call in controller.calls if call[0] == "clear_blur"]
+    assert cleared, f"the surface was destroyed with its effect still registered: {controller.calls}"
+    assert host.lifecycle.index("destroy") > 0

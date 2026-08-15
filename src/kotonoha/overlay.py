@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
-import PyQt6.sip as sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PyQt6.QtWidgets import (
