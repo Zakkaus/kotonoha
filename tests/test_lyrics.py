@@ -200,6 +200,14 @@ def test_chinese_alternate_title_still_matches_vocal_candidate():
         ("Sped Up Version", "(", ")"),
         ("Full Version", "(", ")"),
         ("Opening Title Version", "(", ")"),
+        # The re-upload family: same words, different tempo, so the timings a
+        # karaoke overlay needs do not line up with the studio take.
+        ("Slowed", "(", ")"),
+        ("Slowed + Reverb", "(", ")"),
+        ("Nightcore", "(", ")"),
+        ("烟嗓版", "(", ")"),
+        ("律动版", "（", "）"),
+        ("R&B心碎版", "(", ")"),
     ],
 )
 def test_version_markers_conflict_in_both_directions(marker, opening, closing):
