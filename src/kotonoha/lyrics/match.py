@@ -26,7 +26,10 @@ _ARTIST_SEPARATOR = re.compile(
 # separates the forename and surname WITHIN one katakana name (テイラー・スウィフト),
 # so splitting it makes two different artists who merely share a given name
 # (ジョン・レノン / ジョン・デンバー) collide — a confident wrong-lyrics match.
-_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
+# Spaced "和" is YouTube Music's own join in a Chinese UI ("Lady Gaga 和 Bruno
+# Mars"); a performer name that contains 和 (和田, 平和) does not carry spaces
+# around just that character, so the spaced form is unambiguous.
+_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)|\s+和\s+")
 _KEEP = re.compile(r"[^\w一-鿿]+")
 _VERSION_TAGS = {
     "acoustic": ("acoustic", "unplugged", "原声版", "原聲版"),
@@ -152,6 +155,16 @@ def _fold_latin_accents(text: str) -> str:
     return "".join(folded)
 
 
+# The bracket characters alone, for the case where removing bracketed spans
+# would leave the title empty.
+_BRACKET_EDGES = re.compile(r"[【】\[\]（）()『』「」《》〈〉]+")
+
+
+def _is_bracket_only(title: str) -> bool:
+    """True when removing bracketed spans would leave the title with no content."""
+    return bool(title.strip()) and not _KEEP.sub("", _PARENS.sub("", title)).strip()
+
+
 def normalize(text: str) -> str:
     """Return a comparison form without changing version semantics elsewhere.
 
@@ -163,8 +176,13 @@ def normalize(text: str) -> str:
     key (never display, search queries, or version semantics)."""
     value = _fold_latin_accents(unicode_normalize("NFKC", _clean_platform_title(text)).casefold())
     value = fold_to_simplified(value)
-    value = _PARENS.sub("", value)
-    value = _FEAT_SUFFIX.sub("", value)
+    stripped = _PARENS.sub("", value)
+    # A title wholly inside brackets ("【七月上】", "(intro)") strips to nothing and
+    # could then never match anything. Keep the bracketed text as the title in
+    # that case: there it is the name, not a qualifier attached to one.
+    if not _KEEP.sub("", stripped).strip():
+        stripped = _BRACKET_EDGES.sub(" ", value)
+    value = _FEAT_SUFFIX.sub("", stripped)
     return _KEEP.sub("", value).strip()
 
 
@@ -181,6 +199,10 @@ def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
         return ""
 
     base = _PARENS.sub(remove_parenthetical, value).strip()
+    # A title wholly inside brackets is the name, not a qualifier: "【七月上】"
+    # would otherwise leave nothing to match on.
+    if not base:
+        base = _BRACKET_EDGES.sub(" ", value).strip()
     suffix = _DASH_SUFFIX.search(base)
     if suffix is not None:
         suffix_tags = _extract_version_tags(suffix.group(1))
@@ -272,6 +294,12 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
     title_strong = title_exact or (
         min(len(normalized_track), best_form_len) >= 4 and title_ratio >= 0.88
     )
+    # A title that is nothing but a bracketed span ("(intro)", "【七月上】") is kept
+    # rather than stripped to nothing, but two such titles must agree exactly:
+    # "(intro)" and "(outro)" are different interludes that a ratio would pair up.
+    if _is_bracket_only(track.title) and _is_bracket_only(candidate.title) and not title_exact:
+        title_strong = False
+        title_ratio = 0.0  # no partial credit either: they are different names
 
     track_artists = artist_tokens(track.artist)
     candidate_artists = artist_tokens(candidate.artist)
