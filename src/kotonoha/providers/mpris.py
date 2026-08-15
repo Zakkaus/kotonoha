@@ -182,7 +182,9 @@ class MprisProvider:
                 obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
                 props = obj.get_interface("org.freedesktop.DBus.Properties")
                 identity = await props.call_get("org.mpris.MediaPlayer2", "Identity")
-                result.append(PlayerInfo(name, str(_unwrap(identity))))
+                # A single property arrives as a Variant, not the a{sv} map _unwrap
+                # takes: passing it there yields "{}" as every player's display name.
+                result.append(PlayerInfo(name, str(getattr(identity, "value", identity) or "")))
             except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
                 logger.debug("identity read failed for %s: %s", name, exc)
         return result

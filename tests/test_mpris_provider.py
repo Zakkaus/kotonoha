@@ -620,3 +620,20 @@ async def test_late_reset_during_resolving_corrects_offset():
     await provider._poll_once(now=2.3)
     assert state.snapshot.current is not None
     assert state.snapshot.current.text == "first"
+
+
+class _Variant:
+    """What dbus hands back for a single property read: a Variant, not an a{sv} map."""
+
+    def __init__(self, value):
+        self.value = value
+
+
+async def test_player_identity_is_unwrapped_from_its_variant():
+    # The metadata unwrapper takes a dict; a single property arrives wrapped on its
+    # own, and passing it there rendered every player in the picker as "{}".
+    from kotonoha.providers.mpris import PlayerInfo
+
+    identity = _Variant("ElectronNCM")
+    assert str(getattr(identity, "value", identity) or "") == "ElectronNCM"
+    assert PlayerInfo("org.mpris.MediaPlayer2.ElectronNCM", "ElectronNCM").identity == "ElectronNCM"
