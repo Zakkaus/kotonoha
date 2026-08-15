@@ -1,6 +1,12 @@
 from typing import cast
 
-from kotonoha.config import Config, load_config, save_config
+from kotonoha.config import (
+    DEFAULT_LYRICS_SOURCES,
+    VALID_LYRICS_SOURCES,
+    Config,
+    load_config,
+    save_config,
+)
 
 
 def test_roundtrip(tmp_path):
@@ -12,6 +18,12 @@ def test_roundtrip(tmp_path):
     assert loaded.anchor_top is False
     assert loaded.font_size == 40
     assert loaded.show_translation is False
+
+
+def test_qqmusic_is_known_but_not_default():
+    assert "qqmusic" in VALID_LYRICS_SOURCES
+    assert "qqmusic" not in DEFAULT_LYRICS_SOURCES
+    assert Config.from_dict({"lyrics_sources": ["qqmusic"]}).lyrics_sources == ["qqmusic"]
 
 
 def test_screen_name_roundtrips(tmp_path):

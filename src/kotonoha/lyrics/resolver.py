@@ -14,7 +14,7 @@ import aiohttp
 
 from ..model import LyricLine, LyricsSnapshot
 from ..providers.gate import CiderMatch, SourceGate
-from . import kugou, lrclib, netease
+from . import kugou, lrclib, netease, qqmusic
 from .artifact import LyricsArtifact
 from .cache import LyricsCache
 from .hint import LyricsHint
@@ -101,6 +101,7 @@ class LyricsResolver:
         self._gate = gate or SourceGate()
         self._providers = dict(providers) if providers is not None else {
             "netease": NetworkProvider("netease", netease.fetch_artifact, netease.parse_payload),
+            "qqmusic": NetworkProvider("qqmusic", qqmusic.fetch_artifact, qqmusic.parse_payload),
             "lrclib": NetworkProvider("lrclib", lrclib.fetch_artifact, lrclib.parse_payload),
             "kugou": NetworkProvider("kugou", kugou.fetch_artifact, kugou.parse_payload),
         }
@@ -141,17 +142,22 @@ class LyricsResolver:
             # nothing, and it ends with the interpreter.
             lines = await asyncio.to_thread(load_local_lyrics, hint.local_path)
             return ResolvedLyrics("local", lines=tuple(lines), confidence=MatchConfidence.HIGH) if lines else None
-        if hint.provider != "netease" or hint.song_id is None or "netease" not in sources:
+        if hint.song_id is None or hint.provider not in {"netease", "qqmusic"} or hint.provider not in sources:
             return None
+        provider = netease if hint.provider == "netease" else qqmusic
         try:
-            payload = await netease.fetch_payload(session, hint.song_id)
+            payload = (
+                await netease.fetch_payload(session, hint.song_id)
+                if hint.provider == "netease"
+                else await qqmusic.fetch_payload_for_song_id(session, hint.song_id)
+            )
         except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, ValueError) as exc:
-            logger.warning("netease exact lyrics fetch failed: %s: %s", type(exc).__name__, exc)
+            logger.warning("%s exact lyrics fetch failed: %s: %s", hint.provider, type(exc).__name__, exc)
             return None
-        lines = netease.parse_payload(payload)
+        lines = provider.parse_payload(payload)
         if not lines:
             return None
-        return ResolvedLyrics("netease", lines=lines, confidence=MatchConfidence.HIGH)
+        return ResolvedLyrics(hint.provider, lines=lines, confidence=MatchConfidence.HIGH)
 
     async def _resolve_once(
         self,
