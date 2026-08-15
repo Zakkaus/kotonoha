@@ -351,14 +351,17 @@ class SettingsDialog(QDialog):
         self._initial_ui_language = config.ui_language
         self._theme = _resolve_theme(config.theme)
         self._did_fade_in = False
-        # Real KWin backdrop-blur behind the whole window (frosted glass), but only
-        # on KDE *Wayland* — that is where org_kde_kwin_blur applies. Anywhere else
-        # (X11, GNOME, offscreen) the window stays a solid panel, so we never turn it
-        # see-through where the blur would not actually happen.
+        # Real backdrop-blur behind the whole window (frosted glass), wherever the
+        # compositor advertises a blur protocol. Asking the compositor beats matching
+        # on the desktop name, which claimed KDE 6.7 could blur after it dropped
+        # org_kde_kwin_blur and denied Mutter, which speaks the replacement. Where
+        # nothing can blur the window stays a solid panel, so it is never turned
+        # see-through in front of a backdrop that will not be blurred.
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
         platform = QGuiApplication.platformName() or ""
         self._blur = LayerShellController(default_package_dir(), platform, desktop)
-        self._blur_capable = self._blur.available and "wayland" in platform.lower() and "KDE" in desktop.upper()
+        self._blur_capable = self._blur.blur_available
+        self._blur_reason = self._blur.blur_disabled_reason
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
         self._window_opacity_ok = "wayland" not in platform.lower()
@@ -572,14 +575,23 @@ class SettingsDialog(QDialog):
         self._theme_combo.setCurrentIndex(theme_idx if theme_idx >= 0 else 0)
         form.addRow(t("set.theme"), self._theme_combo)
 
-        # Frosted-glass settings window (real KWin blur; no effect off KDE Wayland).
-        # Disabled + a note when the platform can't blur, so it reads as unavailable
-        # rather than an option that silently does nothing.
+        # Frosted-glass settings window (real compositor blur; no effect without a
+        # blur protocol). Disabled + a note when the compositor can't blur, so it
+        # reads as unavailable rather than an option that silently does nothing.
         self._frost_window = QCheckBox(t("set.frost_window"))
         self._frost_window.setChecked(self._config.frost_window)
         self._frost_window.setEnabled(self._blur_capable)
         form.addRow(self._frost_window)
-        form.addRow(self._hint(t("set.frost_window_hint")))
+        # Say which cause it is rather than repeating the generic requirement: the
+        # bridge failing to load, the compositor offering no protocol, and a build
+        # without blur are three different things to act on.
+        reason_key = {
+            "session": "set.frost_window.no_session",
+            "bridge": "set.frost_window.no_bridge",
+            "protocol": "set.frost_window.no_protocol",
+            "build": "set.frost_window.no_build",
+        }.get(self._blur_reason or "")
+        form.addRow(self._hint(t(reason_key) if reason_key else t("set.frost_window_hint")))
 
         # How see-through this settings window is (whole window; text stays legible).
         # Applied on OK/Apply like every other setting (no live preview) — a live

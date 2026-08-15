@@ -133,10 +133,11 @@ def test_white_panel_option_present_and_roundtrips(qapp):
     dialog.close()
 
 
-def test_frost_only_on_kwin_wayland_and_blur_lifecycle_is_safe(qapp):
-    # Frost is gated to KDE Wayland; the offscreen test platform is not Wayland, so
-    # the window stays a solid panel. The blur lifecycle (apply on show, re-apply on
-    # resize, clear on hide) must be a sequence of safe no-ops that never raise.
+def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
+    # Frost is gated on the compositor advertising a blur protocol; the offscreen
+    # test platform is not Wayland, so the window stays a solid panel. The blur
+    # lifecycle (apply on show, re-apply on resize, clear on hide) must be a
+    # sequence of safe no-ops that never raise.
     dialog = SettingsDialog(Config())
     assert dialog._frosted is False  # offscreen platform is not "wayland"
     dialog._apply_blur()
@@ -163,13 +164,15 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
 
     from kotonoha.strings import t
 
-    # Offscreen is not KDE Wayland, so frosted glass can't work: the checkbox reads
-    # as unavailable (disabled) and the KDE-only note is shown under it.
+    # Offscreen has no blur protocol, so frosted glass can't work: the checkbox
+    # reads as unavailable (disabled), and the note under it names which of the
+    # three causes it is rather than restating the requirement.
     dialog = SettingsDialog(Config())
     assert dialog._blur_capable is False
     assert dialog._frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
-    assert t("set.frost_window_hint") in hints
+    causes = {t(f"set.frost_window.no_{cause}") for cause in ("session", "bridge", "protocol", "build")}
+    assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
     dialog.close()
 
 
