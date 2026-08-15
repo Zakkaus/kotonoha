@@ -683,3 +683,53 @@ def _async_return(value):
         return value
 
     return _call
+async def test_non_song_never_reaches_the_resolver():
+    # The gate has to be wired into the load path, not merely defined: a 14-hour
+    # compilation must not be sent to every lyric provider.
+    compilation = dict(
+        VALID_METADATA,
+        **{"xesam:title": "Study with Miku - part4 -", "mpris:length": 5_040_000_000},
+    )
+    resolver = RecordingResolver()
+    provider = MprisProvider(LyricsState(), resolver=resolver, poll_interval=0.01)
+    prepare_poll(provider, FakePlayer(metadata=compilation))
+
+    await provider._poll_once(now=0.0)
+    await provider._poll_once(now=0.5)
+    if provider._load_task is not None:
+        await provider._load_task
+
+    assert resolver.tracks == []
+
+
+async def test_an_ordinary_song_still_reaches_the_resolver():
+    resolver = RecordingResolver()
+    provider = MprisProvider(LyricsState(), resolver=resolver, poll_interval=0.01)
+    prepare_poll(provider, FakePlayer(metadata=VALID_METADATA))
+
+    await provider._poll_once(now=0.0)
+    await provider._poll_once(now=0.5)
+    assert provider._load_task is not None
+    await provider._load_task
+
+    assert [track.title for track in resolver.tracks] == ["Song"]
+
+
+async def test_an_over_long_cider_duration_still_skips_the_lookup():
+    # The browser reports no length while Cider knows the real one. Running the
+    # gate on the MPRIS value first let a two-hour stream through, and the resolver
+    # then received the 7201s duration anyway — the very content this gate exists
+    # to keep off the providers.
+    resolver = RecordingResolver()
+    gate = SourceGate()
+    state = LyricsState()
+    provider = MprisProvider(state, resolver=resolver, gate=gate)
+    commit = track_commit(1, "Song", "Artist")
+    provider._current_commit = commit
+    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=7201.0))
+    gate.observe_tick(10, 0.0, True)
+
+    await provider._load_song(commit)
+
+    assert resolver.tracks == [], "a 7201s stream was sent to the lyric providers"
+    assert provider._content_owner == "none"

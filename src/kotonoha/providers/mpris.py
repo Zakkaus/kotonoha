@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from dataclasses import replace
 from typing import Any, Protocol
 
 import aiohttp
@@ -23,6 +24,7 @@ from .mpris_track import (
     TrackInfo,
     TrackObservation,
     TrackStabilizer,
+    lyrics_lookup_reason,
     parse_metadata,
 )
 from .mpris_track import (
@@ -556,16 +558,28 @@ class MprisProvider:
                 is_playing=True,
             )
         )
-        track = commit.info.metadata()
-        cider_timing = self._gate.current_timing(track)
+        # Resolve the duration before the gate, not after: a browser often reports
+        # none at all while Cider knows the real length, and running the gate first
+        # let a 2-hour stream through on a missing MPRIS length.
+        info = commit.info
+        cider_timing = self._gate.current_timing(info.metadata())
         if cider_timing is not None and cider_timing.duration_s is not None:
-            if cider_timing.duration_s != track.duration_s:
+            if cider_timing.duration_s != info.length_s:
                 logger.debug(
                     "Using matching Cider duration %.3fs instead of MPRIS %s",
                     cider_timing.duration_s,
-                    track.duration_s,
+                    info.length_s,
                 )
-            track = TrackMetadata(track.title, track.artist, track.album, cider_timing.duration_s)
+            info = replace(info, length_s=cider_timing.duration_s)
+
+        skip_reason = lyrics_lookup_reason(info)
+        if skip_reason is not None:
+            # A 14-hour compilation is not a song; querying every provider for it
+            # costs traffic and can match a title that merely appears inside it.
+            logger.info("Skipping lyric lookup for %r: %s", info.title, skip_reason)
+            self._content_owner = "none"
+            return
+        track = info.metadata()
         try:
             result = await self._resolver.resolve(self._session, track, self._lyrics_sources)
         except asyncio.CancelledError:
