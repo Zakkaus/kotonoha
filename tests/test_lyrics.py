@@ -655,7 +655,7 @@ def test_upload_grammar_around_a_leading_credit_is_removed():
     assert clean_title("薛之謙 Joker Xue《曖昧》Official Music Video", "薛之謙") == "曖昧"
 
     # A CJK credit followed straight by its romanisation, with no separator.
-    assert clean_title("『MV』廖俊濤Liao juntao - 誰 (錄音棚)官方高畫質", "廖俊濤").startswith("誰")
+    assert clean_title("『MV』廖俊濤Liao juntao - 誰 (錄音棚)官方高畫質 Official HD", "廖俊濤") == "誰 (錄音棚)"
 
     # A leading format bracket hid the credit from the same stripping.
     raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕][完整高清音質] Chen Yifa - Fairy Town"

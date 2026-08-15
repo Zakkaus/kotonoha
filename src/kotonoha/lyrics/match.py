@@ -77,8 +77,9 @@ _LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
 _TITLE_BARS = re.compile(r"[|｜丨]")
 _TITLE_QUOTE = re.compile(r"""[\"“](.+?)[\"”]|‘(.+?)’|(?<![\w])'(.+)'""")
 _TITLE_NOISE_LATIN = re.compile(
-    r"(?i)(?<![A-Za-z])(?:official hd mv|official music video|official lyric video|official visualizer|"
-    r"official audio|official video|official mv|video oficial|music video|audio|mv)(?![A-Za-z])"
+    r"(?i)(?<![A-Za-z])(?:official hd mv|official hd|official music video|official lyric video|"
+    r"official visualizer|official audio|official video|official mv|video oficial|music video|"
+    r"audio|mv)(?![A-Za-z])"
 )
 _TITLE_NOISE_CJK = re.compile(
     r"動態歌詞Lyrics|动态歌词Lyrics|歌詞字幕|歌词字幕|完整高清音質|完整高清音质|官方高畫質|官方高画质|"
