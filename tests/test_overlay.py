@@ -616,3 +616,30 @@ def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_parked_position_survives_the_next_geometry_pass(qapp):
+    # Releasing at the right-hand edge is stored as a large negative x, because the
+    # surface is wider than the visible pill. Re-applying the geometry — a settings
+    # apply, a re-show, a restart — must leave the panel where it was released;
+    # clamping it fully on screen there teleports it, which is what a user sees as
+    # the panel flying away after a drag.
+    screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._active_screen = screen
+    overlay._layer_pos = QPoint(-1100, 100)
+    overlay._drag_local = QPoint(20, 40)
+
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay, "_window_size", return_value=(1100, 140)
+    ), patch.object(overlay, "_recreate_layer_surface"):
+        overlay._commit_drag_position(QPoint(20, 40))
+        parked = overlay._layer_pos
+        reloaded = overlay._compute_layer_pos(1100, 140)
+
+    assert overlay._config.screen_width == 2048
+    assert overlay._config.screen_height == 1152
+    assert reloaded == parked, f"the panel jumped from {parked} to {reloaded}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()

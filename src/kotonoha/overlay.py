@@ -437,11 +437,18 @@ class LyricsOverlay(QWidget):
         screen_h = geo.height() if geo else 720
         x = (screen_w - width) // 2 + self._config.margin_x
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
-        # Fully on screen, not the partial range a drag uses: a saved offset was
-        # computed against whatever output it was dragged on, and a smaller one
-        # (a mode change, a different monitor) would otherwise push the panel
-        # almost entirely off — the partial bounds keep only 80x60 px of it.
-        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=False)
+        # A drag may legitimately park the panel past the edge — the surface is
+        # wider than the visible pill, so a right-hand park is stored as a large
+        # negative x. Honour that only on the output it was measured on: clamping
+        # it fully there would yank the panel back on the next geometry pass, and
+        # trusting it on a *smaller* output leaves 80x60 px of panel on screen.
+        same_output = geo is not None and (geo.width(), geo.height()) == (
+            self._config.screen_width,
+            self._config.screen_height,
+        )
+        return self._clamp_to_screen(
+            QPoint(x, y), screen=screen, width=width, height=height, allow_partial=same_output
+        )
 
     def _apply_window_geometry(self, *, reset_position: bool = True) -> None:
         """Fix the surface size and compute its position.
@@ -871,6 +878,10 @@ class LyricsOverlay(QWidget):
         # center-relative coordinate system used by _compute_layer_pos().
         self._config.margin_x = self._layer_pos.x() - (target_geo.width() - width) // 2
         self._config.screen_name = target_screen.name()
+        # Record the geometry this offset was measured against, so loading it back
+        # can tell a deliberate park from one stranded by a resolution change.
+        self._config.screen_width = target_geo.width()
+        self._config.screen_height = target_geo.height()
         if not self._same_screen(surface_screen, target_screen):
             self._recreate_layer_surface(target_screen)
         elif self._controller.available:
