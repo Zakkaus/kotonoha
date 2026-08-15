@@ -442,9 +442,11 @@ class LyricsOverlay(QWidget):
         # negative x. Honour that only on the output it was measured on: clamping
         # it fully there would yank the panel back on the next geometry pass, and
         # trusting it on a *smaller* output leaves 80x60 px of panel on screen.
-        same_output = geo is not None and (geo.width(), geo.height()) == (
-            self._config.screen_width,
-            self._config.screen_height,
+        same_output = (
+            geo is not None
+            and screen is not None
+            and screen.name() == self._config.screen_name
+            and (geo.width(), geo.height()) == (self._config.screen_width, self._config.screen_height)
         )
         return self._clamp_to_screen(
             QPoint(x, y), screen=screen, width=width, height=height, allow_partial=same_output

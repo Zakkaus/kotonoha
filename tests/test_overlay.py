@@ -643,3 +643,32 @@ def test_a_parked_position_survives_the_next_geometry_pass(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size(qapp):
+    # Two monitors of the same model have the same geometry, so size alone cannot
+    # say the saved offset was measured here. Honouring it on the other one puts
+    # the panel off screen, which is the failure the clamp exists to prevent.
+    other = FakeScreen("DP-1", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(
+        LyricsState(),
+        Config(
+            screen_name="HDMI-A-1",
+            screen_width=1920,
+            screen_height=1080,
+            margin_x=-1800,
+            margin_edge=100,
+        ),
+        UnavailableController(),
+    )
+    overlay._active_screen = other
+
+    with patch.object(QGuiApplication, "screens", return_value=[other]), patch.object(
+        overlay, "_window_size", return_value=(1100, 140)
+    ):
+        pos = overlay._compute_layer_pos(1100, 140)
+
+    assert 0 <= pos.x() <= 1920 - 1100, f"panel parked off screen at x={pos.x()}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
