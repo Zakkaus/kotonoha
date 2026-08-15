@@ -76,7 +76,7 @@ def lyrics_lookup_reason(track: TrackInfo) -> str | None:
     if track.length_s is not None and track.length_s > _LYRICS_LOOKUP_MAX_LENGTH_S:
         return f"duration {track.length_s:.0f}s is longer than a normal song"
 
-    title = track.title.casefold()
+    title = (track.reported_title or track.title).casefold()
     for marker in _NON_SONG_TITLE_MARKERS:
         if marker.casefold() in title:
             return f"title contains non-song marker {marker!r}"
@@ -95,6 +95,12 @@ class TrackInfo:
     album: str
     length_s: float | None
     track_id: str
+    # What the player actually reported, before the upload grammar was stripped.
+    # The non-song gate reads this: "is this a song at all" is a question about
+    # the upload, and the markers that answer it (一小時, 串燒, KTV必唱) are the
+    # very text the title cleaner removes. Defaults to the cleaned title so a
+    # hand-built TrackInfo keeps the old behaviour.
+    reported_title: str = ""
 
     def metadata(self) -> TrackMetadata:
         return TrackMetadata(self.title, self.artist, self.album, self.length_s)
@@ -107,12 +113,14 @@ class TrackInfo:
 def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
     length_s = _length_seconds(raw.get("mpris:length"))
     artist = _as_text(raw.get("xesam:artist"))
+    reported = _as_text(raw.get("xesam:title"))
     return TrackInfo(
-        title=_clean_title(_as_text(raw.get("xesam:title")), artist),
+        title=_clean_title(reported, artist),
         artist=artist,
         album=_as_text(raw.get("xesam:album")),
         length_s=length_s,
         track_id=str(raw.get("mpris:trackid") or ""),
+        reported_title=reported,
     )
 
 
