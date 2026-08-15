@@ -208,3 +208,18 @@ def test_lyrics_lookup_gate_explains_duration_and_keeps_song_lengths():
 
     assert lyrics_lookup_reason(long_track) == "duration 7201s is longer than a normal song"
     assert lyrics_lookup_reason(song) is None
+
+
+def test_the_non_song_gate_reads_what_the_player_reported():
+    # Title cleaning strips the very markers that identify a non-song upload, so a
+    # gate reading the cleaned title lets a one-hour compilation through. Both PRs
+    # were green alone; together the cleaner removed the evidence the gate needs.
+    raw = (
+        "路小雨 Lu Xiao Yu｜不能說的秘密 Secret OST | One hour 一小時放鬆音樂｜"
+        "周杰倫 Jay Chou｜Played by Elvis Piano 維敏彈鋼琴"
+    )
+    info = parse_metadata({"xesam:title": raw, "xesam:artist": ["Elvis Piano 維敏彈鋼琴"]})
+
+    assert info.title == "不能說的秘密 Secret OST", "the cleaner should still tidy the title"
+    assert info.reported_title == raw
+    assert lyrics_lookup_reason(info) is not None, "a one-hour compilation reached the providers"
