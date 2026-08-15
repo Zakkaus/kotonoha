@@ -6,7 +6,7 @@ from typing import Protocol
 
 from PyQt6.QtGui import QGuiApplication
 
-from .detect import current_desktop, session_desktop
+from .detect import current_desktop, niri_socket, session_desktop
 from .layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from .native import LayerShellController, default_package_dir
 from .overlay_contracts import LayerShellBridge, OverlayDragStrategy, OverlayPlatform, WindowHost
@@ -27,7 +27,9 @@ class _NiriLayerShellDragProvider:
 
     def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
         desktops = {part.strip().lower() for part in desktop.split(":")}
-        if "niri" not in desktops:
+        # The socket is the reliable half: niri exports NIRI_SOCKET to every client
+        # it spawns, but publishes the desktop name only when it runs as a session.
+        if "niri" not in desktops and not niri_socket():
             return None
         return NiriLayerShellDragStrategy(host, controller)
 

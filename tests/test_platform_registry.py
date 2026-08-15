@@ -589,3 +589,18 @@ def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None
 
     assert isinstance(settings, QtWindowPlatform)
     assert settings.capabilities.window_opacity is True
+
+
+def test_layer_shell_registry_selects_niri_from_its_socket(monkeypatch) -> None:
+    # niri sets XDG_CURRENT_DESKTOP=niri only when it runs as a session; started
+    # nested or without the session wrapper it leaves the parent's value, so a real
+    # niri can present itself as KDE. It always exports NIRI_SOCKET to its clients.
+    monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
+    monkeypatch.setenv("NIRI_SOCKET", "/run/user/1000/niri.wayland-1.1.sock")
+    controller = _FakeController(available=True)
+    host = _FakeHost()
+
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+
+    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
