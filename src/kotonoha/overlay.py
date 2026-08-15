@@ -12,7 +12,6 @@ from __future__ import annotations
 import logging
 from dataclasses import replace
 
-from PyQt6 import sip
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QShowEvent
 from PyQt6.QtWidgets import (
@@ -31,7 +30,15 @@ from .icons import lock_icon, settings_icon
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
 from .model import EMPTY_SNAPSHOT, LyricLine, LyricsSnapshot
-from .platform import LayerShellController, default_package_dir
+from .platform import (
+    DefaultOverlayPlatformFactory,
+    LayerShellController,
+    QtWindowHost,
+    WindowPoint,
+    WindowPolicy,
+    WindowRectangle,
+    default_package_dir,
+)
 from .state import LyricsState
 from .strings import t
 
@@ -96,14 +103,31 @@ class LyricsOverlay(QWidget):
             QGuiApplication.platformName(),
             desktop or "",
         )
-
+        self._host = QtWindowHost(self)
+        self._platform = DefaultOverlayPlatformFactory(self._controller)(self._host)
+        self._platform.prepare()
+        self._host.apply_window_policy(self._platform_policy())
+        for name, available, reason in (
+            (
+                "layer shell",
+                self._platform.capabilities.layer_shell,
+                self._platform.capabilities.layer_shell_reason,
+            ),
+            ("blur", self._platform.capabilities.blur, self._platform.capabilities.blur_reason),
+            (
+                "input regions",
+                self._platform.capabilities.input_region,
+                self._platform.capabilities.input_region_reason,
+            ),
+            (
+                "output rebinding",
+                self._platform.capabilities.output_rebinding,
+                self._platform.capabilities.output_rebinding_reason,
+            ),
+        ):
+            if not available:
+                logger.warning("Overlay %s unavailable: %s", name, reason or "no reason provided")
         self.setWindowTitle("Kotonoha")
-        self.setWindowFlags(
-            Qt.WindowType.FramelessWindowHint
-            | Qt.WindowType.WindowStaysOnTopHint
-            | Qt.WindowType.Window
-            | Qt.WindowType.WindowDoesNotAcceptFocus
-        )
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
         self._build_ui()
@@ -129,6 +153,10 @@ class LyricsOverlay(QWidget):
         self._on_snapshot(self._state.snapshot)
 
     # --- UI ---
+
+    def _platform_policy(self) -> WindowPolicy:
+        """Keep the overlay's non-activating top-level window policy explicit."""
+        return WindowPolicy(does_not_accept_focus=True, recreate_surface=True)
 
     def _build_ui(self) -> None:
         self._container = QWidget(self)
@@ -300,7 +328,7 @@ class LyricsOverlay(QWidget):
         QTimer.singleShot(0, self._apply_blur)  # panel_style may have changed
         if (
             self.isVisible()
-            and self._controller.available
+            and self._platform.capabilities.output_rebinding
             and self._active_screen is not None
             and not self._same_screen(previous_screen, self._active_screen)
         ):
@@ -467,9 +495,11 @@ class LyricsOverlay(QWidget):
         self._bind_widget_screen(screen)
         if reset_position:
             self._layer_pos = self._compute_layer_pos(width, height)
-        if not self._controller.available:
+        if not self._platform.capabilities.layer_shell:
             geo = screen.geometry()
-            self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+            self._platform.move_to(
+                WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+            )
 
     def _bind_widget_screen(self, screen) -> None:
         if screen is None:
@@ -569,25 +599,15 @@ class LyricsOverlay(QWidget):
         QTimer.singleShot(0, self.activate_layer_shell)
         QTimer.singleShot(100, self.activate_layer_shell)
 
-    def _window_ptr(self) -> int | None:
-        self.winId()  # force native handle creation
-        handle = self.windowHandle()
-        if handle is None:
-            return None
-        return sip.unwrapinstance(handle)
-
     def activate_layer_shell(self) -> None:
         """Promote to a layer surface. MUST be called before the first show()."""
         self._bind_widget_screen(self._target_screen())
-        ptr = self._window_ptr()
-        if ptr is None:
-            return
-        if self._controller.available:
-            self._controller.make_overlay(ptr)
-            self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        result = self._platform.activate()
+        if self._platform.capabilities.layer_shell and result.succeeded:
+            self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
             self._apply_input_region()
             self._apply_blur()
-        else:
+        elif not self._platform.capabilities.layer_shell:
             self._fallback_position()
 
     def _recreate_layer_surface(self, screen) -> None:
@@ -599,7 +619,7 @@ class LyricsOverlay(QWidget):
         surface with the QWindow's selected screen on the next activation.
         """
         self._active_screen = screen
-        if not self._controller.available or not self.isVisible():
+        if not self._platform.capabilities.output_rebinding or not self.isVisible():
             self._bind_widget_screen(screen)
             self._apply_window_geometry(reset_position=False)
             return
@@ -612,6 +632,10 @@ class LyricsOverlay(QWidget):
             handle.destroy()
         self._bind_widget_screen(screen)
         self._apply_window_geometry(reset_position=False)
+        geometry = screen.geometry()
+        self._platform.rebind_output(
+            WindowRectangle(geometry.x(), geometry.y(), geometry.width(), geometry.height())
+        )
         self.activate_layer_shell()
         self.show()
 
@@ -703,7 +727,9 @@ class LyricsOverlay(QWidget):
         if screen is None:
             return
         geo = screen.geometry()
-        self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        self._platform.move_to(
+            WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        )
 
     def set_passthrough(self, enabled: bool) -> None:
         self._passthrough = enabled
@@ -715,14 +741,13 @@ class LyricsOverlay(QWidget):
     def _apply_input_region(self) -> None:
         """Locked -> full click-through. Unlocked -> only the visible pill catches
         clicks, so the big transparent band around it stays click-through."""
-        ptr = self._window_ptr()
-        if ptr is None or not self._controller.available:
-            return
         if self._passthrough:
-            self._controller.set_passthrough(ptr, True)
+            self._platform.set_input_region(None)
         else:
             rect = self._container.geometry()
-            self._controller.set_input_rect(ptr, rect.x(), rect.y(), rect.width(), rect.height())
+            self._platform.set_input_region(
+                WindowRectangle(rect.x(), rect.y(), rect.width(), rect.height())
+            )
 
     def _refresh_input_region(self) -> None:
         if not self._passthrough:
@@ -741,14 +766,14 @@ class LyricsOverlay(QWidget):
     def _apply_blur(self) -> None:
         """Blur the compositor content behind the pill for the frosted-glass style;
         no-op where no blur protocol exists, leaving the translucent fill."""
-        ptr = self._window_ptr()
-        if ptr is None or not self._controller.blur_available:
+        if not self._platform.capabilities.blur:
             return
         if self._config.panel_style == "frost":
             rect = self._container.geometry()
-            self._controller.set_blur_region(ptr, rect.x(), rect.y(), rect.width(), rect.height(), PILL_RADIUS)
+            region = WindowRectangle(rect.x(), rect.y(), rect.width(), rect.height())
+            self._platform.set_blur_region(region, PILL_RADIUS)
         else:
-            self._controller.clear_blur(ptr)
+            self._platform.set_blur_region(None)
 
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
         # The container resizes as the pill/lyric changes size; keep the input
@@ -800,13 +825,11 @@ class LyricsOverlay(QWidget):
             # at an output boundary destroys the Wayland pointer grab and makes
             # the next mouse event disappear.
             self._layer_pos += diff
-            if self._controller.available:
-                ptr = self._window_ptr()
-                if ptr is not None:
-                    self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
-                    # No repaint: the bridge commits the surface, and the compositor
-                    # just re-positions the cached buffer — so the heavy lyric text
-                    # isn't re-rendered every frame, which is what killed tracking.
+            if self._platform.capabilities.layer_shell:
+                self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
+                # No repaint: the platform commits the surface, and the compositor
+                # just re-positions the cached buffer, so heavy lyric text is not
+                # re-rendered every frame.
             else:
                 geo = screen.geometry()
                 self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
@@ -908,10 +931,8 @@ class LyricsOverlay(QWidget):
         self._config.screen_height = target_geo.height()
         if not self._same_screen(surface_screen, target_screen):
             self._recreate_layer_surface(target_screen)
-        elif self._controller.available:
-            ptr = self._window_ptr()
-            if ptr is not None:
-                self._controller.set_anchor_position(ptr, self._layer_pos.x(), self._layer_pos.y())
+        elif self._platform.capabilities.layer_shell:
+            self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
         self.position_changed.emit(
             self._config.margin_edge,
             self._config.margin_x,
