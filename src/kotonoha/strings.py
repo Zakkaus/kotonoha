@@ -187,7 +187,9 @@ STRINGS: dict[str, dict[str, str]] = {
     "player.track_artist": {
         "en": " by {artist}", "zh-Hans": " - {artist}", "zh-Hant": " - {artist}", "ja": " - {artist}",
     },
-    "player.automatic": {"en": "automatic", "zh-Hans": "自动", "zh-Hant": "自動", "ja": "自動"},
+    # Marks the row automatic selection is currently on. Reusing the word "automatic"
+    # here made it read as a second copy of the "Automatic" row above it.
+    "player.automatic": {"en": "Current", "zh-Hans": "当前", "zh-Hant": "目前", "ja": "現在"},
     "player.status.unknown": {"en": "Unknown", "zh-Hans": "未知", "zh-Hant": "未知", "ja": "不明"},
     "set.player_hint": {
         "en": "Choose which detected MPRIS player supplies the lyrics.",

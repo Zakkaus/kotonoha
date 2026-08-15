@@ -48,7 +48,7 @@ def test_detected_players_are_readable_and_store_bus_name(qapp):
 
     index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
     assert index > 0
-    assert dialog._player_combo.itemText(index) == "automatic · YouTube Music · Playing · Song by Artist"
+    assert dialog._player_combo.itemText(index) == "Current · YouTube Music · Playing · Song by Artist"
     dialog._player_combo.setCurrentIndex(index)
     assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
     dialog.close()
