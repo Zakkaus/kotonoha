@@ -1,5 +1,7 @@
 from pathlib import Path
 
+import pytest
+
 from kotonoha.lyrics.local import load_sidecar
 
 
@@ -76,6 +78,69 @@ def test_sidecar_offset_tag_shifts_the_timings(tmp_path: Path):
     # Junk far outside a plausible correction is not an instruction.
     (tmp_path / "song.lrc").write_text("[offset:999999]\n[00:02.00]line\n", encoding="utf-8")
     assert [line.start for line in load_sidecar(audio)] == [2.0]
+def test_sidecar_wins_over_embedded_tag(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_text("[00:01.00]sidecar", encoding="utf-8")
+
+    monkeypatch.setattr(
+        mutagen,
+        "File",
+        lambda _: type("Audio", (), {"tags": {"LYRICS": ["[00:02.00]embedded"]}})(),
+    )
+
+    assert [line.text for line in load_sidecar(audio)] == ["sidecar"]
+
+
+def test_loads_embedded_vorbis_lyrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    tags = {"LYRICS": ["[00:01.00]embedded"]}
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
+
+    assert [line.text for line in load_sidecar(audio)] == ["embedded"]
+
+
+def test_loads_embedded_unsynced_vorbis_lyrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.ogg"
+    audio.touch()
+    tags = {"UNSYNCEDLYRICS": ["[00:01.00]embedded"]}
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
+
+    assert [line.text for line in load_sidecar(audio)] == ["embedded"]
+
+
+def test_loads_embedded_id3_uslt(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.mp3"
+    audio.touch()
+    frame = type("USLT", (), {"text": "[00:01.00]embedded"})()
+    tags = type("ID3Tags", (), {"getall": lambda self, key: [frame] if key == "USLT" else []})()
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
+
+    assert [line.text for line in load_sidecar(audio)] == ["embedded"]
+
+
+def test_loads_embedded_mp4_lyrics(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.m4a"
+    audio.touch()
+    tags = {"©lyr": ["[00:01.00]embedded"]}
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
+
+    assert [line.text for line in load_sidecar(audio)] == ["embedded"]
+
+
+def test_plain_embedded_lyrics_is_a_miss(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    mutagen = pytest.importorskip("mutagen")
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": {"LYRICS": ["plain text"]}})())
+
+    assert load_sidecar(audio) == []
 
 
 def test_a_root_path_has_no_sidecar_and_does_not_raise():

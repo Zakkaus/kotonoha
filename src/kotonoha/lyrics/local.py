@@ -1,4 +1,4 @@
-"""Load lyrics from the LRC sidecar of a local audio file."""
+"""Load timed lyrics from a local audio file or its metadata."""
 
 from __future__ import annotations
 
@@ -9,7 +9,7 @@ from .lrc_parser import parse_lrc
 
 
 def load_sidecar(audio_path: Path) -> list[LyricLine]:
-    """Return parsed timed lines from the audio file's adjacent LRC sidecar."""
+    """Return timed lines from an adjacent LRC file, then from embedded metadata."""
     if not audio_path.name:
         # A player publishing xesam:url = "file:///" reaches here as Path("/"), and
         # with_suffix raises ValueError on a path with no name — outside the OSError
@@ -20,14 +20,72 @@ def load_sidecar(audio_path: Path) -> list[LyricLine]:
 
     try:
         if sidecar.resolve().parent != audio_directory:
-            return []
-        raw = sidecar.read_bytes()
+            raw = None
+        else:
+            raw = sidecar.read_bytes()
     except OSError:
+        raw = None
+
+    if raw is not None:
+        for encoding in ("utf-8", "gb18030"):
+            try:
+                lines = parse_lrc(raw.decode(encoding))
+                if lines:
+                    return lines
+            except UnicodeDecodeError:
+                continue
+
+    return _load_embedded(audio_path)
+
+
+def _load_embedded(audio_path: Path) -> list[LyricLine]:
+    try:
+        # Optional: the feature exists only where the user installed it, so the
+        # type checker must not treat an absent import as an error.
+        import mutagen  # ty: ignore[unresolved-import]
+    except ImportError:
         return []
 
-    for encoding in ("utf-8", "gb18030"):
-        try:
-            return parse_lrc(raw.decode(encoding))
-        except UnicodeDecodeError:
-            continue
+    try:
+        audio = mutagen.File(audio_path)
+        if audio is None or audio.tags is None:
+            return []
+        for text in _embedded_texts(audio.tags):
+            lines = parse_lrc(text)
+            if lines:
+                return lines
+    except (AttributeError, KeyError, IndexError, OSError, TypeError, ValueError, mutagen.MutagenError):
+        return []
     return []
+
+
+def _embedded_texts(tags: object) -> list[str]:
+    """Return candidate text values from the supported mutagen tag shapes."""
+    candidates: list[str] = []
+
+    getall = getattr(tags, "getall", None)
+    if callable(getall):
+        for frame in getall("USLT"):
+            text = getattr(frame, "text", None)
+            if isinstance(text, str):
+                candidates.append(text)
+
+    get = getattr(tags, "get", None)
+    if not callable(get):
+        return candidates
+
+    for key in ("LYRICS", "UNSYNCEDLYRICS"):
+        values = get(key, [])
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, (list, tuple)):
+            candidates.extend(value for value in values if isinstance(value, str))
+
+    for key in ("©lyr", b"\xa9lyr"):
+        values = get(key, [])
+        if isinstance(values, str):
+            values = [values]
+        if isinstance(values, (list, tuple)):
+            candidates.extend(value for value in values if isinstance(value, str))
+
+    return candidates

@@ -16,6 +16,8 @@ It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible pla
 - Wayland layer-shell overlay with click-through mode, dragging, translucency, and blur.
 - Settings and system tray controls for fonts, colors, position, opacity, icons, and language.
 
+Install the optional `mutagen` dependency to read LRC lyrics embedded in local audio tags.
+
 ## Installation
 
 ### Release packages
