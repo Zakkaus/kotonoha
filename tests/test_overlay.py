@@ -6,7 +6,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config
 from kotonoha.overlay import LyricsOverlay
@@ -778,3 +778,21 @@ def _ok():
     from kotonoha.platform.overlay_contracts import OverlayOperationResult
 
     return OverlayOperationResult.success()
+
+
+def test_the_qt_host_shapes_and_clears_the_real_input_mask(qapp):
+    # The production host has to implement the shaping the contract describes, or
+    # the ordinary-window path calls a method nothing provides.
+    from kotonoha.platform.overlay_contracts import WindowRectangle
+    from kotonoha.platform.qt_host import QtWindowHost
+
+    widget = QWidget()
+    host = QtWindowHost(widget)
+
+    host.set_input_mask(WindowRectangle(3, 4, 20, 10))
+    assert widget.mask().boundingRect() == QRect(3, 4, 20, 10)
+
+    host.clear_input_mask()
+    assert widget.mask().isEmpty()
+    widget.deleteLater()
+    qapp.processEvents()

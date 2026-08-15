@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import PyQt6.sip as sip
 from PyQt6.QtCore import QRect, Qt
+from PyQt6.QtGui import QRegion
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from .overlay_contracts import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
@@ -75,6 +76,20 @@ class QtWindowHost(WindowHost):
     def move_window(self, position: WindowPoint) -> None:
         self._known_position = position
         self._widget.move(position.x, position.y)
+
+    def set_input_mask(self, region: WindowRectangle) -> None:
+        """Confine pointer input to one rectangle.
+
+        Qt's mask is the toolkit's own input shaping: on X11 it sets the input
+        shape, and the Wayland plugin turns it into wl_surface.set_input_region.
+        Without it an ordinary window accepted clicks across its whole transparent
+        band and swallowed input meant for the window behind it."""
+        self._widget.setMask(QRegion(region.x, region.y, region.width, region.height))
+
+    def clear_input_mask(self) -> None:
+        """Remove the shaping. Click-through is carried by the window policy, so
+        this never doubles as "accept nothing"."""
+        self._widget.clearMask()
 
     def refresh(self) -> None:
         self._widget.update()
