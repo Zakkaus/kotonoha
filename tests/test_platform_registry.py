@@ -163,3 +163,22 @@ def test_layer_shell_operations_report_failure_when_the_capability_is_off() -> N
     ):
         assert not result.succeeded
         assert result.reason
+
+
+def test_the_fallback_move_reports_a_compositor_that_ignored_it() -> None:
+    # A Wayland compositor without Layer Shell ignores a client-side move of a
+    # toplevel. Reporting success because move_window() did not raise let the
+    # caller persist a position the visible window never took.
+    class _StubbornHost(_FakeHost):
+        def window_position(self) -> WindowPoint | None:
+            return WindowPoint(0, 0)  # wherever it is asked to go, it stays here
+
+        def move_window(self, position: WindowPoint) -> None:
+            del position
+
+    platform = QtWindowPlatform(_StubbornHost(), reason="no Layer Shell here")
+
+    result = platform.move_to(WindowPoint(120, 40))
+
+    assert not result.succeeded
+    assert result.reason

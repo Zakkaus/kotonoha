@@ -600,8 +600,11 @@ class LyricsOverlay(QWidget):
         QTimer.singleShot(0, self.activate_layer_shell)
         QTimer.singleShot(100, self.activate_layer_shell)
 
-    def activate_layer_shell(self) -> None:
-        """Promote to a layer surface. MUST be called before the first show()."""
+    def activate_layer_shell(self) -> bool:
+        """Promote to a layer surface. MUST be called before the first show().
+
+        Returns whether the surface is now a layer surface, so a caller that is
+        rebuilding one can tell a real rebuild from a fallback."""
         self._bind_widget_screen(self._target_screen())
         result = self._platform.activate()
         capabilities = self._platform.capabilities
@@ -609,7 +612,7 @@ class LyricsOverlay(QWidget):
             self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
             self._apply_input_region()
             self._apply_blur()
-            return
+            return True
         if capabilities.layer_shell:
             # The capability is there but activation failed — a missing window
             # handle, or the bridge raising. Falling through silently left an
@@ -621,6 +624,7 @@ class LyricsOverlay(QWidget):
         # with passthrough on stayed clickable, so a locked overlay swallowed the
         # pointer.
         self._apply_input_region()
+        return False
 
     def _recreate_layer_surface(self, screen) -> None:
         """Recreate a mapped layer surface on ``screen``.
@@ -729,20 +733,34 @@ class LyricsOverlay(QWidget):
         self._bind_widget_screen(screen)
         self._apply_window_geometry()  # the returning output may have a new mode
         self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
-        self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
+        rebuilt = self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
         self.show()
+        if not rebuilt:
+            # Activation failed, so no layer surface exists on the returning output.
+            # Clearing the flag here would retire a rebuild that is still owed.
+            logger.info("Output %s returned but the surface was not rebuilt", screen.name())
+            return
         self._pending_resurface = False  # only a rebuild that happened clears it
         logger.info("Rebuilt the overlay surface on %s", screen.name())
 
     def _fallback_position(self) -> None:
-        """Position manually when layer-shell is unavailable (X11 / GNOME)."""
+        """Position as an ordinary window, for X11 and for a failed activation.
+
+        Through the host rather than the platform: this runs when Layer Shell is
+        unavailable *or* when it is available and activation failed, and in the
+        second case the Layer Shell adapter is still in place — asking it to move
+        would set a native anchor on a surface that was never promoted, which is
+        not a fallback at all.
+        """
         screen = self._target_screen()
         if screen is None:
             return
         geo = screen.geometry()
-        self._platform.move_to(
-            WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
-        )
+        position = WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+        try:
+            self._host.move_window(position)
+        except RuntimeError as exc:
+            logger.debug("Ordinary-window positioning failed: %s", exc)
 
     def set_passthrough(self, enabled: bool) -> None:
         self._passthrough = enabled

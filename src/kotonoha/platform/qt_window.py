@@ -106,6 +106,15 @@ class QtWindowPlatform(OverlayPlatform):
             self._host.move_window(position)
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Window move failed: {exc}")
+        # Reporting success because move_window() did not raise is not evidence the
+        # window moved: a Wayland compositor without Layer Shell ignores a
+        # client-side move of a toplevel, and the caller then persisted a position
+        # the visible window never took. Ask where the window actually is.
+        landed = self._host.window_position()
+        if landed is not None and landed != position:
+            return OverlayOperationResult.failure(
+                "The compositor did not apply the move; this window cannot be positioned by the client."
+            )
         return OverlayOperationResult.success()
 
     def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:

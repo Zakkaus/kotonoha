@@ -796,3 +796,50 @@ def test_the_qt_host_shapes_and_clears_the_real_input_mask(qapp):
     assert widget.mask().isEmpty()
     widget.deleteLater()
     qapp.processEvents()
+
+
+def test_the_qt_host_implements_every_method_the_contract_names():
+    # The host used to inherit the Protocol, so a method it forgot became a silent
+    # no-op: the adapter reported success while nothing happened.
+    from kotonoha.platform.overlay_contracts import WindowHost
+    from kotonoha.platform.qt_host import QtWindowHost
+
+    required = {name for name in vars(WindowHost) if not name.startswith("_")}
+    missing = {name for name in required if not callable(getattr(QtWindowHost, name, None))}
+    assert not missing, f"QtWindowHost does not implement: {sorted(missing)}"
+
+
+def test_a_failed_activation_positions_as_an_ordinary_window(qapp):
+    # The Layer Shell adapter is still in place when activation fails, so asking it
+    # to move set a native anchor on a surface that was never promoted — no real
+    # fallback happened.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    platform = layer_shell_platform(overlay)
+    moves: list[tuple[str, object]] = []
+    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")), patch.object(
+        platform, "move_to", lambda position: moves.append(("anchor", position)) or OverlayOperationResult.success()
+    ), patch.object(overlay._host, "move_window", lambda position: moves.append(("host", position))):
+        overlay.activate_layer_shell()
+
+    assert [kind for kind, _ in moves] == ["host"], f"positioned through the wrong path: {moves}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_returning_output_that_cannot_be_rebuilt_stays_owed(qapp):
+    # Clearing the pending flag after a failed activation retires a rebuild that is
+    # still owed, and nothing tries again.
+    screen = qapp.primaryScreen()
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    platform = layer_shell_platform(overlay)
+    overlay._active_screen = screen
+    overlay._pending_resurface = True
+
+    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")):
+        overlay._restore_surface(screen)
+
+    assert overlay._pending_resurface is True
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()

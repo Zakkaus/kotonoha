@@ -7,11 +7,17 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QRegion
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from .overlay_contracts import WindowHost, WindowPoint, WindowPolicy, WindowRectangle
+from .overlay_contracts import WindowPoint, WindowPolicy, WindowRectangle
 
 
-class QtWindowHost(WindowHost):
-    """Translate abstract window operations to one top-level Qt widget."""
+class QtWindowHost:
+    """Translate abstract window operations to one top-level Qt widget.
+
+    Deliberately not inheriting WindowHost: a Protocol's empty bodies come with
+    it, so a method left unimplemented becomes a silent no-op returning None
+    while the caller reports success. Conformance is structural and checked
+    where a host is passed; a genuine omission now raises.
+    """
 
     def __init__(self, widget: QWidget) -> None:
         self._widget = widget
