@@ -80,19 +80,11 @@ def lyrics_lookup_reason(track: TrackInfo) -> str | None:
         if marker.casefold() in title:
             return f"title contains non-song marker {marker!r}"
 
-    if title.count("|") >= 2 or title.count("｜") >= 2:
-        return "title lists several works"
-
     words = track.title.split()
     if "remix" in title and len(words) >= 4 and sum(any("一" <= char <= "鿿" for char in word) for word in words) >= 3:
         return "title combines several song names"
 
     return None
-
-
-def should_lookup_lyrics(track: TrackInfo) -> bool:
-    """Return whether the track should be sent to lyric providers."""
-    return lyrics_lookup_reason(track) is None
 
 
 @dataclass(frozen=True)

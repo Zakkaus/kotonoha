@@ -171,13 +171,25 @@ def test_duration_drift_does_not_create_a_new_track_transition():
 
 
 def test_lyrics_lookup_gate_matches_classified_corpus():
+    # Driven from the raw MPRIS fields through parse_metadata, the way production
+    # reaches this gate. Feeding it the hand-written clean_title instead hid a rule
+    # that skipped legitimate songs whose raw titles still carried upload grammar.
     results = {
-        case.raw_title: lyrics_lookup_reason(TrackInfo(case.clean_title, case.clean_artist, "", None, ""))
+        case.raw_title: lyrics_lookup_reason(
+            parse_metadata(
+                {
+                    "xesam:title": case.raw_title,
+                    "xesam:artist": [case.raw_artist] if case.raw_artist else [],
+                }
+            )
+        )
         for case in MPRIS_TITLE_CASES
     }
 
-    assert all(results[case.raw_title] for case in MPRIS_TITLE_CASES if case.category == "not_music")
-    assert all(not results[case.raw_title] for case in MPRIS_TITLE_CASES if case.category != "not_music")
+    skipped = {title for title, reason in results.items() if reason}
+    expected = {case.raw_title for case in MPRIS_TITLE_CASES if case.category == "not_music"}
+    assert skipped - expected == set(), f"songs the gate would skip: {sorted(skipped - expected)}"
+    assert expected - skipped == set(), f"non-songs the gate would query: {sorted(expected - skipped)}"
 
 
 def test_lyrics_lookup_gate_explains_duration_and_keeps_song_lengths():

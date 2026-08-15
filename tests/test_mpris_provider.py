@@ -713,3 +713,23 @@ async def test_an_ordinary_song_still_reaches_the_resolver():
     await provider._load_task
 
     assert [track.title for track in resolver.tracks] == ["Song"]
+
+
+async def test_an_over_long_cider_duration_still_skips_the_lookup():
+    # The browser reports no length while Cider knows the real one. Running the
+    # gate on the MPRIS value first let a two-hour stream through, and the resolver
+    # then received the 7201s duration anyway — the very content this gate exists
+    # to keep off the providers.
+    resolver = RecordingResolver()
+    gate = SourceGate()
+    state = LyricsState()
+    provider = MprisProvider(state, resolver=resolver, gate=gate)
+    commit = track_commit(1, "Song", "Artist")
+    provider._current_commit = commit
+    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=7201.0))
+    gate.observe_tick(10, 0.0, True)
+
+    await provider._load_song(commit)
+
+    assert resolver.tracks == [], "a 7201s stream was sent to the lyric providers"
+    assert provider._content_owner == "none"
