@@ -282,7 +282,14 @@ def _artist_from_prefix(prefix: str) -> str:
             return prefix
         return prefix.split("（", 1)[0].strip()
     if "(" in prefix:
-        return prefix.split("(", 1)[0].strip()
+        # A single-letter parenthetical glued to the next word is part of the name,
+        # not a qualifier after it: (G)I-DLE. The title cleaner already protects
+        # that shape, so truncating at the bracket destroyed the same identity it
+        # preserves — and it is where the performer's name starts.
+        protected = re.search(r"\([A-Za-z]\)(?=[A-Za-z])", prefix)
+        if protected is None:
+            return prefix.split("(", 1)[0].strip()
+        return prefix[protected.start() :].strip()
     # A bilingual display name usually puts the Latin alias after the real CJK name.
     cjk = re.findall(rf"[{_CJK_CLASS}]+", prefix)
     if cjk:
@@ -300,10 +307,16 @@ def recover_artist(title: str, artist: str) -> str:
     if " / " in fallback:
         return fallback
     dash_parts = _TITLE_DASH.split(value, maxsplit=1)
-    if len(dash_parts) == 2 and _is_title_pair(dash_parts[0], dash_parts[1]) and not (
-        _TITLE_NOISE_LATIN.search(dash_parts[1]) or _TITLE_NOISE_CJK.search(dash_parts[1])
-    ):
-        return fallback
+    if len(dash_parts) == 2:
+        # Strip the upload tail before deciding: "Official MV" trailing the Latin
+        # half says nothing about whether the two halves are the same title, and
+        # letting it veto the guard split 螺旋 - RASEN into artist and song.
+        right = _TITLE_NOISE_CJK.sub(" ", _TITLE_NOISE_LATIN.sub(" ", dash_parts[1])).strip()
+        # A pair is the same title twice, so the Latin half carries no CJK of its
+        # own; "童話鎮 … Chen Yifa - Fairy Town" is a credit plus a translation, not
+        # a pair, and treating it as one would keep the uploader as the performer.
+        if right and not _CJK_ONE.search(right) and _is_title_pair(dash_parts[0], right):
+            return fallback
     # Recover only a leading title credit when generic upload grammar distinguishes it from the song title.
     if not (_UPLOADER_ARTIST.search(fallback) or _TITLE_NOISE_LATIN.search(value)):
         return fallback
@@ -319,6 +332,12 @@ def recover_artist(title: str, artist: str) -> str:
     quoted = _TITLE_QUOTE.search(prefix)
     if quoted:
         prefix = prefix[: quoted.start()]
+    # What sits before the bracket has to read like a name. A bar-separated
+    # commentary lead-in ("单曲循环丨张远深情嗓好适合《达尔文》！") is a sentence about
+    # the song, and taking it as the performer overwrote the reported artist for a
+    # row the corpus marks as carrying no leading credit at all.
+    if _TITLE_BARS.search(prefix):
+        return fallback
     # A leading upload bracket goes before the markers are used as cut points:
     # "【HD】陳一發兒" would otherwise truncate at 【 and lose the performer. Only at
     # the head, so a parenthetical that is part of a name (Jam（阿敬）) survives.

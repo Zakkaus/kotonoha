@@ -240,3 +240,13 @@ def test_the_non_song_gate_reads_what_the_player_reported():
     assert info.title == "不能說的秘密 Secret OST", "the cleaner should still tidy the title"
     assert info.reported_title == raw
     assert lyrics_lookup_reason(info) is not None, "a one-hour compilation reached the providers"
+
+
+def test_a_bar_separated_remix_medley_is_not_queried():
+    # The marker is found in the reported title, so the word and CJK counts have to
+    # come from the same text: cleaning keeps only the first song, and counting
+    # there let a three-song medley through to the providers.
+    info = parse_metadata({"xesam:title": "春天里 | 晴天 | 走马 Remix", "xesam:artist": ["X"]})
+
+    assert info.title == "春天里", "the cleaner should still tidy the title"
+    assert lyrics_lookup_reason(info) == "title combines several song names"

@@ -674,3 +674,33 @@ def test_spaced_han_conjunction_separates_performers():
     track = TrackMetadata("Die With A Smile", "Lady Gaga, Bruno Mars", "", None)
     candidate = Candidate("1", "Die With A Smile", "Lady Gaga 和 Bruno Mars", None)
     assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_an_upload_tail_does_not_split_a_bilingual_title_pair():
+    # "Official MV" trailing the Latin half says nothing about whether the two
+    # halves are the same title, but it vetoed the title-pair guard and turned
+    # 螺旋 - RASEN into an artist and a song.
+    assert recover_artist("螺旋 - RASEN Official MV", "9Lana") == "9Lana"
+
+    # A credit plus a translation is still not a pair: the Latin half there carries
+    # CJK of its own, so the leading name is a performer.
+    raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕] Chen Yifa - Fairy Town"
+    assert recover_artist(raw, "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+
+
+def test_a_bar_separated_lead_in_is_not_a_performer():
+    # A commentary lead-in before the title is a sentence about the song. Taking it
+    # as the performer overwrote the reported artist for a row the corpus marks as
+    # carrying no leading credit at all.
+    title = "单曲循环丨张远深情嗓好适合《达尔文》！「我的青春 有时还蛮单纯」"
+    assert recover_artist(title, "中國浙江衛視官方頻道") == "中國浙江衛視官方頻道"
+
+
+def test_a_parenthesised_letter_stays_part_of_the_performer_name():
+    # (G)I-DLE is a name, not a name followed by a qualifier. The title cleaner
+    # already protects that shape; truncating at the bracket here destroyed the
+    # identity it preserves.
+    assert recover_artist("Artist (G)I-DLE - Song", "Channel") == "(G)I-DLE"
+
+    track = TrackMetadata("Song", "(G)I-DLE")
+    assert evaluate_match(Candidate("c", "Song", "(G)I-DLE", None), track).confidence is MatchConfidence.HIGH

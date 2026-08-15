@@ -91,7 +91,10 @@ def lyrics_lookup_reason(track: TrackInfo) -> str | None:
         if marker.casefold() in title:
             return f"title contains non-song marker {marker!r}"
 
-    words = track.title.split()
+    # Counted on the same text the marker was found in. Counting words on the
+    # cleaned title instead let "春天里 | 晴天 | 走马 Remix" through: cleaning keeps
+    # only the first song, so the evidence of a medley was gone by then.
+    words = (track.reported_title or track.title).split()
     if "remix" in title and len(words) >= 4 and sum(any("一" <= char <= "鿿" for char in word) for word in words) >= 3:
         return "title combines several song names"
 
