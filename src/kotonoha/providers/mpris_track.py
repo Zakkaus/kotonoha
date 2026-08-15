@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..lyrics.match import TrackMetadata, clean_title
+from ..lyrics.match import TrackMetadata, clean_title, recover_artist
 
 _MAX_TRACK_LENGTH_S = 24 * 60 * 60
 _LYRICS_LOOKUP_MAX_LENGTH_S = 2 * 60 * 60
@@ -46,7 +46,17 @@ _TITLE_SITE_SUFFIX = re.compile(r"\s*[-|–—]\s*YouTube(?:\s+Music)?\s*$", re.
 def _clean_title(title: str, artist: str = "") -> str:
     cleaned = _TITLE_BADGE_PREFIX.sub("", title)
     cleaned = _TITLE_SITE_SUFFIX.sub("", cleaned)
+    if artist and artist.casefold() in cleaned.casefold():
+        artist_start = cleaned.casefold().find(artist.casefold())
+        if artist_start > 0:
+            before = cleaned[:artist_start].rstrip()
+            remainder = cleaned[artist_start + len(artist) :]
+            if remainder.lstrip().startswith(("-", "–", "—", "－")):
+                trailing = remainder.lstrip(" \t\r\n-–—－")
+                cleaned = artist if before.endswith(("-", "–", "—", "－")) and trailing else trailing
     cleaned = clean_title(cleaned, artist)
+    cleaned = re.sub(r"『[^』]*動態歌詞[^』]*』", "", cleaned, flags=re.IGNORECASE)
+    cleaned = re.sub(r"『[^』]*歌词[^』]*』", "", cleaned, flags=re.IGNORECASE)
     # Never strip a title down to nothing (a page literally titled "YouTube").
     return cleaned.strip() or title.strip()
 
@@ -81,7 +91,10 @@ def lyrics_lookup_reason(track: TrackInfo) -> str | None:
         if marker.casefold() in title:
             return f"title contains non-song marker {marker!r}"
 
-    words = track.title.split()
+    # Counted on the same text the marker was found in. Counting words on the
+    # cleaned title instead let "春天里 | 晴天 | 走马 Remix" through: cleaning keeps
+    # only the first song, so the evidence of a medley was gone by then.
+    words = (track.reported_title or track.title).split()
     if "remix" in title and len(words) >= 4 and sum(any("一" <= char <= "鿿" for char in word) for word in words) >= 3:
         return "title combines several song names"
 
@@ -112,8 +125,8 @@ class TrackInfo:
 
 def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
     length_s = _length_seconds(raw.get("mpris:length"))
-    artist = _as_text(raw.get("xesam:artist"))
     reported = _as_text(raw.get("xesam:title"))
+    artist = recover_artist(reported, _as_text(raw.get("xesam:artist")))
     return TrackInfo(
         title=_clean_title(reported, artist),
         artist=artist,

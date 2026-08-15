@@ -70,6 +70,23 @@ def test_parse_artist_as_plain_string():
     assert parse_metadata({"xesam:artist": "Solo"}).artist == "Solo"
 
 
+def test_parse_recovers_artist_from_title_without_splitting_artist_field():
+    info = parse_metadata(
+        {
+            "xesam:title": "BTS (방탄소년단) '2.0' Official MV",
+            "xesam:artist": ["HYBE LABELS"],
+        }
+    )
+    assert info.title == "2.0"
+    assert info.artist == "BTS"
+
+
+def test_parse_keeps_title_pair_as_one_title():
+    info = parse_metadata({"xesam:title": "螺旋 - RASEN", "xesam:artist": ["9Lana"]})
+    assert info.title == "螺旋 - RASEN"
+    assert info.artist == "9Lana"
+
+
 def test_parse_strips_chrome_badge_and_youtube_suffix():
     info = parse_metadata({"xesam:title": "(309) 志铭 | YouTube Music", "xesam:artist": [""]})
     assert info.title == "志铭"
@@ -223,3 +240,13 @@ def test_the_non_song_gate_reads_what_the_player_reported():
     assert info.title == "不能說的秘密 Secret OST", "the cleaner should still tidy the title"
     assert info.reported_title == raw
     assert lyrics_lookup_reason(info) is not None, "a one-hour compilation reached the providers"
+
+
+def test_a_bar_separated_remix_medley_is_not_queried():
+    # The marker is found in the reported title, so the word and CJK counts have to
+    # come from the same text: cleaning keeps only the first song, and counting
+    # there let a three-song medley through to the providers.
+    info = parse_metadata({"xesam:title": "春天里 | 晴天 | 走马 Remix", "xesam:artist": ["X"]})
+
+    assert info.title == "春天里", "the cleaner should still tidy the title"
+    assert lyrics_lookup_reason(info) == "title combines several song names"

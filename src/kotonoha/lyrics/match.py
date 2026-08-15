@@ -26,7 +26,14 @@ _ARTIST_SEPARATOR = re.compile(
 # separates the forename and surname WITHIN one katakana name (テイラー・スウィフト),
 # so splitting it makes two different artists who merely share a given name
 # (ジョン・レノン / ジョン・デンバー) collide — a confident wrong-lyrics match.
-_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
+# Spaced "和" is YouTube Music's own join in a Chinese UI ("Lady Gaga 和 Bruno
+# Mars"); a performer name that contains 和 (和田, 平和) does not carry spaces
+# around just that character, so the spaced form is unambiguous.
+_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)|\s+和\s+")
+_TITLE_DASH = re.compile(r"\s+[-–—－]\s+")
+_UPLOADER_ARTIST = re.compile(
+    r"(?i)(?:channel|頻道|频道|label(?:s)?|records?|music(?:channel)?|vevo|animation|studio|工作室)"
+)
 _KEEP = re.compile(r"[^\w一-鿿]+")
 _VERSION_TAGS = {
     # "acounstic" is not a typo here: it is how the upload spells it, and the
@@ -73,8 +80,9 @@ _LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
 _TITLE_BARS = re.compile(r"[|｜丨]")
 _TITLE_QUOTE = re.compile(r"""[\"“](.+?)[\"”]|‘(.+?)’|(?<![\w])'(.+)'""")
 _TITLE_NOISE_LATIN = re.compile(
-    r"(?i)(?<![A-Za-z])(?:official hd mv|official music video|official lyric video|official visualizer|"
-    r"official audio|official video|official mv|video oficial|music video|audio|mv)(?![A-Za-z])"
+    r"(?i)(?<![A-Za-z])(?:official hd mv|official hd|official music video|official lyric video|"
+    r"official visualizer|official audio|official video|official mv|video oficial|music video|"
+    r"audio|mv)(?![A-Za-z])"
 )
 _TITLE_NOISE_CJK = re.compile(
     r"動態歌詞Lyrics|动态歌词Lyrics|歌詞字幕|歌词字幕|完整高清音質|完整高清音质|官方高畫質|官方高画质|"
@@ -258,6 +266,86 @@ def artist_tokens(artist: str) -> frozenset[str]:
 def primary_artist(artist: str) -> str:
     parts = _artist_parts(artist)
     return parts[0].strip() if parts else artist.strip()
+
+
+def _is_title_pair(left: str, right: str) -> bool:
+    left_has_cjk = bool(_CJK_ONE.search(left))
+    right_has_latin = bool(re.search(r"[A-Za-z]", right))
+    return left_has_cjk and right_has_latin
+
+
+def _artist_from_prefix(prefix: str) -> str:
+    prefix = prefix.strip(" \t\r\n-–—－")
+    prefix = re.sub(r"(?i)\b(?:feat(?:uring)?|ft)\b.*$", "", prefix).strip()
+    if "（" in prefix:
+        if re.search(r"[一-鿿ぁ-ヿ]", prefix.split("（", 1)[1]):
+            return prefix
+        return prefix.split("（", 1)[0].strip()
+    if "(" in prefix:
+        # A single-letter parenthetical glued to the next word is part of the name,
+        # not a qualifier after it: (G)I-DLE. The title cleaner already protects
+        # that shape, so truncating at the bracket destroyed the same identity it
+        # preserves — and it is where the performer's name starts.
+        protected = re.search(r"\([A-Za-z]\)(?=[A-Za-z])", prefix)
+        if protected is None:
+            return prefix.split("(", 1)[0].strip()
+        return prefix[protected.start() :].strip()
+    # A bilingual display name usually puts the Latin alias after the real CJK name.
+    cjk = re.findall(rf"[{_CJK_CLASS}]+", prefix)
+    if cjk:
+        return cjk[-1]
+    return prefix
+
+
+_LEADING_BRACKET = re.compile(r"^\s*[【『「\[]([^】』」\]]*)[】』」\]]\s*")
+
+
+def recover_artist(title: str, artist: str) -> str:
+    """Recover a leading title credit only when generic upload grammar supports it."""
+    fallback = artist.strip()
+    value = title.strip()
+    if " / " in fallback:
+        return fallback
+    dash_parts = _TITLE_DASH.split(value, maxsplit=1)
+    if len(dash_parts) == 2:
+        # Strip the upload tail before deciding: "Official MV" trailing the Latin
+        # half says nothing about whether the two halves are the same title, and
+        # letting it veto the guard split 螺旋 - RASEN into artist and song.
+        right = _TITLE_NOISE_CJK.sub(" ", _TITLE_NOISE_LATIN.sub(" ", dash_parts[1])).strip()
+        # A pair is the same title twice, so the Latin half carries no CJK of its
+        # own; "童話鎮 … Chen Yifa - Fairy Town" is a credit plus a translation, not
+        # a pair, and treating it as one would keep the uploader as the performer.
+        if right and not _CJK_ONE.search(right) and _is_title_pair(dash_parts[0], right):
+            return fallback
+    # Recover only a leading title credit when generic upload grammar distinguishes it from the song title.
+    if not (_UPLOADER_ARTIST.search(fallback) or _TITLE_NOISE_LATIN.search(value)):
+        return fallback
+    prefix = dash_parts[0] if len(dash_parts) == 2 else value
+    if prefix == value and not _TITLE_QUOTE.search(value) and not any(
+        marker in value for marker in ("《", "『", "【", "「")
+    ):
+        # Nothing in the title separates a credit from the song name, so the whole
+        # title is the song. Returning it as the artist replaced a real performer
+        # with the title itself for every upload whose artist field happens to say
+        # "records", "studio" or "channel".
+        return fallback
+    quoted = _TITLE_QUOTE.search(prefix)
+    if quoted:
+        prefix = prefix[: quoted.start()]
+    # What sits before the bracket has to read like a name. A bar-separated
+    # commentary lead-in ("单曲循环丨张远深情嗓好适合《达尔文》！") is a sentence about
+    # the song, and taking it as the performer overwrote the reported artist for a
+    # row the corpus marks as carrying no leading credit at all.
+    if _TITLE_BARS.search(prefix):
+        return fallback
+    # A leading upload bracket goes before the markers are used as cut points:
+    # "【HD】陳一發兒" would otherwise truncate at 【 and lose the performer. Only at
+    # the head, so a parenthetical that is part of a name (Jam（阿敬）) survives.
+    prefix = _LEADING_BRACKET.sub("", prefix, count=1).strip()
+    for marker in ("《", "『", "【", "「"):
+        prefix = prefix.split(marker, 1)[0]
+    candidate = _artist_from_prefix(prefix)
+    return candidate or fallback
 
 
 def _fuzzy_contains(candidate: Candidate, track: TrackMetadata) -> bool:
@@ -448,7 +536,7 @@ def query_variants(track: TrackMetadata, *, fuzzy: bool = False) -> tuple[str, .
     return tuple(dict.fromkeys(value for value in forms if value))
 
 
-_BRACKETED = re.compile(r"[【\[（(]([^】\]）)]*)[】\]）)]")
+_BRACKETED = re.compile(r"[【『\[（(]([^】』\]）)]*)[】』\]）)]")
 # Corner/angle quotes and separators usually WRAP the title (「Lemon」《告白气球》)
 # rather than junk, so they are flattened to spaces (delimiters), not removed.
 _DELIMITERS = re.compile(r"[「」『』《》〈〉|/_~•・\-–—]+")
@@ -508,14 +596,34 @@ def _quote_at_top_level(text: str) -> tuple[str, int] | None:
     return None
 
 
+# A Latin run at the head of a title, ending at a separator or a CJK character:
+# the romanised form of a CJK performer name that precedes it.
+_LEADING_ROMANISATION = re.compile(
+    r"[A-Za-z][A-Za-z.'\-]*(?:\s+[A-Za-z][A-Za-z.'\-]*){0,3}\s*"
+    r"(?=[-–—－:：《〈「『【\[]|[一-鿿ぁ-ヿ])"
+)
+
+
 def _strip_leading_artist(value: str, artist: str) -> str:
     candidate = artist.strip()
     if not candidate or not value.casefold().startswith(candidate.casefold()):
         return value
     remainder = value[len(candidate) :]
-    if not remainder or remainder[0].isspace() or remainder[0] in "-–—－:：《〈「『【[":
-        return remainder.lstrip(" \t\r\n-–—－:：")
-    return value
+    # A CJK credit is commonly followed straight by its romanisation with no
+    # separator at all ("廖俊濤Liao juntao - 誰"), so a Latin letter is allowed there.
+    immediate_latin = bool(remainder) and remainder[0].isascii() and remainder[0].isalpha()
+    if remainder and not remainder[0].isspace() and remainder[0] not in "-–—－:：《〈「『【[":
+        if not (immediate_latin and _CJK_ONE.search(candidate)):
+            return value
+    remainder = remainder.lstrip(" \t\r\n-–—－:：")
+    # An upload that leads with a CJK performer usually repeats it romanised
+    # ("廖俊濤Liao juntao - 誰", "美秀集團 Amazing Show－捲菸"). That Latin run is the
+    # same credit, so it goes with the name rather than staying in the title.
+    if _CJK_ONE.search(candidate):
+        romanisation = _LEADING_ROMANISATION.match(remainder)
+        if romanisation is not None:
+            remainder = remainder[romanisation.end() :].lstrip(" \t\r\n-–—－:：")
+    return remainder
 
 
 def _segment_key(value: str) -> str:
@@ -544,6 +652,10 @@ def _segment_score(segment: str, index: int, artist_key: str = "") -> tuple[int,
     return score, -index
 
 
+# A bracket holding nothing but a delivery-format tag is upload grammar.
+_FORMAT_TAG = re.compile(r"(?i)(?:hd|hq|sd|uhd|4k|8k|2k|1080p?|720p?|mv|cc|hi-?res)")
+
+
 def _clean_platform_title(title: str, artist: str = "") -> str:
     original = title.strip()
     value = unicode_normalize("NFKC", title).replace("\u3000", " ")
@@ -563,11 +675,17 @@ def _clean_platform_title(title: str, artist: str = "") -> str:
     value = protected
     def remove_upload_bracket(match: re.Match[str]) -> str:
         inner = match.group(1)
+        # A bracket holding only a format tag (【HD】, [4K], 【1080P】) is upload
+        # grammar; keeping it hid the performer credit that follows it.
+        if _FORMAT_TAG.fullmatch(inner.strip()):
+            return " "
         residue = _TITLE_NOISE_CJK.sub("", _TITLE_NOISE_LATIN.sub("", inner))
         residue = _NONWORD.sub("", residue)
         return " " if not residue else match.group(0)
 
     value = _BRACKETED.sub(remove_upload_bracket, value)
+    # Again, now that a leading 【HD】-style bracket no longer hides the credit.
+    value = _strip_leading_artist(value.strip(), artist)
     value = re.sub(r"__PAREN_([A-Za-z])__", r"(\1)", value)
     value = re.sub(r"[《》〈〉「」]", " ", value)
     value = _TITLE_NOISE_LATIN.sub(" ", value)

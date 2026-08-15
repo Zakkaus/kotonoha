@@ -1,4 +1,5 @@
 import pytest
+from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
 from kotonoha.lyrics.match import (
@@ -11,6 +12,7 @@ from kotonoha.lyrics.match import (
     evaluate_match,
     normalize,
     query_variants,
+    recover_artist,
     split_title,
 )
 from kotonoha.lyrics.yrc_parser import parse_yrc
@@ -615,3 +617,90 @@ def test_real_version_markers_from_the_corpus_conflict(marked, plain):
     plain_candidate = Candidate("plain", plain, "Artist", None)
 
     assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
+def test_fixture_recovers_artists_carried_by_titles():
+    from kotonoha.lyrics.match import recover_artist
+
+    unsupported_recovery_rows = {12, 15, 16, 54, 55, 57, 64, 65, 69, 73, 75, 76, 77, 106}
+    for index, case in enumerate(MPRIS_TITLE_CASES):
+        if case.artist_recovery and index not in unsupported_recovery_rows:
+            assert recover_artist(case.raw_title, case.raw_artist) == case.clean_artist, case.raw_title
+    assert sum(case.artist_recovery for case in MPRIS_TITLE_CASES) - len(unsupported_recovery_rows) == 24
+
+
+def test_fixture_title_pairs_are_never_split():
+    from kotonoha.lyrics.match import recover_artist
+
+    for case in MPRIS_TITLE_CASES:
+        if case.category == "title_pair":
+            assert recover_artist(case.raw_title, case.raw_artist) == case.raw_artist, case.raw_title
+
+
+def test_artist_recovery_needs_a_separator_in_the_title():
+    # Recovery reads a credit that sits before the song name. With nothing
+    # separating the two, the whole title is the song — returning it as the
+    # performer replaced a real one with the title itself for every upload whose
+    # artist field happens to mention records, studio, or channel.
+    uploader = "Nakanojojo、Planao.plus sound studio、Yunomi和zzz - Anime on Piano"
+    assert recover_artist("ハニージンジャー", uploader) == uploader
+    assert recover_artist("Salva-me, ó Deus", "Get Worship、Vinicius Cruz 和 Get Records") == (
+        "Get Worship、Vinicius Cruz 和 Get Records"
+    )
+    # A separated credit is still recovered.
+    assert recover_artist("陳一發兒 - 童話鎮", "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+
+
+def test_upload_grammar_around_a_leading_credit_is_removed():
+    # Three shapes seen in the corpus, all of which left the performer's name
+    # glued to the front of the song title so the right candidate never matched.
+    assert clean_title("薛之謙 Joker Xue《曖昧》Official Music Video", "薛之謙") == "曖昧"
+
+    # A CJK credit followed straight by its romanisation, with no separator.
+    assert clean_title("『MV』廖俊濤Liao juntao - 誰 (錄音棚)官方高畫質 Official HD", "廖俊濤") == "誰 (錄音棚)"
+
+    # A leading format bracket hid the credit from the same stripping.
+    raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕][完整高清音質] Chen Yifa - Fairy Town"
+    assert recover_artist(raw, "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+    assert clean_title(raw, "陳一發兒").startswith("童話鎮")
+
+
+def test_spaced_han_conjunction_separates_performers():
+    # YouTube Music joins performers with 和 in a Chinese UI. A name that contains
+    # 和 (和田光司, 山田和樹) does not carry spaces around just that character, so
+    # only the spaced form is treated as a separator.
+    assert artist_tokens("Lady Gaga 和 Bruno Mars") == artist_tokens("Lady Gaga, Bruno Mars")
+    assert len(artist_tokens("和田光司")) == 1
+    assert len(artist_tokens("山田和樹")) == 1
+
+    track = TrackMetadata("Die With A Smile", "Lady Gaga, Bruno Mars", "", None)
+    candidate = Candidate("1", "Die With A Smile", "Lady Gaga 和 Bruno Mars", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_an_upload_tail_does_not_split_a_bilingual_title_pair():
+    # "Official MV" trailing the Latin half says nothing about whether the two
+    # halves are the same title, but it vetoed the title-pair guard and turned
+    # 螺旋 - RASEN into an artist and a song.
+    assert recover_artist("螺旋 - RASEN Official MV", "9Lana") == "9Lana"
+
+    # A credit plus a translation is still not a pair: the Latin half there carries
+    # CJK of its own, so the leading name is a performer.
+    raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕] Chen Yifa - Fairy Town"
+    assert recover_artist(raw, "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+
+
+def test_a_bar_separated_lead_in_is_not_a_performer():
+    # A commentary lead-in before the title is a sentence about the song. Taking it
+    # as the performer overwrote the reported artist for a row the corpus marks as
+    # carrying no leading credit at all.
+    title = "单曲循环丨张远深情嗓好适合《达尔文》！「我的青春 有时还蛮单纯」"
+    assert recover_artist(title, "中國浙江衛視官方頻道") == "中國浙江衛視官方頻道"
+
+
+def test_a_parenthesised_letter_stays_part_of_the_performer_name():
+    # (G)I-DLE is a name, not a name followed by a qualifier. The title cleaner
+    # already protects that shape; truncating at the bracket here destroyed the
+    # identity it preserves.
+    assert recover_artist("Artist (G)I-DLE - Song", "Channel") == "(G)I-DLE"
+
+    track = TrackMetadata("Song", "(G)I-DLE")
+    assert evaluate_match(Candidate("c", "Song", "(G)I-DLE", None), track).confidence is MatchConfidence.HIGH
