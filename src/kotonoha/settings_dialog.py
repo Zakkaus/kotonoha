@@ -63,7 +63,7 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
-from .native import LayerShellController, default_package_dir
+from .platform import LayerShellController, default_package_dir
 from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
@@ -364,8 +364,9 @@ class SettingsDialog(QDialog):
         desktop = os.environ.get("XDG_CURRENT_DESKTOP", "")
         platform = QGuiApplication.platformName() or ""
         self._blur = LayerShellController(default_package_dir(), platform, desktop)
-        self._blur_capable = self._blur.blur_available
-        self._blur_reason = self._blur.blur_disabled_reason
+        capabilities = self._blur.capabilities
+        self._blur_capable = capabilities.blur
+        self._blur_reason = capabilities.blur_reason
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
         self._window_opacity_ok = "wayland" not in platform.lower()

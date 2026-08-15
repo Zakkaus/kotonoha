@@ -20,7 +20,8 @@ import logging
 import sysconfig
 from pathlib import Path
 
-from .lyrics_loader import find_layer_shell_library, overlay_mode_available, should_disable_layer_shell
+from .detect import find_layer_shell_library, overlay_mode_available, should_disable_layer_shell
+from .overlay_contracts import OverlayCapabilities
 
 logger = logging.getLogger(__name__)
 
@@ -172,6 +173,10 @@ class LayerShellController:
     def disabled_reason(self) -> str | None:
         return self._disabled_reason
 
+    @property
+    def capabilities(self) -> OverlayCapabilities:
+        return OverlayCapabilities.from_controller(self)
+
     def overlay_mode_available(self) -> bool:
         return overlay_mode_available(
             self._platform, has_layer_shell=self.available, layer_shell_disabled=self._disabled_reason is not None
@@ -225,6 +230,8 @@ class LayerShellController:
 
 def default_package_dir() -> str:
     source_dir = Path(__file__).parent
+    if source_dir.name == "platform":
+        source_dir = source_dir.parent
     installed_dir = Path(sysconfig.get_path("platlib")) / source_dir.name
     if find_layer_shell_library(installed_dir) is not None:
         return str(installed_dir)

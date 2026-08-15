@@ -20,8 +20,9 @@ from pathlib import Path
 
 import pytest
 
-from kotonoha import native
-from kotonoha.native import LayerShellController, default_package_dir
+import kotonoha
+from kotonoha.platform import native
+from kotonoha.platform.native import LayerShellController, default_package_dir
 
 
 class _FakeLib:
@@ -126,7 +127,10 @@ def test_older_bridge_without_probe_symbol_still_loads(stub_load):
     assert ctl.available is True
 
 
-_REAL_BRIDGE = Path(native.__file__).parent / "libkoto-layer.so"
+# The bridge is built into the package root, not beside this module: after the
+# move that made the path platform/libkoto-layer.so, so the test skipped even
+# on a full build and the Qt ABI handshake went uncovered.
+_REAL_BRIDGE = Path(kotonoha.__file__).parent / "libkoto-layer.so"
 
 
 @pytest.mark.skipif(not _REAL_BRIDGE.exists(), reason="native bridge not built")

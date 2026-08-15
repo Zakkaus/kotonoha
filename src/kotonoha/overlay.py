@@ -31,7 +31,7 @@ from .icons import lock_icon, settings_icon
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
 from .model import EMPTY_SNAPSHOT, LyricLine, LyricsSnapshot
-from .native import LayerShellController, default_package_dir
+from .platform import LayerShellController, default_package_dir
 from .state import LyricsState
 from .strings import t
 

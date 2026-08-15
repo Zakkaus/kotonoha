@@ -376,3 +376,15 @@ def test_debian_rules_leave_the_source_tree_unchanged_on_repeated_configure(
         "clean",
         "clean",
     ]
+
+
+def test_the_release_check_imports_a_module_that_exists():
+    # The clean-environment wheel check runs an import against the installed
+    # package. Naming a module the tree no longer has fails the release workflow
+    # rather than any test, so nothing here would have caught it.
+    import importlib
+    import re
+
+    workflow = read_packaging_file(PACKAGE_WORKFLOW)
+    for module in set(re.findall(r"from (kotonoha[\w.]*) import", workflow)):
+        importlib.import_module(module)
