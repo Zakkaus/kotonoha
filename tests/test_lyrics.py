@@ -661,3 +661,16 @@ def test_upload_grammar_around_a_leading_credit_is_removed():
     raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕][完整高清音質] Chen Yifa - Fairy Town"
     assert recover_artist(raw, "BELLA PING MUSIC CHANNEL") == "陳一發兒"
     assert clean_title(raw, "陳一發兒").startswith("童話鎮")
+
+
+def test_spaced_han_conjunction_separates_performers():
+    # YouTube Music joins performers with 和 in a Chinese UI. A name that contains
+    # 和 (和田光司, 山田和樹) does not carry spaces around just that character, so
+    # only the spaced form is treated as a separator.
+    assert artist_tokens("Lady Gaga 和 Bruno Mars") == artist_tokens("Lady Gaga, Bruno Mars")
+    assert len(artist_tokens("和田光司")) == 1
+    assert len(artist_tokens("山田和樹")) == 1
+
+    track = TrackMetadata("Die With A Smile", "Lady Gaga, Bruno Mars", "", None)
+    candidate = Candidate("1", "Die With A Smile", "Lady Gaga 和 Bruno Mars", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH

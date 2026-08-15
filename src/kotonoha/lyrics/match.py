@@ -26,7 +26,10 @@ _ARTIST_SEPARATOR = re.compile(
 # separates the forename and surname WITHIN one katakana name (テイラー・スウィフト),
 # so splitting it makes two different artists who merely share a given name
 # (ジョン・レノン / ジョン・デンバー) collide — a confident wrong-lyrics match.
-_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
+# Spaced "和" is YouTube Music's own join in a Chinese UI ("Lady Gaga 和 Bruno
+# Mars"); a performer name that contains 和 (和田, 平和) does not carry spaces
+# around just that character, so the spaced form is unambiguous.
+_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)|\s+和\s+")
 _TITLE_DASH = re.compile(r"\s+[-–—－]\s+")
 _UPLOADER_ARTIST = re.compile(
     r"(?i)(?:channel|頻道|频道|label(?:s)?|records?|music(?:channel)?|vevo|animation|studio|工作室)"
