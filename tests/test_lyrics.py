@@ -7,6 +7,7 @@ from kotonoha.lyrics.match import (
     TrackMetadata,
     artist_tokens,
     best_match,
+    clean_title,
     evaluate_match,
     normalize,
     query_variants,
@@ -124,8 +125,14 @@ def test_platform_title_bars_choose_the_song_segment_and_keep_cjk_pipe():
     candidate = Candidate("song", "不能說的秘密 Secret OST", "Elvis Piano 維敏彈鋼琴", None)
     assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
 
+    # Asserted through the title path, not through normalize(): that function is
+    # also the comparison key for artist and album, so a title-only rule applied
+    # there would rewrite an identity rather than tidy a title.
     cjk_pipe = TrackMetadata("单曲循环丨张远深情嗓好适合《达尔文》！", "中國浙江衛視官方頻道")
-    assert normalize(cjk_pipe.title) == normalize("张远深情嗓好适合《达尔文》！")
+    plain = TrackMetadata("张远深情嗓好适合《达尔文》！", cjk_pipe.artist)
+    assert normalize(split_title(cjk_pipe.title, cjk_pipe.artist)[0]) == normalize(
+        split_title(plain.title, plain.artist)[0]
+    )
 
 
 def test_platform_bar_skips_artist_segment_before_matching():
@@ -564,3 +571,26 @@ def test_a_choreography_video_keeps_the_studio_lyrics():
     track = TrackMetadata("PINKY UP (Choreography Ver.)", "KATSEYE", "", None)
     candidate = Candidate("1", "PINKY UP", "KATSEYE", None)
     assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_title_cleaning_never_rewrites_an_artist_identity():
+    # normalize() is the comparison key for artist and album as well as titles, so
+    # applying the title-only upload-grammar rules there turned two different
+    # performers into one: "Audio Love" lost its first word and matched "Love".
+    assert normalize("Audio Love") != normalize("Love")
+    assert artist_tokens("Audio Love") != artist_tokens("Love")
+
+    track = TrackMetadata("Song", "Audio Love")
+    candidate = Candidate("c", "Song", "Love", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.NONE
+
+    # The same rule still applies where it belongs — to the title.
+    assert clean_title("Track - Official Audio", "Artist") == "Track"
+    assert (
+        evaluate_match(
+            Candidate("c", "Track", "Artist", None),
+            TrackMetadata("Track - Official Audio", "Artist"),
+            fuzzy=True,
+        ).confidence
+        is MatchConfidence.HIGH
+    )

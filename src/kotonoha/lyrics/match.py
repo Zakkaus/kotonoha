@@ -68,7 +68,7 @@ _TITLE_BARS = re.compile(r"[|｜丨]")
 _TITLE_QUOTE = re.compile(r"""[\"“](.+?)[\"”]|‘(.+?)’|(?<![\w])'(.+)'""")
 _TITLE_NOISE_LATIN = re.compile(
     r"(?i)(?<![A-Za-z])(?:official hd mv|official music video|official lyric video|official visualizer|"
-    r"official video|official mv|video oficial|music video|audio|mv)(?![A-Za-z])"
+    r"official audio|official video|official mv|video oficial|music video|audio|mv)(?![A-Za-z])"
 )
 _TITLE_NOISE_CJK = re.compile(
     r"動態歌詞Lyrics|动态歌词Lyrics|歌詞字幕|歌词字幕|完整高清音質|完整高清音质|官方高畫質|官方高画质|"
@@ -173,8 +173,13 @@ def normalize(text: str) -> str:
     catalogue (李荣浩), and Latin accents are folded so accented Western titles
     match their plain spelling. Both folds are applied to the track and the
     candidate alike, so they are symmetric and only ever affect this comparison
-    key (never display, search queries, or version semantics)."""
-    value = _fold_latin_accents(unicode_normalize("NFKC", _clean_platform_title(text)).casefold())
+    key (never display, search queries, or version semantics).
+
+    Deliberately free of the title-only platform cleaning: this is also the
+    comparison key for artist and album, and an upload-grammar rule applied to a
+    performer's name rewrites an identity rather than tidying a title. Titles
+    reach here already cleaned, by split_title()."""
+    value = _fold_latin_accents(unicode_normalize("NFKC", text).casefold())
     value = fold_to_simplified(value)
     stripped = _PARENS.sub("", value)
     # A title wholly inside brackets ("【七月上】", "(intro)") strips to nothing and
