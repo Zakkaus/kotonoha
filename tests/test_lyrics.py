@@ -647,3 +647,17 @@ def test_artist_recovery_needs_a_separator_in_the_title():
     )
     # A separated credit is still recovered.
     assert recover_artist("陳一發兒 - 童話鎮", "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+
+
+def test_upload_grammar_around_a_leading_credit_is_removed():
+    # Three shapes seen in the corpus, all of which left the performer's name
+    # glued to the front of the song title so the right candidate never matched.
+    assert clean_title("薛之謙 Joker Xue《曖昧》Official Music Video", "薛之謙") == "曖昧"
+
+    # A CJK credit followed straight by its romanisation, with no separator.
+    assert clean_title("『MV』廖俊濤Liao juntao - 誰 (錄音棚)官方高畫質", "廖俊濤").startswith("誰")
+
+    # A leading format bracket hid the credit from the same stripping.
+    raw = "【HD】陳一發兒 - 童話鎮 [歌詞字幕][完整高清音質] Chen Yifa - Fairy Town"
+    assert recover_artist(raw, "BELLA PING MUSIC CHANNEL") == "陳一發兒"
+    assert clean_title(raw, "陳一發兒").startswith("童話鎮")
