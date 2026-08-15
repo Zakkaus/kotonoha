@@ -569,3 +569,11 @@ def test_a_title_that_is_only_a_bracketed_span_is_still_a_title():
     # Two such titles must still agree exactly: different interludes, not a ratio.
     interlude = TrackMetadata("(intro)", "A", "", 100.0)
     assert evaluate_match(Candidate("2", "(outro)", "A", 101.0), interlude).confidence is MatchConfidence.NONE
+
+
+def test_a_choreography_video_keeps_the_studio_lyrics():
+    # A dance-practice upload carries the studio recording's audio, so it must not
+    # reject the only candidate that has lyrics.
+    track = TrackMetadata("PINKY UP (Choreography Ver.)", "KATSEYE", "", None)
+    candidate = Candidate("1", "PINKY UP", "KATSEYE", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH

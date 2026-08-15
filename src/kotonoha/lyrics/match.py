@@ -62,7 +62,10 @@ _VERSION_TAGS = {
 # Tags that change the recording but NOT the lyrics: a remaster has the same
 # words as the studio take, so it must not force a version conflict that rejects
 # the only correct candidate. (live/acoustic/instrumental/remix/etc. can differ.)
-_LYRIC_NEUTRAL_TAGS = frozenset({"remaster"})
+# A remaster and a choreography video are the same performance: the words and
+# their timings are the studio take's, so neither may reject the only
+# candidate that has lyrics at all.
+_LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
 
 _TITLE_BARS = re.compile(r"[|｜丨]")
 _TITLE_QUOTE = re.compile(r"""[\"“](.+?)[\"”]|‘(.+?)’|(?<![\w])'(.+)'""")
