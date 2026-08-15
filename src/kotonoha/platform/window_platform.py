@@ -44,7 +44,9 @@ class _LayerShellProvider:
         # advertise zwlr_layer_shell_v1 to an ordinary window, losing stacking,
         # precise placement and output binding. The name check remains inside the
         # controller as the fallback for a bridge too old to expose the probe.
-        del desktop
+        #
+        # The name still selects the *drag* strategy below: no protocol reports
+        # which compositor this is, and the two behaviours differ by compositor.
         if not platform_name.startswith("wayland") or not self._controller.available:
             return None
         for provider in self._drag_providers:
