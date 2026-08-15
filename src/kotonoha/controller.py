@@ -56,10 +56,12 @@ class AppController:
             gate=self._gate,
         )
         self._mpris = MprisProvider(self._state, lyrics_sources=config.lyrics_sources, gate=self._gate)
+        self._mpris.set_player_lock(config.player_lock)
         self._mpris.set_cache_enabled(config.cache_enabled)
         self._mpris.set_prefer_best(config.prefer_best_lyrics)
         self._mpris.set_fuzzy(config.fuzzy_match)
         self._settings_dialog: SettingsDialog | None = None
+        self._settings_open_task: asyncio.Task[None] | None = None
 
         self._tray = KotonohaTray(
             icon_name=config.icon_name,
@@ -125,7 +127,32 @@ class AppController:
             self._settings_dialog.raise_()
             self._settings_dialog.activateWindow()
             return
-        dialog = SettingsDialog(self._config)
+        if self._settings_open_task is not None and not self._settings_open_task.done():
+            return
+        task = asyncio.create_task(self._open_settings_async())
+        self._settings_open_task = task
+
+        def finished(done: asyncio.Task[None]) -> None:
+            if self._settings_open_task is done:
+                self._settings_open_task = None
+            try:
+                done.result()
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:  # noqa: BLE001 - surface async dialog failures
+                logger.warning("Could not open settings: %s", exc)
+
+        task.add_done_callback(finished)
+
+    async def _open_settings_async(self) -> None:
+        if self._settings_dialog is not None:
+            return
+        try:
+            players = await self._mpris.available_players()
+        except Exception as exc:  # noqa: BLE001 - player discovery is best effort
+            logger.debug("MPRIS player discovery failed: %s", exc)
+            players = []
+        dialog = SettingsDialog(self._config, players=players)
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)
         dialog.restart_requested.connect(self._restart)
@@ -154,6 +181,7 @@ class AppController:
         self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
         self._tray.set_icon_name(config.icon_name, config.accent_start)
         self._mpris.set_lyrics_sources(config.lyrics_sources)
+        self._mpris.set_player_lock(config.player_lock)
         self._mpris.set_cache_enabled(config.cache_enabled)
         self._mpris.set_prefer_best(config.prefer_best_lyrics)
         self._mpris.set_fuzzy(config.fuzzy_match)

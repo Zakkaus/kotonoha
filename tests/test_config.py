@@ -20,6 +20,14 @@ def test_screen_name_roundtrips(tmp_path):
     assert load_config(path).screen_name == "DP-1"
 
 
+def test_player_lock_roundtrips_and_clamps():
+    assert Config().player_lock == ""
+    assert Config(player_lock="org.mpris.MediaPlayer2.youtube").clamped().player_lock == (
+        "org.mpris.MediaPlayer2.youtube"
+    )
+    assert Config.from_dict({"player_lock": 123}).player_lock == ""
+
+
 def test_frost_panel_style_survives_clamp():
     assert Config(panel_style="frost").clamped().panel_style == "frost"
     assert Config(panel_style="bogus").clamped().panel_style == "pill"

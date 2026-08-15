@@ -8,7 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QListWidgetItem
 
 from kotonoha.config import Config
-from kotonoha.settings_dialog import SettingsDialog
+from kotonoha.players import PlayerInfo
+from kotonoha.settings_dialog import _PAGE_FIELDS, SettingsDialog
 
 
 @pytest.fixture(scope="module")
@@ -27,6 +28,29 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     assert dialog.current_config().cache_enabled is True
     dialog._clear_cache.click()
     assert emitted == [True]
+    dialog.close()
+
+
+def test_unavailable_player_lock_survives_dialog_roundtrip(qapp):
+    dialog = SettingsDialog(Config(player_lock="org.mpris.MediaPlayer2.closed"), players=[])
+
+    assert dialog._player_combo.currentData() == "org.mpris.MediaPlayer2.closed"
+    assert "unavailable" in dialog._player_combo.currentText().lower()
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.closed"
+    dialog.close()
+
+
+def test_detected_players_are_readable_and_store_bus_name(qapp):
+    dialog = SettingsDialog(
+        Config(),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music")],
+    )
+
+    index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
+    assert index > 0
+    assert dialog._player_combo.itemText(index) == "YouTube Music"
+    dialog._player_combo.setCurrentIndex(index)
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
     dialog.close()
 
 
@@ -567,3 +591,58 @@ def test_icon_picker_shows_preview_only_and_updates_config(qapp):
 
     assert dialog.current_config().icon_name == "leaf-green.svg"
     dialog.close()
+
+
+def test_resetting_the_sources_page_restores_automatic_player_selection(qapp):
+    # Reset this tab rebuilds the page from defaults, but the staged config keeps
+    # any field the page's reset list omits — so a configured lock survived the
+    # reset and Apply persisted it.
+    dialog = SettingsDialog(
+        Config(player_lock="org.mpris.MediaPlayer2.closed"),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.a", "A")],
+    )
+    sources = next(i for i, fields in enumerate(_PAGE_FIELDS) if "lyrics_sources" in fields)
+    dialog._nav.setCurrentRow(sources)
+
+    dialog._reset_current_page()
+
+    assert dialog.current_config().player_lock == ""
+    dialog.close()
+
+
+def test_every_field_the_dialog_edits_belongs_to_a_page_reset_list():
+    # A field the dialog writes but no page resets cannot be undone by Reset this
+    # tab: it stays in the staged config and Apply persists the old value.
+    from dataclasses import fields
+
+    covered = {name for page in _PAGE_FIELDS for name in page}
+    # Not editable here: the port is a CLI/config-file setting, and the position
+    # and per-track offsets are written by dragging and by the overlay's buttons.
+    not_edited = {"port", "screen_name", "screen_width", "screen_height", "track_offsets", "translation_language"}
+    missing = {f.name for f in fields(Config)} - covered - not_edited
+    assert not missing, f"no page resets these: {sorted(missing)}"
+
+
+def test_the_settings_window_does_not_import_the_mpris_provider():
+    # The row DTO lives in the neutral model module, so describing a player in the
+    # UI does not drag in the D-Bus provider.
+    import ast
+    from pathlib import Path
+
+    source = Path("src/kotonoha/settings_dialog.py").read_text(encoding="utf-8")
+    imported = {
+        node.module
+        for node in ast.walk(ast.parse(source))
+        if isinstance(node, ast.ImportFrom) and node.module
+    }
+    assert not {name for name in imported if "providers" in name}, imported
+
+
+def test_the_player_dto_is_exported_by_the_module_that_defines_it():
+    # A type imported from a module but missing from its __all__ is outside the
+    # contract that module declares — which is how it ended up appended after the
+    # lyrics model's exports, in a module about lyric payloads.
+    from kotonoha import players
+
+    assert players.__all__ == ["PlayerInfo"]
+    assert "PlayerInfo" not in getattr(__import__("kotonoha.model", fromlist=["model"]), "__all__", [])

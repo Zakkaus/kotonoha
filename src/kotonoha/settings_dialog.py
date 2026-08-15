@@ -64,6 +64,7 @@ from PyQt6.QtWidgets import (
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
 from .native import LayerShellController, default_package_dir
+from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
 
@@ -331,7 +332,7 @@ _PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
      "fx_glow", "fx_word_pop", "fx_intensity"),                                          # Effects
     ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script"),  # Lyrics
     ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
-    ("lyrics_sources", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),             # Sources
+    ("lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),  # Sources
 )
 
 
@@ -340,9 +341,12 @@ class SettingsDialog(QDialog):
     clear_cache_requested = pyqtSignal()
     restart_requested = pyqtSignal()
 
-    def __init__(self, config: Config, parent: QWidget | None = None) -> None:
+    def __init__(
+        self, config: Config, parent: QWidget | None = None, *, players: list[PlayerInfo] | None = None
+    ) -> None:
         super().__init__(parent)
         self._config = config
+        self._players = list(players or [])
         # Every icon strip built (tray + window), each with its own {key: item} map,
         # so accent re-renders can refresh all of them. Populated by _build_icon_picker.
         self._icon_pickers: list[tuple[_IconStrip, dict[str, QListWidgetItem]]] = []
@@ -876,6 +880,19 @@ class SettingsDialog(QDialog):
         layout.setSpacing(12)
         layout.addWidget(self._hint(t("set.sources_hint")))
 
+        self._player_combo = QComboBox()
+        self._player_combo.addItem(t("player.auto"), "")
+        offered = {player.bus_name for player in self._players}
+        for player in self._players:
+            self._player_combo.addItem(player.identity, player.bus_name)
+        if self._config.player_lock and self._config.player_lock not in offered:
+            self._player_combo.addItem(self._config.player_lock + t("player.unavailable"), self._config.player_lock)
+        player_index = self._player_combo.findData(self._config.player_lock)
+        self._player_combo.setCurrentIndex(player_index if player_index >= 0 else 0)
+        layout.addWidget(QLabel(t("set.player")))
+        layout.addWidget(self._player_combo)
+        layout.addWidget(self._hint(t("set.player_hint")))
+
         self._sources_list = QListWidget()
         self._sources_list.setDragDropMode(QAbstractItemView.DragDropMode.InternalMove)
         enabled = self._config.lyrics_sources
@@ -1091,6 +1108,7 @@ class SettingsDialog(QDialog):
             prefer_best_lyrics=self._prefer_best.isChecked(),
             fuzzy_match=self._fuzzy_match.isChecked(),
             cache_enabled=self._cache_enabled.isChecked(),
+            player_lock=str(self._player_combo.currentData()),
         ).clamped()
 
     def _reset_current_page(self) -> None:
