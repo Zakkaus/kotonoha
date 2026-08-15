@@ -367,3 +367,24 @@ async def test_kugou_also_queries_the_title_with_the_performer():
     assert seen == ["晴天", "晴天 周杰伦"]
     assert art is not None
     assert [line.text for line in art.lines] == ["found by the second keyword"]
+
+
+def test_kugou_parses_the_payload_shape_it_caches():
+    # A word-timed hit is stored as base64 KRC. The cache deletes any row its
+    # parser cannot read, so a parser that only knows the LRC key made the
+    # word-timed path refetch on every single lookup.
+    import base64
+    import zlib
+
+    from kotonoha.lyrics.krc_parser import KRC_XOR_KEY
+
+    body = b"[0,1000]<0,500,0>word <500,500,0>two\n"
+    packed = zlib.compress(body)
+    encrypted = bytes(byte ^ KRC_XOR_KEY[index % len(KRC_XOR_KEY)] for index, byte in enumerate(packed))
+    payload = {"krc": base64.b64encode(b"krc1" + encrypted).decode("ascii")}
+
+    lines = kugou.parse_payload(payload)
+
+    assert lines, "the cached KRC payload produced no lines"
+    assert lines[0].words, "word timing was lost on the way through the cache"
+    assert kugou.parse_payload({"krc": "not base64 %%%"}) == ()

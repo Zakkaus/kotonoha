@@ -118,6 +118,18 @@ async def download_krc(session: aiohttp.ClientSession, record: Record) -> bytes:
 
 
 def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
+    """Parse either payload shape this provider stores.
+
+    A word-timed hit is cached as base64 KRC and a plain one as LRC. Reading only
+    the LRC key made every cached KRC row fail to parse, and the cache deletes a
+    row it cannot parse — so the word-timed path refetched on every lookup.
+    """
+    krc = payload.get("krc", "")
+    if krc:
+        try:
+            return tuple(parse_krc(base64.b64decode(krc)))
+        except (ValueError, binascii.Error):
+            return ()
     return tuple(parse_lrc(payload.get("lrc", "")))
 
 
