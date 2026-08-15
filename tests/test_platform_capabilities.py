@@ -62,4 +62,7 @@ def test_capabilities_match_missing_library(monkeypatch: pytest.MonkeyPatch) -> 
         # The library never loaded, which is a different thing to tell the user than
         # a compositor that simply has no blur protocol.
         blur_reason="bridge",
+        # Both ride on Layer Shell, so the UI can say why they are off too.
+        input_region_reason=controller.disabled_reason,
+        output_rebinding_reason=controller.disabled_reason,
     )
