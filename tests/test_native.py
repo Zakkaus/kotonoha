@@ -4,20 +4,24 @@ These cover the fallback logic that decides whether the overlay drives the
 wlr-layer-shell bridge or degrades to a top-most ordinary window, without
 needing a live Wayland compositor. The gate order under test:
 
-    non-Wayland  ->  library found  ->  GNOME name check  ->  runtime probe
+    non-Wayland  ->  library found  ->  runtime probe
 
-Background blur is gated separately: the library stays loaded past the last two
-gates so a compositor without layer-shell can still frost the panel.
+The compositor answers for itself: the probe decides whenever the bridge exports
+it, and the GNOME desktop-name check is only the fallback for a bridge too old to
+have the symbol. Background blur is gated separately, so the library stays loaded
+past the layer-shell gate and a compositor without layer-shell can still frost
+the panel.
 """
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import pytest
 
 from kotonoha import native
-from kotonoha.native import LayerShellController
+from kotonoha.native import LayerShellController, default_package_dir
 
 
 class _FakeLib:
@@ -178,3 +182,69 @@ def test_blur_availability_is_read_live(stub_load):
     lib.koto_has_blur = lambda: 0  # the compositor withdrew it
     assert ctl.blur_available is False
     assert ctl.blur_disabled_reason == "protocol"
+
+
+def test_a_non_wayland_session_is_not_reported_as_a_broken_bridge(stub_load):
+    # X11 skips loading the bridge on purpose. Calling that a load failure told
+    # every X11 user their install was broken.
+    stub_load(_FakeLib(has_layer_shell=True))
+    ctl = LayerShellController("/pkg", "xcb", "KDE")
+    assert ctl.blur_available is False
+    assert ctl.blur_disabled_reason == "session"
+
+
+# conftest pins QT_QPA_PLATFORM to offscreen unless the caller set it, so this runs
+# only when someone points it at a real session: QT_QPA_PLATFORM=wayland uv run pytest
+@pytest.mark.skipif(
+    not os.environ.get("WAYLAND_DISPLAY") or os.environ.get("QT_QPA_PLATFORM") != "wayland",
+    reason="needs a live Wayland session (QT_QPA_PLATFORM=wayland); CI runs offscreen",
+)
+def test_blur_objects_do_not_accumulate_across_surface_rebuilds():
+    """Live lifecycle check against whatever compositor is running.
+
+    Unit tests use a fake library, so nothing here covered the real registry, the
+    capability event, or what happens to a compositor-side object when its surface
+    is destroyed. This drives real surfaces: the objects are keyed by wl_surface
+    and a rebuilt surface gets a new address, so one left behind can never be found
+    again and would show up as a rising count.
+    """
+    import PyQt6.sip as sip
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    app = QApplication.instance()
+    if not isinstance(app, QApplication):
+        app = QApplication([])
+    controller = LayerShellController(
+        default_package_dir(), app.platformName(), os.environ.get("XDG_CURRENT_DESKTOP", "")
+    )
+    if controller.blur_object_count < 0:
+        pytest.skip("this bridge does not report its blur objects")
+    if not controller.blur_available:
+        pytest.skip("this compositor advertises no blur protocol")
+
+    widget = QWidget()
+    widget.resize(200, 80)
+    widget.show()
+    app.processEvents()
+    try:
+        for _ in range(5):
+            widget.winId()
+            handle = widget.windowHandle()
+            assert handle is not None
+            pointer = sip.unwrapinstance(handle)
+            assert pointer is not None
+            controller.set_blur_region(pointer, 0, 0, 200, 80, 8)
+            app.processEvents()
+            assert controller.blur_object_count == 1, "one live surface should hold one blur object"
+            controller.clear_blur(pointer)
+            widget.hide()
+            handle = widget.windowHandle()
+            if handle is not None:
+                handle.destroy()
+            widget.show()
+            app.processEvents()
+        assert controller.blur_object_count == 0, "a rebuilt surface left its blur object behind"
+    finally:
+        widget.close()
+        widget.deleteLater()
+        app.processEvents()

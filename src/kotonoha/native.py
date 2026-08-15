@@ -115,6 +115,8 @@ class LayerShellController:
             lib.set_blur_region.argtypes = [ctypes.c_void_p] + [ctypes.c_int] * 5
         if hasattr(lib, "clear_blur"):
             lib.clear_blur.argtypes = [ctypes.c_void_p]
+        if hasattr(lib, "koto_blur_object_count"):
+            lib.koto_blur_object_count.restype = ctypes.c_int
         return lib
 
     @property
@@ -136,7 +138,10 @@ class LayerShellController:
         still report blur after the compositor withdrew it — or keep the options
         disabled after it gained it, until the process restarted."""
         if self._lib is None:
-            self._blur_reason = "bridge"
+            # A non-Wayland session skips loading the bridge on purpose, which is
+            # not the same as a load that failed — the settings window would
+            # otherwise report a broken install on every X11 desktop.
+            self._blur_reason = "session" if not self._platform.startswith("wayland") else "bridge"
             return False
         if not hasattr(self._lib, "koto_has_blur"):
             self._blur_reason = "build"
@@ -151,6 +156,7 @@ class LayerShellController:
     def blur_disabled_reason(self) -> str | None:
         """Why blur is unavailable, as a stable cause the UI can translate.
 
+        "session" — not a Wayland session, so the bridge is skipped on purpose.
         "bridge" — the native library did not load at all.
         "protocol" — the compositor advertises neither blur protocol.
         "build" — this build has no blur support compiled in.
@@ -203,6 +209,18 @@ class LayerShellController:
     def clear_blur(self, window_ptr: int) -> None:
         if self._lib and hasattr(self._lib, "clear_blur"):
             self._lib.clear_blur(ctypes.c_void_p(window_ptr))
+
+    @property
+    def blur_object_count(self) -> int:
+        """Compositor-side blur objects this process is holding.
+
+        The bridge keys them on the wl_surface, so one left behind when a surface
+        is rebuilt can never be found again. Exported so a test can assert that
+        repeated rebuilds do not accumulate them; -1 when the bridge is too old to
+        report it."""
+        if self._lib is None or not hasattr(self._lib, "koto_blur_object_count"):
+            return -1
+        return int(self._lib.koto_blur_object_count())
 
 
 def default_package_dir() -> str:

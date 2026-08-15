@@ -357,7 +357,10 @@ extern "C" {
         if (!native) return;
         struct wl_surface* surface = (struct wl_surface*)native->nativeResourceForWindow("surface", window);
         if (!surface) return;
-        if (!probe_blur(native)) return;
+        // No capability check before the erase. An object already created must be
+        // destroyed whatever the compositor reports now: withdrawing the blur
+        // capability makes probe_blur() false, and returning here would strand the
+        // proxy in the map for the life of the process.
 
         // Destroying the effect object drops its regions on the next commit.
         auto effect = g_effects.find(surface);
@@ -372,6 +375,18 @@ extern "C" {
         }
         if (g_blur_manager) org_kde_kwin_blur_manager_unset(g_blur_manager, surface);
         wl_surface_commit(surface);
+#endif  // KOTONOHA_HAVE_BLUR
+    }
+
+    // How many compositor-side blur objects this process is holding. Exported so a
+    // test can assert that repeated surface rebuilds do not accumulate them: the
+    // objects are keyed by wl_surface, and a rebuilt surface gets a new address, so
+    // one left behind can never be found again.
+    int koto_blur_object_count() {
+#ifndef KOTONOHA_HAVE_BLUR
+        return 0;  // built without blur
+#else
+        return static_cast<int>(g_effects.size() + g_blurs.size());
 #endif  // KOTONOHA_HAVE_BLUR
     }
 

@@ -171,7 +171,7 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
     assert dialog._blur_capable is False
     assert dialog._frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
-    causes = {t(f"set.frost_window.no_{cause}") for cause in ("bridge", "protocol", "build")}
+    causes = {t(f"set.frost_window.no_{cause}") for cause in ("session", "bridge", "protocol", "build")}
     assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
     dialog.close()
 

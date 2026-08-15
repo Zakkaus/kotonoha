@@ -586,6 +586,7 @@ class SettingsDialog(QDialog):
         # bridge failing to load, the compositor offering no protocol, and a build
         # without blur are three different things to act on.
         reason_key = {
+            "session": "set.frost_window.no_session",
             "bridge": "set.frost_window.no_bridge",
             "protocol": "set.frost_window.no_protocol",
             "build": "set.frost_window.no_build",

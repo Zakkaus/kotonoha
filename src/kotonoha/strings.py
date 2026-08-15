@@ -249,6 +249,12 @@ STRINGS: dict[str, dict[str, str]] = {
                               "zh-Hans": "毛玻璃需要合成器支持背景模糊；其他环境为不透明窗口。",
                               "zh-Hant": "毛玻璃需要合成器支援背景模糊；其他環境為不透明視窗。",
                               "ja": "すりガラスは背景ぼかしに対応したコンポジタが必要（他環境では不透明ウィンドウ）。"},
+    "set.frost_window.no_session": {
+        "en": "Unavailable: frosted glass needs a Wayland session.",
+        "zh-Hans": "不可用：毛玻璃需要 Wayland 会话。",
+        "zh-Hant": "無法使用：毛玻璃需要 Wayland 工作階段。",
+        "ja": "利用不可: すりガラスには Wayland セッションが必要です。",
+    },
     "set.frost_window.no_bridge": {
         "en": "Unavailable: the native bridge did not load.",
         "zh-Hans": "不可用：本地桥接未能加载。",
