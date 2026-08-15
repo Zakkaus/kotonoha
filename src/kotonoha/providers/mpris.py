@@ -14,7 +14,8 @@ from ..config import DEFAULT_LYRICS_SOURCES
 from ..lyrics.match import TrackMetadata
 from ..lyrics.resolver import LyricsResolver, ResolvedLyrics
 from ..lyrics.select import build_snapshot, find_current_index
-from ..model import LyricLine, PlayerInfo
+from ..model import LyricLine
+from ..players import PlayerInfo
 from ..state import LyricsState
 from .gate import SourceGate
 from .mpris_track import (

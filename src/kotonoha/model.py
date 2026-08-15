@@ -182,13 +182,3 @@ __all__ = [
     "parse_payload",
 ]
 
-
-@dataclass(frozen=True)
-class PlayerInfo:
-    """One MPRIS player as the settings window needs to show it.
-
-    Lives here rather than beside the provider so the presentation layer does not
-    import the D-Bus module to describe a row."""
-
-    bus_name: str
-    identity: str

@@ -8,7 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QListWidgetItem
 
 from kotonoha.config import Config
-from kotonoha.providers.mpris import PlayerInfo
+from kotonoha.players import PlayerInfo
 from kotonoha.settings_dialog import _PAGE_FIELDS, SettingsDialog
 
 
@@ -633,3 +633,13 @@ def test_the_settings_window_does_not_import_the_mpris_provider():
         if isinstance(node, ast.ImportFrom) and node.module
     }
     assert not {name for name in imported if "providers" in name}, imported
+
+
+def test_the_player_dto_is_exported_by_the_module_that_defines_it():
+    # A type imported from a module but missing from its __all__ is outside the
+    # contract that module declares — which is how it ended up appended after the
+    # lyrics model's exports, in a module about lyric payloads.
+    from kotonoha import players
+
+    assert players.__all__ == ["PlayerInfo"]
+    assert "PlayerInfo" not in getattr(__import__("kotonoha.model", fromlist=["model"]), "__all__", [])
