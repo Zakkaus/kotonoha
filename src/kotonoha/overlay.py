@@ -879,8 +879,15 @@ class LyricsOverlay(QWidget):
             self._dragging = False
             self._drag_moved = False
             self._render_timer.start()  # resume the sweep
-            if moved:
+            if moved and self._platform.capabilities.client_positioning:
                 self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)
+            elif moved:
+                # The window never went where the drag asked, so saving that
+                # position would put the config and the visible window out of step.
+                logger.info(
+                    "Not saving the dragged position: %s",
+                    self._platform.capabilities.client_positioning_reason,
+                )
             if a0 is not None:
                 a0.accept()
         else:

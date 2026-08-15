@@ -3,6 +3,8 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from dataclasses import replace
+
 import pytest
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
@@ -840,6 +842,35 @@ def test_a_returning_output_that_cannot_be_rebuilt_stays_owed(qapp):
         overlay._restore_surface(screen)
 
     assert overlay._pending_resurface is True
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
+    # Wayland without Layer Shell ignores a client-side move, so saving the dragged
+    # position would leave the config describing somewhere the window never went.
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    committed: list[object] = []
+    unplaceable = replace(
+        overlay._platform.capabilities, client_positioning=False, client_positioning_reason="no"
+    )
+    with patch.object(
+        type(overlay._platform), "capabilities", property(lambda self: unplaceable)
+    ), patch.object(overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)):
+        overlay._dragging = True
+        overlay._drag_moved = True
+        overlay.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                QPointF(10, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    assert committed == [], "a position the window never took was saved"
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

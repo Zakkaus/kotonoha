@@ -20,6 +20,13 @@ class OverlayCapabilities:
     blur_reason: str | None = None
     input_region_reason: str | None = None
     output_rebinding_reason: str | None = None
+    # Whether the client can place its own window. Layer Shell positions by anchor
+    # and X11 by the window manager; a Wayland compositor without Layer Shell
+    # ignores a client-side move of a toplevel, and no readback can tell — Qt
+    # reports the requested position either way, measured on KWin — so this is
+    # stated from the protocol rather than observed.
+    client_positioning: bool = True
+    client_positioning_reason: str | None = None
 
     @classmethod
     def from_controller(cls, controller: LayerShellBridge) -> OverlayCapabilities:

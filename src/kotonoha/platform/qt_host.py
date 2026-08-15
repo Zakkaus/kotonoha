@@ -21,7 +21,6 @@ class QtWindowHost:
 
     def __init__(self, widget: QWidget) -> None:
         self._widget = widget
-        self._known_position: WindowPoint | None = None
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         if policy.recreate_surface:
@@ -59,8 +58,14 @@ class QtWindowHost:
         return self._rectangle(self._widget.geometry())
 
     def window_position(self) -> WindowPoint | None:
-        if self._known_position is not None:
-            return self._known_position
+        """Where the toolkit says the window is.
+
+        Deliberately not the last requested position: a cache of what was asked
+        for makes any "did the move land" check agree with itself. Whether a move
+        can land at all is a capability the adapter states, not something read
+        back here — on Wayland the toolkit reports the requested position whether
+        or not the compositor applied it.
+        """
         geometry = self._widget.geometry()
         return WindowPoint(geometry.x(), geometry.y())
 
@@ -80,7 +85,6 @@ class QtWindowHost:
         raise RuntimeError("Requested output is not available.")
 
     def move_window(self, position: WindowPoint) -> None:
-        self._known_position = position
         self._widget.move(position.x, position.y)
 
     def set_input_mask(self, region: WindowRectangle) -> None:

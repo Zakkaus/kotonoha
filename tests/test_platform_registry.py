@@ -165,20 +165,28 @@ def test_layer_shell_operations_report_failure_when_the_capability_is_off() -> N
         assert result.reason
 
 
-def test_the_fallback_move_reports_a_compositor_that_ignored_it() -> None:
-    # A Wayland compositor without Layer Shell ignores a client-side move of a
-    # toplevel. Reporting success because move_window() did not raise let the
-    # caller persist a position the visible window never took.
-    class _StubbornHost(_FakeHost):
-        def window_position(self) -> WindowPoint | None:
-            return WindowPoint(0, 0)  # wherever it is asked to go, it stays here
+def test_a_wayland_fallback_reports_that_it_cannot_place_its_own_window() -> None:
+    # Wayland gives a client no way to place its own toplevel, and no readback can
+    # tell: measured on KWin, Qt reports the requested position whether or not the
+    # compositor applied it. So this is stated from the protocol. Reporting success
+    # let the caller persist a position the visible window never took.
+    platform = DefaultOverlayPlatformFactory(
+        _FakeController(False), platform_name="wayland", current_desktop="GNOME"
+    )(_FakeHost())
 
-        def move_window(self, position: WindowPoint) -> None:
-            del position
-
-    platform = QtWindowPlatform(_StubbornHost(), reason="no Layer Shell here")
-
+    assert platform.capabilities.client_positioning is False
     result = platform.move_to(WindowPoint(120, 40))
 
     assert not result.succeeded
     assert result.reason
+
+
+def test_an_x11_fallback_can_place_its_own_window() -> None:
+    # A window manager honours a client move on X11, so the same adapter reports
+    # the opposite there.
+    platform = DefaultOverlayPlatformFactory(
+        _FakeController(False), platform_name="xcb", current_desktop="KDE"
+    )(_FakeHost())
+
+    assert platform.capabilities.client_positioning is True
+    assert platform.move_to(WindowPoint(120, 40)).succeeded

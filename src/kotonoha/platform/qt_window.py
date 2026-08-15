@@ -18,10 +18,19 @@ class QtWindowPlatform(OverlayPlatform):
     """Use toolkit window flags when compositor-specific overlay APIs are absent."""
 
     def __init__(
-        self, host: WindowHost, *, reason: str | None = None, blur: LayerShellBridge | None = None
+        self,
+        host: WindowHost,
+        *,
+        reason: str | None = None,
+        blur: LayerShellBridge | None = None,
+        client_positioning: bool = True,
     ) -> None:
         self._host = host
         self._reason = reason
+        # Wayland without Layer Shell ignores a client-side move of a toplevel, and
+        # the client cannot detect it: Qt reports the requested position either way.
+        # So the provider states it here instead of the adapter guessing afterwards.
+        self._client_positioning = client_positioning
         # Blur is a separate capability from Layer Shell: Mutter offers no
         # layer-shell and does speak ext-background-effect-v1, so hardcoding
         # blur=False here dropped the frosted panel on exactly the compositor the
@@ -45,6 +54,10 @@ class QtWindowPlatform(OverlayPlatform):
                 else "Ordinary windows have no bridge to request compositor blur."
             ),
             output_rebinding_reason="Ordinary windows cannot rebind a mapped output.",
+            client_positioning=self._client_positioning,
+            client_positioning_reason=None
+            if self._client_positioning
+            else "This compositor ignores a client-side move of an ordinary window.",
         )
 
     def prepare(self) -> OverlayOperationResult:
@@ -102,19 +115,15 @@ class QtWindowPlatform(OverlayPlatform):
         return OverlayOperationResult.success()
 
     def move_to(self, position: WindowPoint) -> OverlayOperationResult:
+        capabilities = self.capabilities
+        if not capabilities.client_positioning:
+            return OverlayOperationResult.failure(
+                capabilities.client_positioning_reason or "This window cannot be positioned by the client."
+            )
         try:
             self._host.move_window(position)
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Window move failed: {exc}")
-        # Reporting success because move_window() did not raise is not evidence the
-        # window moved: a Wayland compositor without Layer Shell ignores a
-        # client-side move of a toplevel, and the caller then persisted a position
-        # the visible window never took. Ask where the window actually is.
-        landed = self._host.window_position()
-        if landed is not None and landed != position:
-            return OverlayOperationResult.failure(
-                "The compositor did not apply the move; this window cannot be positioned by the client."
-            )
         return OverlayOperationResult.success()
 
     def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:

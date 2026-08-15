@@ -56,7 +56,12 @@ class _WaylandFallbackProvider:
         # Still hand over the bridge: a Wayland compositor without Layer Shell can
         # speak a blur protocol, which is exactly the Mutter case.
         return QtWindowPlatform(
-            host, reason="Wayland compositor does not provide Layer Shell.", blur=self._controller
+            host,
+            reason="Wayland compositor does not provide Layer Shell.",
+            blur=self._controller,
+            # Wayland gives a client no way to place its own toplevel, and no
+            # readback can tell: Qt reports the requested position either way.
+            client_positioning=False,
         )
 
 
