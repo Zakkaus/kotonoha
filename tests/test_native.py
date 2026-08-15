@@ -4,7 +4,10 @@ These cover the fallback logic that decides whether the overlay drives the
 wlr-layer-shell bridge or degrades to a top-most ordinary window, without
 needing a live Wayland compositor. The gate order under test:
 
-    non-Wayland  ->  GNOME name check  ->  library found  ->  runtime probe
+    non-Wayland  ->  library found  ->  GNOME name check  ->  runtime probe
+
+Background blur is gated separately: the library stays loaded past the last two
+gates so a compositor without layer-shell can still frost the panel.
 """
 
 from __future__ import annotations
@@ -20,10 +23,12 @@ from kotonoha.native import LayerShellController
 class _FakeLib:
     """Stand-in for the ctypes CDLL returned by _load, for probe tests."""
 
-    def __init__(self, *, has_layer_shell: bool | None) -> None:
-        # has_layer_shell None -> the symbol is absent entirely (older .so).
+    def __init__(self, *, has_layer_shell: bool | None, has_blur: bool | None = None) -> None:
+        # None -> the symbol is absent entirely (older .so).
         if has_layer_shell is not None:
             self.koto_has_layer_shell = lambda: (1 if has_layer_shell else 0)
+        if has_blur is not None:
+            self.koto_has_blur = lambda: (1 if has_blur else 0)
 
 
 @pytest.fixture
@@ -50,11 +55,40 @@ def test_non_wayland_session_disables_before_touching_the_library(monkeypatch):
     assert "non-wayland" in ctl.disabled_reason.lower()
 
 
-def test_gnome_wayland_is_disabled_by_the_name_check(monkeypatch):
-    monkeypatch.setattr(native, "find_layer_shell_library", lambda _pkg: "/fake/libkoto-layer.so")
+def test_gnome_wayland_is_disabled_by_the_name_check(stub_load):
+    stub_load(_FakeLib(has_layer_shell=None))
     ctl = LayerShellController("/pkg", "wayland", "ubuntu:GNOME")
     assert ctl.available is False
     assert "gnome" in (ctl.disabled_reason or "").lower()
+
+
+def test_gnome_wayland_keeps_the_bridge_for_background_blur(stub_load):
+    # Mutter has no layer-shell but does speak ext-background-effect-v1, so the
+    # library must stay loaded past the layer-shell gate for the frosted panel.
+    stub_load(_FakeLib(has_layer_shell=None, has_blur=True))
+    ctl = LayerShellController("/pkg", "wayland", "ubuntu:GNOME")
+    assert ctl.available is False
+    assert ctl.blur_available is True
+
+
+def test_blur_needs_the_compositor_not_the_desktop_name(stub_load):
+    # KDE with layer-shell but no blur protocol (Plasma 6.7 dropped the private
+    # one): the frosted options must read as unavailable rather than silently
+    # falling back to a bare translucent panel.
+    stub_load(_FakeLib(has_layer_shell=True, has_blur=False))
+    ctl = LayerShellController("/pkg", "wayland", "KDE")
+    assert ctl.available is True
+    assert ctl.blur_available is False
+
+
+def test_older_bridge_without_the_blur_symbol_reports_no_blur(stub_load):
+    stub_load(_FakeLib(has_layer_shell=True))
+    assert LayerShellController("/pkg", "wayland", "KDE").blur_available is False
+
+
+def test_non_wayland_session_has_no_blur(monkeypatch):
+    monkeypatch.setattr(native, "find_layer_shell_library", lambda _pkg: "/fake/libkoto-layer.so")
+    assert LayerShellController("/pkg", "xcb", "KDE").blur_available is False
 
 
 def test_missing_library_disables_with_a_hint(monkeypatch):
@@ -99,3 +133,4 @@ def test_load_real_bridge_declares_argtypes_and_handshake():
     assert lib.make_overlay.argtypes is not None
     assert hasattr(lib, "koto_layer_qt_version")
     assert hasattr(lib, "koto_has_layer_shell")
+    assert hasattr(lib, "koto_has_blur")

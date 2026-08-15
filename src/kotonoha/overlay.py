@@ -586,10 +586,10 @@ class LyricsOverlay(QWidget):
             QTimer.singleShot(0, self._apply_input_region)
 
     def _apply_blur(self) -> None:
-        """Blur the compositor content behind the pill for the frosted-glass style
-        (KWin backdrop-blur); no-op elsewhere, where the translucent fill remains."""
+        """Blur the compositor content behind the pill for the frosted-glass style;
+        no-op where no blur protocol exists, leaving the translucent fill."""
         ptr = self._window_ptr()
-        if ptr is None or not self._controller.available:
+        if ptr is None or not self._controller.blur_available:
             return
         if self._config.panel_style == "frost":
             rect = self._container.geometry()

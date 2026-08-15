@@ -52,8 +52,13 @@ def test_cmake_builds_and_installs_native_bridge() -> None:
             "find_package(Qt6GuiPrivate REQUIRED)",
             "find_package(LayerShellQt CONFIG REQUIRED)",
             "pkg_check_modules(WaylandClient REQUIRED IMPORTED_TARGET wayland-client)",
-            # Optional KWin blur protocol codegen (frosted-glass panel).
+            # Optional blur protocol codegen (frosted-glass panel): the
+            # cross-desktop ext-background-effect-v1 and the KDE-private
+            # org_kde_kwin_blur it replaced are both generated.
             "find_program(WAYLAND_SCANNER wayland-scanner)",
+            "foreach(KOTONOHA_PROTOCOL IN ITEMS blur ext-background-effect-v1)",
+            '"${CMAKE_CURRENT_SOURCE_DIR}/src/kotonoha/protocols/${KOTONOHA_PROTOCOL}.xml"',
+            'list(APPEND KOTONOHA_BLUR_SOURCES "${KOTONOHA_PROTOCOL_HEADER}" "${KOTONOHA_PROTOCOL_CODE}")',
             "target_compile_definitions(koto-layer PRIVATE KOTONOHA_HAVE_BLUR)",
             "add_library(koto-layer SHARED src/kotonoha/layer_shell_bridge.cpp ${KOTONOHA_BLUR_SOURCES})",
             "Qt6::GuiPrivate",

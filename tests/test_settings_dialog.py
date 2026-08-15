@@ -133,10 +133,11 @@ def test_white_panel_option_present_and_roundtrips(qapp):
     dialog.close()
 
 
-def test_frost_only_on_kwin_wayland_and_blur_lifecycle_is_safe(qapp):
-    # Frost is gated to KDE Wayland; the offscreen test platform is not Wayland, so
-    # the window stays a solid panel. The blur lifecycle (apply on show, re-apply on
-    # resize, clear on hide) must be a sequence of safe no-ops that never raise.
+def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
+    # Frost is gated on the compositor advertising a blur protocol; the offscreen
+    # test platform is not Wayland, so the window stays a solid panel. The blur
+    # lifecycle (apply on show, re-apply on resize, clear on hide) must be a
+    # sequence of safe no-ops that never raise.
     dialog = SettingsDialog(Config())
     assert dialog._frosted is False  # offscreen platform is not "wayland"
     dialog._apply_blur()
@@ -163,8 +164,8 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
 
     from kotonoha.strings import t
 
-    # Offscreen is not KDE Wayland, so frosted glass can't work: the checkbox reads
-    # as unavailable (disabled) and the KDE-only note is shown under it.
+    # Offscreen has no blur protocol, so frosted glass can't work: the checkbox
+    # reads as unavailable (disabled) and the note is shown under it.
     dialog = SettingsDialog(Config())
     assert dialog._blur_capable is False
     assert dialog._frost_window.isEnabled() is False

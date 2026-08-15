@@ -95,14 +95,14 @@ STRINGS: dict[str, dict[str, str]] = {
     "set.panel_tint": {"en": "Panel follows accent color", "zh-Hans": "面板颜色跟随强调色",
                        "zh-Hant": "面板顏色跟隨強調色", "ja": "パネル色をアクセントに合わせる"},
     "set.panel_hint": {
-        "en": "Frosted glass needs KWin/KDE; elsewhere it falls back to a translucent panel. "
+        "en": "Frosted glass needs a compositor that can blur; elsewhere it falls back to a translucent panel. "
               "Each panel style keeps its own opacity (black can go fully transparent, frosted to pure blur).",
-        "zh-Hans": "毛玻璃需要 KWin/KDE 桌面；其他环境回退为半透明面板。每种面板样式各自记住不透明度"
+        "zh-Hans": "毛玻璃需要合成器支持背景模糊；其他环境回退为半透明面板。每种面板样式各自记住不透明度"
                    "（黑色可全透明，毛玻璃可纯模糊）。",
-        "zh-Hant": "毛玻璃需要 KWin/KDE 桌面；其他環境回退為半透明面板。每種面板樣式各自記住不透明度"
+        "zh-Hant": "毛玻璃需要合成器支援背景模糊；其他環境回退為半透明面板。每種面板樣式各自記住不透明度"
                    "（黑色可全透明，毛玻璃可純模糊）。",
-        "ja": "すりガラスは KWin/KDE が必要（他環境では半透明パネルに）。不透明度はスタイルごとに保持"
-              "（黒は完全透明、すりガラスは純ぼかしまで）。",
+        "ja": "すりガラスは背景ぼかし対応のコンポジタが必要（他環境では半透明パネルに）。"
+              "不透明度はスタイルごとに保持（黒は完全透明、すりガラスは純ぼかしまで）。",
     },
     "set.fx_animate": {"en": "Animations", "zh-Hans": "动画", "zh-Hant": "動畫", "ja": "アニメーション"},
     "set.fx_transition": {"en": "Line transition", "zh-Hans": "换行动画",
@@ -245,10 +245,10 @@ STRINGS: dict[str, dict[str, str]] = {
     "theme.dark": {"en": "Dark", "zh-Hans": "深色", "zh-Hant": "深色", "ja": "ダーク"},
     "set.frost_window": {"en": "Frosted-glass window", "zh-Hans": "毛玻璃窗口",
                          "zh-Hant": "毛玻璃視窗", "ja": "すりガラスウィンドウ"},
-    "set.frost_window_hint": {"en": "Frosted glass needs KDE Wayland; a solid window elsewhere.",
-                              "zh-Hans": "毛玻璃需要 KDE Wayland；其他环境为不透明窗口。",
-                              "zh-Hant": "毛玻璃需要 KDE Wayland；其他環境為不透明視窗。",
-                              "ja": "すりガラスは KDE Wayland が必要（他環境では不透明ウィンドウ）。"},
+    "set.frost_window_hint": {"en": "Frosted glass needs a compositor that can blur; a solid window elsewhere.",
+                              "zh-Hans": "毛玻璃需要合成器支持背景模糊；其他环境为不透明窗口。",
+                              "zh-Hant": "毛玻璃需要合成器支援背景模糊；其他環境為不透明視窗。",
+                              "ja": "すりガラスは背景ぼかしに対応したコンポジタが必要（他環境では不透明ウィンドウ）。"},
     "set.settings_opacity": {"en": "Window opacity", "zh-Hans": "窗口不透明度",
                              "zh-Hant": "視窗不透明度", "ja": "ウィンドウの不透明度"},
     "btn.restart": {"en": "Restart now", "zh-Hans": "立即重启",

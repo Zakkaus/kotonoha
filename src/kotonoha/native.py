@@ -7,6 +7,10 @@ degrades: on X11 it is a normal top-most window (``_NET_WM_STATE_ABOVE``) that
 the WM positions; on a layer-shell-less Wayland session it is an ordinary window
 the compositor places and stacks — it cannot stay above other apps and cannot be
 positioned precisely (``self.move()`` is a no-op on Wayland).
+
+Backdrop blur is tracked separately from layer-shell (``blur_available`` vs
+``available``): it rides on the same library but on its own protocols, so a
+Wayland compositor without layer-shell can still frost the panel.
 """
 
 from __future__ import annotations
@@ -25,6 +29,8 @@ class LayerShellController:
     def __init__(self, package_dir: str, platform_name: str, current_desktop: str) -> None:
         self._platform = platform_name
         self._lib: ctypes.CDLL | None = None
+        self._layer_shell = False
+        self._blur: bool | None = None
         self._disabled_reason: str | None = None
 
         # wlr-layer-shell is Wayland-only. On X11 the .so still dlopens (its Qt /
@@ -33,17 +39,6 @@ class LayerShellController:
         # fallback. Refuse it up front so the overlay takes its top-most path.
         if not platform_name.startswith("wayland"):
             self._disabled_reason = "Non-Wayland session; shown as a top-most window positioned by the WM."
-            logger.info("%s", self._disabled_reason)
-            return
-
-        # Fast path for a known layer-shell-less Wayland compositor (GNOME/Mutter).
-        # The runtime registry probe below is authoritative when the bridge exposes
-        # it; this name check still catches GNOME with an older bridge.
-        if should_disable_layer_shell(platform_name, current_desktop):
-            self._disabled_reason = (
-                "GNOME/Mutter Wayland does not implement wlr-layer-shell; "
-                "falling back to a normal top-most window."
-            )
             logger.info("%s", self._disabled_reason)
             return
 
@@ -60,6 +55,22 @@ class LayerShellController:
             logger.warning("%s", self._disabled_reason)
             return
 
+        # The bridge is kept even without layer-shell: background blur rides on the
+        # same library, and ext-background-effect-v1 works on compositors (Mutter)
+        # that have no layer-shell at all.
+        self._lib = lib
+
+        # Known layer-shell-less Wayland compositor (GNOME/Mutter). The runtime
+        # registry probe below is authoritative when the bridge exposes it; this
+        # name check still catches GNOME with an older bridge.
+        if should_disable_layer_shell(platform_name, current_desktop):
+            self._disabled_reason = (
+                "GNOME/Mutter Wayland does not implement wlr-layer-shell; "
+                "falling back to a normal top-most window."
+            )
+            logger.info("%s", self._disabled_reason)
+            return
+
         # Authoritative runtime check when the bridge provides it: does THIS
         # compositor advertise zwlr_layer_shell_v1? Catches every layer-shell-less
         # Wayland session name-matching misses (Weston, Cinnamon, GNOME under any
@@ -73,7 +84,7 @@ class LayerShellController:
             logger.info("%s", self._disabled_reason)
             return
 
-        self._lib = lib
+        self._layer_shell = True
 
     @staticmethod
     def _load(lib_path: str) -> ctypes.CDLL:
@@ -92,6 +103,8 @@ class LayerShellController:
                 raise OSError(f"bridge built against Qt {built}, PyQt6 runtime is Qt {QT_VERSION_STR}")
         if hasattr(lib, "koto_has_layer_shell"):
             lib.koto_has_layer_shell.restype = ctypes.c_int
+        if hasattr(lib, "koto_has_blur"):
+            lib.koto_has_blur.restype = ctypes.c_int
         lib.make_overlay.argtypes = [ctypes.c_void_p]
         lib.set_passthrough.argtypes = [ctypes.c_void_p, ctypes.c_bool]
         lib.set_input_rect.argtypes = [ctypes.c_void_p, ctypes.c_int, ctypes.c_int, ctypes.c_int, ctypes.c_int]
@@ -106,7 +119,22 @@ class LayerShellController:
 
     @property
     def available(self) -> bool:
-        return self._lib is not None
+        """Whether the surface can be promoted to a wlr-layer-shell surface."""
+        return self._layer_shell
+
+    @property
+    def blur_available(self) -> bool:
+        """Whether the compositor can blur a surface's backdrop, over either
+        ext-background-effect-v1 (KWin 6.7+, Mutter) or org_kde_kwin_blur (Plasma
+        <= 6.6). Independent of layer-shell, so the frosted-glass options can be
+        offered wherever the blur actually renders instead of being guessed from
+        the desktop name. Cached: the answer needs a Wayland roundtrip."""
+        if self._blur is None:
+            if self._lib is None or not hasattr(self._lib, "koto_has_blur"):
+                self._blur = False
+            else:
+                self._blur = bool(self._lib.koto_has_blur())
+        return self._blur
 
     @property
     def disabled_reason(self) -> str | None:
@@ -118,9 +146,12 @@ class LayerShellController:
         )
 
     # --- bridge calls (no-op when unavailable) ---
+    #
+    # The layer-shell calls also require the protocol itself, not just a loaded
+    # bridge: the library stays loaded for blur on compositors without layer-shell.
 
     def make_overlay(self, window_ptr: int) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.make_overlay(ctypes.c_void_p(window_ptr))
 
     def set_passthrough(self, window_ptr: int, enabled: bool) -> None:
@@ -132,11 +163,11 @@ class LayerShellController:
             self._lib.set_input_rect(ctypes.c_void_p(window_ptr), x, y, w, h)
 
     def set_anchor_position(self, window_ptr: int, x: int, y: int) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.set_anchor_position(ctypes.c_void_p(window_ptr), x, y)
 
     def set_keyboard_interactivity(self, window_ptr: int, enabled: bool) -> None:
-        if self._lib:
+        if self._lib and self._layer_shell:
             self._lib.set_keyboard_interactivity(ctypes.c_void_p(window_ptr), enabled)
 
     def set_blur_region(self, window_ptr: int, x: int, y: int, w: int, h: int, radius: int) -> None:
