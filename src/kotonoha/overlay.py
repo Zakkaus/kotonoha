@@ -13,7 +13,15 @@ import logging
 from dataclasses import replace
 
 from PyQt6.QtCore import QEvent, QObject, QPoint, QSize, Qt, QTimer, pyqtSignal
-from PyQt6.QtGui import QColor, QFont, QGuiApplication, QMouseEvent, QPainter, QPaintEvent, QShowEvent
+from PyQt6.QtGui import (
+    QColor,
+    QFont,
+    QGuiApplication,
+    QMouseEvent,
+    QPainter,
+    QPaintEvent,
+    QShowEvent,
+)
 from PyQt6.QtWidgets import (
     QApplication,
     QGraphicsDropShadowEffect,
@@ -25,8 +33,8 @@ from PyQt6.QtWidgets import (
 )
 
 from .clock import MediaClock
-from .config import Config
-from .icons import lock_icon, settings_icon
+from .config import TRACK_OFFSET_STEP_MS, Config, set_track_offset, track_identity_key
+from .icons import earlier_icon, later_icon, lock_icon, settings_icon
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
 from .model import EMPTY_SNAPSHOT, LyricLine, LyricsSnapshot
@@ -79,6 +87,7 @@ class LyricsOverlay(QWidget):
     # the target output's center, and output name. The offset is output-local;
     # virtual-desktop origins are deliberately excluded.
     position_changed = pyqtSignal(int, int, str)
+    track_offset_changed = pyqtSignal(str, int)
 
     def __init__(self, state: LyricsState, config: Config, controller: LayerShellController | None = None) -> None:
         super().__init__()
@@ -93,6 +102,10 @@ class LyricsOverlay(QWidget):
         self._drag_moved = False
         self._drag_applied = True
         self._drag_local = QPoint()
+        self._track_key = ""
+        self._feedback_timer = QTimer(self)
+        self._feedback_timer.setSingleShot(True)
+        self._feedback_timer.timeout.connect(self._restore_after_offset_feedback)
         app = QApplication.instance()
         desktop = app.property("xdg_current_desktop") if app is not None else ""
         self._controller = controller or LayerShellController(
@@ -205,6 +218,14 @@ class LyricsOverlay(QWidget):
         self._lock_btn.clicked.connect(self.passthrough_toggle_requested.emit)
         bar.addWidget(self._lock_btn)
 
+        self._earlier_btn = self._make_offset_button(earlier_icon, "overlay.offset.earlier")
+        self._earlier_btn.clicked.connect(lambda: self._nudge_offset(TRACK_OFFSET_STEP_MS))
+        bar.addWidget(self._earlier_btn)
+
+        self._later_btn = self._make_offset_button(later_icon, "overlay.offset.later")
+        self._later_btn.clicked.connect(lambda: self._nudge_offset(-TRACK_OFFSET_STEP_MS))
+        bar.addWidget(self._later_btn)
+
         self._settings_btn = QToolButton(self._container)
         self._settings_btn.setFixedSize(22, 22)
         self._settings_btn.setIconSize(QSize(15, 15))
@@ -218,6 +239,16 @@ class LyricsOverlay(QWidget):
         self._update_lock_icon()
         return self._control_bar
 
+    def _make_offset_button(self, icon_factory, tooltip_key: str) -> QToolButton:
+        button = QToolButton(self._container)
+        button.setFixedSize(22, 22)
+        button.setIconSize(QSize(15, 15))
+        button.setIcon(icon_factory(CONTROL_ICON_COLOR))
+        button.setCursor(Qt.CursorShape.PointingHandCursor)
+        button.setStyleSheet(CONTROL_BUTTON_STYLE)
+        button.setToolTip(t(tooltip_key))
+        return button
+
     def _control_icon_color(self) -> str:
         """Darken the lock/gear icons on the light (white) panel so they stay
         visible; every other panel is dark, where the soft grey reads fine."""
@@ -226,12 +257,17 @@ class LyricsOverlay(QWidget):
     def _update_lock_icon(self) -> None:
         self._lock_btn.setIcon(lock_icon(self._passthrough, self._control_icon_color()))
         self._lock_btn.setToolTip(t("overlay.locked") if self._passthrough else t("overlay.unlocked"))
+        color = self._control_icon_color()
+        self._earlier_btn.setIcon(earlier_icon(color))
+        self._later_btn.setIcon(later_icon(color))
 
     def _update_chrome(self) -> None:
         """Locking only hides the interactive controls (you can't click them once
         the surface is click-through). The panel background is governed by the
         panel-style setting, NOT the lock state — see paintEvent."""
         self._control_bar.setVisible(not self._passthrough)
+        self._earlier_btn.setVisible(not self._passthrough)
+        self._later_btn.setVisible(not self._passthrough)
         self.update()  # repaint in case the control bar changed the pill size
 
     def _make_context_label(self) -> QLabel:
@@ -542,6 +578,7 @@ class LyricsOverlay(QWidget):
             return
 
         self._container.setVisible(True)
+        self._track_key = track_identity_key(snapshot.title or "", snapshot.artist or "", snapshot.duration_s)
         current = self._convert_line(snapshot.current)
         assert current is not None  # snapshot.current is non-None here (checked above)
         previous = self._convert_line(snapshot.previous)
@@ -577,6 +614,7 @@ class LyricsOverlay(QWidget):
         )
 
     def _show_empty(self, snapshot: LyricsSnapshot) -> None:
+        self._track_key = ""
         self._prev_label.setText("")
         self._next_label.setText("")
         # No translation line while idle; the title carries the whole message.
@@ -597,7 +635,8 @@ class LyricsOverlay(QWidget):
     def _render_tick(self) -> None:
         t = self._clock.now()
         if t is not None:
-            t += self._config.lead_ms / 1000.0  # advance the sweep to compensate latency
+            offset = self._config.track_offsets.get(self._track_key, 0)
+            t += (self._config.lead_ms + offset) / 1000.0  # global latency plus recording-specific correction
         self._current.set_media_time(t)
         self._translation.set_media_time(t)
 
@@ -683,6 +722,29 @@ class LyricsOverlay(QWidget):
     def _refresh_input_region(self) -> None:
         if not self._passthrough:
             QTimer.singleShot(0, self._apply_input_region)
+
+    def _nudge_offset(self, delta_ms: int) -> None:
+        if not self._track_key:
+            return
+        current = self._config.track_offsets.get(self._track_key, 0)
+        offset = set_track_offset(self._config, self._track_key, current + delta_ms)
+        self.track_offset_changed.emit(self._track_key, offset)
+        self._show_offset_feedback(offset)
+        self._render_tick()
+
+    def _restore_after_offset_feedback(self) -> None:
+        """Put the lyric back after the offset readout.
+
+        A bound method, not a lambda: PyQt holds the receiver weakly for a bound
+        method, so the connection dies with the widget. A lambda is held strongly
+        and keeps firing into a deleted C++ object, which segfaults."""
+        self._on_snapshot(self._state.snapshot)
+
+    def _show_offset_feedback(self, offset_ms: int) -> None:
+        line = LyricLine(0, "offset-feedback", 0.0, 1e9, t("overlay.offset.value").format(offset=offset_ms), "", ())
+        self._current.set_line(line, False)
+        self._feedback_timer.start(1200)
+
 
     def _apply_blur(self) -> None:
         """Blur the compositor content behind the pill for the frosted-glass style;

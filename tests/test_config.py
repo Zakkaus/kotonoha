@@ -2,10 +2,12 @@ from typing import cast
 
 from kotonoha.config import (
     DEFAULT_LYRICS_SOURCES,
+    TRACK_OFFSET_CAP,
     VALID_LYRICS_SOURCES,
     Config,
     load_config,
     save_config,
+    set_track_offset,
 )
 
 
@@ -215,3 +217,20 @@ def test_every_lyric_source_has_a_display_name_in_every_language():
             if not entry.get(language):
                 missing.append(f"src.{source} [{language}]")
     assert not missing, f"lyric sources without a display name: {missing}"
+
+
+def test_track_offsets_roundtrip_and_evict_oldest(tmp_path):
+    path = tmp_path / "config.json"
+    cfg = Config()
+    for index in range(TRACK_OFFSET_CAP + 1):
+        set_track_offset(cfg, f"track-{index}", index)
+    save_config(cfg, path)
+    loaded = load_config(path)
+    assert len(loaded.track_offsets) == TRACK_OFFSET_CAP
+    assert "track-0" not in loaded.track_offsets
+    assert loaded.track_offsets["track-100"] == 100
+
+
+def test_track_without_offset_keeps_global_lead_only():
+    cfg = Config(lead_ms=120)
+    assert cfg.track_offsets.get("missing", 0) == 0

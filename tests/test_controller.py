@@ -115,3 +115,13 @@ async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
         controller._overlay._render_timer.stop()
         controller._overlay.deleteLater()
         qapp.processEvents()
+def test_controller_persists_track_offset(qapp, monkeypatch):
+    controller = AppController(qapp, Config())
+    saved = []
+    monkeypatch.setattr("kotonoha.controller.save_config", lambda config: saved.append(config))
+    controller._on_track_offset_changed("track", 50)
+    assert controller._config.track_offsets == {"track": 50}
+    assert saved == [controller._config]
+    controller._overlay._render_timer.stop()
+    controller._overlay.deleteLater()
+    qapp.processEvents()
