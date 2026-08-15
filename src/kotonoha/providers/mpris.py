@@ -6,7 +6,6 @@ import asyncio
 import contextlib
 import logging
 import time
-from dataclasses import dataclass
 from typing import Any, Protocol
 
 import aiohttp
@@ -15,7 +14,7 @@ from ..config import DEFAULT_LYRICS_SOURCES
 from ..lyrics.match import TrackMetadata
 from ..lyrics.resolver import LyricsResolver, ResolvedLyrics
 from ..lyrics.select import build_snapshot, find_current_index
-from ..model import LyricLine
+from ..model import LyricLine, PlayerInfo
 from ..state import LyricsState
 from .gate import SourceGate
 from .mpris_track import (
@@ -108,12 +107,6 @@ async def list_players(bus: Any) -> list[str]:
 async def _player_interface(bus: Any, name: str) -> Any:
     obj = bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
     return obj.get_interface(PLAYER_IFACE)
-
-
-@dataclass(frozen=True)
-class PlayerInfo:
-    bus_name: str
-    identity: str
 
 
 class MprisProvider:

@@ -63,8 +63,8 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
+from .model import PlayerInfo
 from .native import LayerShellController, default_package_dir
-from .providers.mpris import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
 
@@ -332,7 +332,7 @@ _PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
      "fx_glow", "fx_word_pop", "fx_intensity"),                                          # Effects
     ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script"),  # Lyrics
     ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
-    ("lyrics_sources", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),             # Sources
+    ("lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),  # Sources
 )
 
 

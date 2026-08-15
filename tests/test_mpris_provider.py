@@ -637,3 +637,45 @@ async def test_player_identity_is_unwrapped_from_its_variant():
     identity = _Variant("ElectronNCM")
     assert str(getattr(identity, "value", identity) or "") == "ElectronNCM"
     assert PlayerInfo("org.mpris.MediaPlayer2.ElectronNCM", "ElectronNCM").identity == "ElectronNCM"
+
+
+async def test_available_players_unwraps_the_identity_variant_through_the_bus(monkeypatch):
+    # The Variant fix is only worth as much as the call chain around it: a single
+    # property comes back as a Variant, not the a{sv} map the metadata unwrapper
+    # takes, and passing it there made every player show as "{}".
+    from dbus_fast import Variant
+
+    from kotonoha.providers import mpris as provider_module
+
+    class _Props:
+        async def call_get(self, interface: str, name: str) -> object:
+            assert (interface, name) == ("org.mpris.MediaPlayer2", "Identity")
+            return Variant("s", "ElectronNCM")
+
+    class _Obj:
+        def get_interface(self, name: str) -> _Props:
+            assert name == "org.freedesktop.DBus.Properties"
+            return _Props()
+
+    class _Bus:
+        def get_proxy_object(self, name: str, path: str, introspection: object) -> _Obj:
+            return _Obj()
+
+    monkeypatch.setattr(
+        provider_module, "list_players", _async_return(["org.mpris.MediaPlayer2.ElectronNCM"])
+    )
+    provider = MprisProvider(LyricsState())
+    provider._bus = _Bus()
+
+    players = await provider.available_players()
+
+    assert [(p.bus_name, p.identity) for p in players] == [
+        ("org.mpris.MediaPlayer2.ElectronNCM", "ElectronNCM")
+    ]
+
+
+def _async_return(value):
+    async def _call(_bus):
+        return value
+
+    return _call
