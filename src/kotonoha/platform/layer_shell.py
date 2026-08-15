@@ -210,6 +210,26 @@ class LayerShellPlatform:
         if self._capabilities.blur:
             self.set_blur_region(None)
 
+    def move_to_output(self, output: Output) -> OverlayOperationResult:
+        """Put the overlay on another output.
+
+        A layer surface binds its output when it is created and cannot be moved,
+        so this destroys the surface and has the host build a new one there.
+        Recording the output alone leaves the panel drawn on the output it was
+        dragged away from."""
+        self._active_output = output
+        self._pending_resurface = False
+        self._resurface_timer.stop()
+        if not self._host.is_alive():
+            return OverlayOperationResult.failure("The overlay window is gone.")
+        self._host.hide_window()
+        self._release_blur()
+        self._host.destroy_surface()
+        if self._output_handler is None:
+            return OverlayOperationResult.failure("No output handler is registered.")
+        self._output_handler(output)
+        return OverlayOperationResult.success()
+
     def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
         if self._resurface_output is not None and self._resurface_output.name == output.name:
             # It went away before the rebuild ran; drop the target but stay owed.
@@ -259,6 +279,10 @@ class LayerShellPlatform:
     def _restore_pending_surface(self) -> None:
         output, self._resurface_output = self._resurface_output, None
         if output is None:
+            return
+        # The timer outlives the window it rebuilds: an output can return after the
+        # overlay is closed, and calling the handler then reaches a deleted widget.
+        if not self._host.is_alive():
             return
         self._active_output = output
         if self._output_handler is not None:

@@ -22,6 +22,13 @@ class QtWindowHost:
     def __init__(self, widget: QWidget) -> None:
         self._widget = widget
 
+    def is_alive(self) -> bool:
+        """False once the C++ widget is gone.
+
+        A deferred rebuild would otherwise call into a deleted object, which is
+        how this project has produced segfaults before."""
+        return not sip.isdeleted(self._widget)
+
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         if policy.recreate_surface:
             flags = (

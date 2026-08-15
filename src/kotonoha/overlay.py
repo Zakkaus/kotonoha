@@ -848,8 +848,12 @@ class LyricsOverlay(QWidget):
         self._config.margin_x = self._layer_pos.x() - (target_geo.width() - width) // 2
         self._config.screen_name = target_screen.name()
         if not self._same_screen(surface_screen, target_screen):
-            # The platform owns any protocol-specific output rebinding.
-            self._platform.set_active_output(self._output(target_screen))
+            # The platform owns any protocol-specific output rebinding. Recording
+            # the output is not enough on layer shell: the surface stays on the
+            # output it was dragged away from until it is rebuilt.
+            output = self._output(target_screen)
+            if output is not None:
+                self._platform.move_to_output(output)
         elif self._platform.capabilities.layer_shell:
             self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
         self.position_changed.emit(

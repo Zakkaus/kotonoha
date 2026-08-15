@@ -42,6 +42,10 @@ class _FakeHost:
         self.masks: list[object] = []
         self.policies: list[WindowPolicy] = []
         self.lifecycle: list[str] = []
+        self.alive = True
+
+    def is_alive(self) -> bool:
+        return self.alive
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         self.policies.append(policy)
@@ -381,3 +385,40 @@ def test_the_blur_object_is_released_before_its_surface_is_destroyed() -> None:
     cleared = [call for call in controller.calls if call[0] == "clear_blur"]
     assert cleared, f"the surface was destroyed with its effect still registered: {controller.calls}"
     assert host.lifecycle.index("destroy") > 0
+
+
+def test_moving_to_another_output_rebuilds_the_surface() -> None:
+    # A layer surface binds its output when it is created, so a drag released on
+    # another monitor must destroy it and build a new one there. Recording the
+    # output alone leaves the panel drawn on the output it was dragged away from.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    restored: list[Output] = []
+    platform.set_active_output(_output("HDMI-A-1"))
+    platform.set_output_handler(restored.append)
+
+    target = _output("DP-1", 2560)
+    result = platform.move_to_output(target)
+
+    assert result.succeeded
+    assert host.lifecycle == ["hide", "destroy"]
+    assert restored == [target]
+
+
+def test_a_returning_output_does_not_rebuild_a_closed_overlay() -> None:
+    # The rebuild is deferred by a timer, so an output can come back after the
+    # overlay is gone. Calling the handler then reaches a deleted widget, which is
+    # how this project has produced segfaults before.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(restored.append)
+    platform.output_removed(active, (), None)
+    platform.output_added((active,), None)
+
+    host.alive = False  # the overlay closed while the rebuild was pending
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == []
