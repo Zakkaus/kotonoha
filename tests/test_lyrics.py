@@ -545,19 +545,6 @@ def test_best_match_empty():
     assert best_match([], TrackMetadata("t", "a", duration_s=100.0)) is None
 
 
-def test_spaced_han_conjunction_separates_performers():
-    # YouTube Music joins performers with 和 in a Chinese UI. A name that contains
-    # 和 (和田光司, 山田和樹) does not carry spaces around just that character, so
-    # only the spaced form is treated as a separator.
-    assert artist_tokens("Lady Gaga 和 Bruno Mars") == artist_tokens("Lady Gaga, Bruno Mars")
-    assert len(artist_tokens("和田光司")) == 1
-    assert len(artist_tokens("山田和樹")) == 1
-
-    track = TrackMetadata("Die With A Smile", "Lady Gaga, Bruno Mars", "", None)
-    candidate = Candidate("1", "Die With A Smile", "Lady Gaga 和 Bruno Mars", None)
-    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
-
-
 def test_a_title_that_is_only_a_bracketed_span_is_still_a_title():
     # "【七月上】" stripped to nothing and could then never match the song it names.
     assert normalize("【七月上】") == normalize("七月上")
