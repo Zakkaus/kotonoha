@@ -422,3 +422,28 @@ def test_a_returning_output_does_not_rebuild_a_closed_overlay() -> None:
     platform._resurface_timer.timeout.emit()
 
     assert restored == []
+
+
+def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed() -> None:
+    # Two outputs going away in quick succession: the first removal schedules a
+    # rebuild on the survivor, and the survivor disappears inside the delay. The
+    # scheduled rebuild then finds nothing to build on, and without a record that
+    # one is still owed the overlay never comes back. Reported in review on #19.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    survivor = _output("DP-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(restored.append)
+
+    platform.output_removed(active, (survivor,), None)   # schedules a rebuild on DP-1
+    platform.output_removed(survivor, (), None)          # DP-1 goes too, before the timer
+    platform._resurface_timer.timeout.emit()             # the scheduled rebuild runs
+
+    assert restored == [], "rebuilt on an output that is gone"
+
+    platform.output_added((active,), None)               # something comes back
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [active], "nothing remembered that a rebuild was owed"
