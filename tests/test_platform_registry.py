@@ -15,6 +15,7 @@ class _FakeController:
         self.available = available
         self.blur_available = blur_available
         self.disabled_reason = None if available else "Fake compositor rejected Layer Shell."
+        self.blur_disabled_reason = None if blur_available else "protocol"
         self.calls: list[tuple[str, tuple[int, ...]]] = []
 
     def make_overlay(self, window_ptr: int) -> None:
@@ -37,8 +38,14 @@ class _FakeController:
 
 
 class _FakeHost:
+    def __init__(self) -> None:
+        self.masks: list[WindowRectangle | None] = []
+
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         del policy
+
+    def set_input_mask(self, region: WindowRectangle | None) -> None:
+        self.masks.append(region)
 
     def native_window_pointer(self) -> int | None:
         return 1
@@ -95,3 +102,30 @@ def test_generic_provider_claims_unknown_platform_with_reason() -> None:
 
     assert isinstance(platform, QtWindowPlatform)
     assert platform.capabilities.layer_shell_reason == "Layer Shell is unavailable on this platform."
+
+
+def test_the_fallback_shapes_its_input_region_to_the_rectangle() -> None:
+    # Only the whole-window pass-through switch was applied before, so an unlocked
+    # ordinary window kept accepting clicks across its whole transparent area and
+    # swallowed input meant for the window behind it.
+    host = _FakeHost()
+    platform = QtWindowPlatform(host, reason="no Layer Shell here")
+
+    assert platform.set_input_region(WindowRectangle(4, 6, 40, 20)).succeeded
+    assert platform.set_input_region(None).succeeded
+
+    assert host.masks == [WindowRectangle(4, 6, 40, 20), None]
+
+
+def test_layer_shell_operations_report_failure_when_the_capability_is_off() -> None:
+    # The bridge no-ops silently when Layer Shell is unavailable, so reporting
+    # success told the caller an update had happened that had not.
+    platform = LayerShellPlatform(_FakeHost(), _FakeController(available=False))
+
+    for result in (
+        platform.set_input_region(WindowRectangle(0, 0, 10, 10)),
+        platform.move_to(WindowPoint(1, 2)),
+        platform.rebind_output(WindowRectangle(0, 0, 800, 600)),
+    ):
+        assert not result.succeeded
+        assert result.reason

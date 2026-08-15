@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
-    from .native import LayerShellController
+    pass
 
 @dataclass(frozen=True, slots=True)
 class OverlayCapabilities:
@@ -22,7 +22,7 @@ class OverlayCapabilities:
     output_rebinding_reason: str | None = None
 
     @classmethod
-    def from_controller(cls, controller: LayerShellController) -> OverlayCapabilities:
+    def from_controller(cls, controller: LayerShellBridge) -> OverlayCapabilities:
         layer_shell = controller.available
         blur = controller.blur_available
         return cls(
@@ -35,6 +35,13 @@ class OverlayCapabilities:
             # protocol or build — and the UI translates that. Replacing it with one
             # sentence here would collapse four distinct situations into one.
             blur_reason=controller.blur_disabled_reason,
+            # Both ride on Layer Shell, so they are unavailable for the same reason
+            # it is. Leaving these None gave the UI a disabled capability it could
+            # not explain, which is the one thing this value object exists to avoid.
+            input_region_reason=None if layer_shell else (controller.disabled_reason or "Layer Shell is unavailable."),
+            output_rebinding_reason=None
+            if layer_shell
+            else (controller.disabled_reason or "Layer Shell is unavailable."),
         )
 
 
@@ -99,6 +106,10 @@ class WindowHost(Protocol):
     def screen_geometry(self) -> WindowRectangle | None: ...
     def bind_output(self, output: WindowRectangle) -> None: ...
     def move_window(self, position: WindowPoint) -> None: ...
+    # A rectangle the window accepts input in, or None for the whole window. The
+    # toolkit is what can shape an ordinary window's input; the adapter only
+    # decides when to ask.
+    def set_input_mask(self, region: WindowRectangle | None) -> None: ...
     def refresh(self) -> None: ...
 
 
@@ -144,6 +155,9 @@ class LayerShellBridge(Protocol):
 
     @property
     def disabled_reason(self) -> str | None: ...
+
+    @property
+    def blur_disabled_reason(self) -> str | None: ...
 
     def make_overlay(self, window_ptr: int) -> None: ...
 

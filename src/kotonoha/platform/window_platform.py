@@ -6,7 +6,6 @@ from typing import Protocol
 
 from PyQt6.QtGui import QGuiApplication
 
-from .detect import should_disable_layer_shell
 from .layer_shell import LayerShellPlatform
 from .native import LayerShellController, default_package_dir
 from .overlay_contracts import LayerShellBridge, OverlayPlatform, WindowHost
@@ -22,11 +21,13 @@ class _LayerShellProvider:
         self._controller = controller
 
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
-        if (
-            not platform_name.startswith("wayland")
-            or should_disable_layer_shell(platform_name, desktop)
-            or not self._controller.available
-        ):
+        # The controller has already asked the compositor, and its probe outranks the
+        # desktop name — checking the name again here demoted a session that does
+        # advertise zwlr_layer_shell_v1 to an ordinary window, losing stacking,
+        # precise placement and output binding. The name check remains inside the
+        # controller as the fallback for a bridge too old to expose the probe.
+        del desktop
+        if not platform_name.startswith("wayland") or not self._controller.available:
             return None
         return LayerShellPlatform(host, self._controller)
 
