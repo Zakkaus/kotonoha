@@ -391,3 +391,6 @@ def test_the_declared_python_floor_matches_what_ci_runs():
     workflow = read_packaging_file(TEST_WORKFLOW)
     assert '- "3.10"' not in workflow, "CI still runs a version the project no longer supports"
     assert '- "3.11"' in workflow, "the declared floor is not covered by CI"
+    # 3.13 and up are the guaranteed range, so they must always be in the matrix.
+    for guaranteed in ('3.13', '3.14'):
+        assert f'- "{guaranteed}"' in workflow, f"{guaranteed} is promised but not run"
