@@ -58,3 +58,21 @@ def test_sidecar_symlink_outside_audio_directory_is_a_miss(tmp_path: Path):
     (audio_directory / "song.lrc").symlink_to(outside)
 
     assert load_sidecar(audio) == []
+
+
+def test_sidecar_offset_tag_shifts_the_timings(tmp_path: Path):
+    # The format's own wording: a "+" offset causes the lyrics to appear sooner,
+    # so it comes off each timestamp. A sidecar written against a different rip is
+    # commonly a second or two out without it.
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_text("[offset:+500]\n[00:02.00]line\n", encoding="utf-8")
+
+    assert [line.start for line in load_sidecar(audio)] == [1.5]
+
+    (tmp_path / "song.lrc").write_text("[offset:-500]\n[00:02.00]line\n", encoding="utf-8")
+    assert [line.start for line in load_sidecar(audio)] == [2.5]
+
+    # Junk far outside a plausible correction is not an instruction.
+    (tmp_path / "song.lrc").write_text("[offset:999999]\n[00:02.00]line\n", encoding="utf-8")
+    assert [line.start for line in load_sidecar(audio)] == [2.0]
