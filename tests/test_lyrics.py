@@ -12,6 +12,7 @@ from kotonoha.lyrics.match import (
     evaluate_match,
     normalize,
     query_variants,
+    recover_artist,
     split_title,
 )
 from kotonoha.lyrics.yrc_parser import parse_yrc
@@ -632,3 +633,17 @@ def test_fixture_title_pairs_are_never_split():
     for case in MPRIS_TITLE_CASES:
         if case.category == "title_pair":
             assert recover_artist(case.raw_title, case.raw_artist) == case.raw_artist, case.raw_title
+
+
+def test_artist_recovery_needs_a_separator_in_the_title():
+    # Recovery reads a credit that sits before the song name. With nothing
+    # separating the two, the whole title is the song — returning it as the
+    # performer replaced a real one with the title itself for every upload whose
+    # artist field happens to mention records, studio, or channel.
+    uploader = "Nakanojojo、Planao.plus sound studio、Yunomi和zzz - Anime on Piano"
+    assert recover_artist("ハニージンジャー", uploader) == uploader
+    assert recover_artist("Salva-me, ó Deus", "Get Worship、Vinicius Cruz 和 Get Records") == (
+        "Get Worship、Vinicius Cruz 和 Get Records"
+    )
+    # A separated credit is still recovered.
+    assert recover_artist("陳一發兒 - 童話鎮", "BELLA PING MUSIC CHANNEL") == "陳一發兒"

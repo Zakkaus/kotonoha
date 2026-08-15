@@ -301,6 +301,14 @@ def recover_artist(title: str, artist: str) -> str:
     if not (_UPLOADER_ARTIST.search(fallback) or _TITLE_NOISE_LATIN.search(value)):
         return fallback
     prefix = dash_parts[0] if len(dash_parts) == 2 else value
+    if prefix == value and not _TITLE_QUOTE.search(value) and not any(
+        marker in value for marker in ("《", "『", "【", "「")
+    ):
+        # Nothing in the title separates a credit from the song name, so the whole
+        # title is the song. Returning it as the artist replaced a real performer
+        # with the title itself for every upload whose artist field happens to say
+        # "records", "studio" or "channel".
+        return fallback
     quoted = _TITLE_QUOTE.search(prefix)
     if quoted:
         prefix = prefix[: quoted.start()]
