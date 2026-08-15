@@ -13,8 +13,8 @@ from kotonoha.lyrics.match import (
     evaluate_match,
     normalize,
     query_variants,
-    recover_artist,
     ranked_matches,
+    recover_artist,
     split_title,
 )
 from kotonoha.lyrics.yrc_parser import parse_yrc
