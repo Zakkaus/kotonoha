@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from .overlay_contracts import (
+    DragMode,
+    DragStartResult,
     LayerShellBridge,
     OverlayCapabilities,
+    OverlayDragStrategy,
     OverlayOperationResult,
     OverlayPlatform,
     WindowHost,
@@ -14,12 +17,66 @@ from .overlay_contracts import (
 )
 
 
-class LayerShellPlatform(OverlayPlatform):
-    """Drive layer-shell, input, blur, positioning, and output binding calls."""
+class LayerShellAnchorDragStrategy:
+    """Move a Layer Shell surface with press-relative local pointer deltas."""
 
     def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
         self._host = host
         self._controller = controller
+        self._position = WindowPoint(0, 0)
+        self._drag_local: WindowPoint | None = None
+
+    def set_position(self, position: WindowPoint) -> None:
+        self._position = position
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        del global_position
+        self._drag_local = local_position
+        return DragStartResult(DragMode.MANUAL)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        del global_position
+        if self._drag_local is None:
+            return OverlayOperationResult.failure("Layer Shell drag has not started")
+        delta = local_position.x - self._drag_local.x, local_position.y - self._drag_local.y
+        position = WindowPoint(self._position.x + delta[0], self._position.y + delta[1])
+        pointer = self._host.native_window_pointer()
+        if pointer is None:
+            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
+        try:
+            self._controller.set_anchor_position(pointer, position.x, position.y)
+        except (OSError, RuntimeError):
+            return OverlayOperationResult.failure("Layer Shell position update failed")
+        self._position = position
+        self._drag_local = local_position
+        return OverlayOperationResult.success()
+
+    def end_drag(self) -> None:
+        self._drag_local = None
+
+
+class LayerShellPlatform(OverlayPlatform):
+    """Drive layer-shell, input, blur, positioning, and output binding calls."""
+
+    def __init__(
+        self,
+        host: WindowHost,
+        controller: LayerShellBridge,
+        drag_strategy: OverlayDragStrategy | None = None,
+    ) -> None:
+        self._host = host
+        self._controller = controller
+        self._drag_strategy = drag_strategy or LayerShellAnchorDragStrategy(host, controller)
+        self._capabilities = OverlayCapabilities(
+            layer_shell=controller.available,
+            blur=controller.blur_available,
+            input_region=controller.available,
+            output_rebinding=controller.available,
+            layer_shell_reason=controller.disabled_reason,
+            blur_reason=None if controller.blur_available else "Compositor does not advertise a blur protocol.",
+            input_region_reason=None if controller.available else "Layer Shell input regions are unavailable.",
+            output_rebinding_reason=None if controller.available else "Layer Shell output rebinding is unavailable.",
+        )
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -104,6 +161,7 @@ class LayerShellPlatform(OverlayPlatform):
             self._controller.set_anchor_position(pointer, position.x, position.y)
         except (OSError, RuntimeError):
             return OverlayOperationResult.failure("Layer Shell position update failed.")
+        self._drag_strategy.set_position(position)
         return OverlayOperationResult.success()
 
     def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:
@@ -119,3 +177,12 @@ class LayerShellPlatform(OverlayPlatform):
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Output rebinding failed: {exc}")
         return OverlayOperationResult.success()
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        return self._drag_strategy.begin_drag(local_position, global_position)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        return self._drag_strategy.update_drag(local_position, global_position)
+
+    def end_drag(self) -> None:
+        self._drag_strategy.end_drag()

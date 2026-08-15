@@ -40,6 +40,7 @@ from .platform import (
     WindowRectangle,
     default_package_dir,
 )
+from .platform.overlay_contracts import DragMode
 from .state import LyricsState
 from .strings import t
 
@@ -831,9 +832,18 @@ class LyricsOverlay(QWidget):
 
     def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         if a0 is not None and not self._passthrough and a0.button() == Qt.MouseButton.LeftButton:
+            local = a0.position().toPoint()
+            global_position = a0.globalPosition().toPoint()
+            result = self._platform.begin_drag(
+                WindowPoint(local.x(), local.y()),
+                WindowPoint(global_position.x(), global_position.y()),
+            )
+            if result.mode is not DragMode.MANUAL:
+                super().mousePressEvent(a0)
+                return
             self._dragging = True
             self._drag_moved = False
-            self._drag_local = a0.position().toPoint()
+            self._drag_local = local
             self._render_timer.stop()  # pause the sweep so it isn't repainted mid-drag
             a0.accept()
         else:
@@ -854,21 +864,12 @@ class LyricsOverlay(QWidget):
             # at an output boundary destroys the Wayland pointer grab and makes
             # the next mouse event disappear.
             self._layer_pos += diff
-            if self._platform.capabilities.layer_shell:
-                self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
-                # No repaint: the platform commits the surface, and the compositor
-                # just re-positions the cached buffer, so heavy lyric text is not
-                # re-rendered every frame.
-            else:
-                # Through the platform, not self.move(): on Wayland without Layer
-                # Shell the toolkit move is a no-op, so the position was persisted
-                # while the visible window stayed put. The adapter reports that.
-                geo = screen.geometry()
-                moved = self._platform.move_to(
-                    WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
-                )
-                if not moved.succeeded:
-                    logger.debug("Drag move was not applied: %s", moved.reason)
+            global_position = a0.globalPosition().toPoint()
+            self._platform.update_drag(
+                WindowPoint(local.x(), local.y()),
+                WindowPoint(global_position.x(), global_position.y()),
+            )
+            # The platform commits the surface, so avoid repainting heavy lyric text.
             a0.accept()
         else:
             super().mouseMoveEvent(a0)
@@ -878,6 +879,7 @@ class LyricsOverlay(QWidget):
             moved = self._drag_moved
             self._dragging = False
             self._drag_moved = False
+            self._platform.end_drag()
             self._render_timer.start()  # resume the sweep
             if moved and self._platform.capabilities.client_positioning:
                 self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)

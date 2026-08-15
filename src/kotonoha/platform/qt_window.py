@@ -3,8 +3,11 @@
 from __future__ import annotations
 
 from .overlay_contracts import (
+    DragMode,
+    DragStartResult,
     LayerShellBridge,
     OverlayCapabilities,
+    OverlayDragStrategy,
     OverlayOperationResult,
     OverlayPlatform,
     WindowHost,
@@ -12,6 +15,52 @@ from .overlay_contracts import (
     WindowPolicy,
     WindowRectangle,
 )
+
+
+class OrdinaryWindowDragStrategy:
+    """Move an ordinary window from the press-relative local pointer anchor."""
+
+    def __init__(self, host: WindowHost) -> None:
+        self._host = host
+        self._origin: WindowPoint | None = None
+        self._window_origin = WindowPoint(0, 0)
+
+    def set_position(self, position: WindowPoint) -> None:
+        self._window_origin = position
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        del global_position
+        current = self._host.window_position() or self._window_origin
+        self._window_origin = current
+        self._origin = local_position
+        return DragStartResult(DragMode.MANUAL)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        del global_position
+        if self._origin is None:
+            return OverlayOperationResult.failure("Window drag has not started")
+        position = WindowPoint(
+            self._window_origin.x + local_position.x - self._origin.x,
+            self._window_origin.y + local_position.y - self._origin.y,
+        )
+        try:
+            self._host.move_window(position)
+        except RuntimeError as exc:
+            return OverlayOperationResult.failure(f"Window move failed: {exc}")
+        # move_window() not raising is not evidence the window moved: a Wayland
+        # compositor without Layer Shell ignores a client-side move of a toplevel,
+        # and the caller then persisted a position the visible window never took.
+        landed = self._host.window_position()
+        if landed is not None and landed != position:
+            return OverlayOperationResult.failure(
+                "The compositor did not apply the move; this window cannot be positioned by the client."
+            )
+        self._window_origin = position
+        self._origin = local_position
+        return OverlayOperationResult.success()
+
+    def end_drag(self) -> None:
+        self._origin = None
 
 
 class QtWindowPlatform(OverlayPlatform):
@@ -36,6 +85,7 @@ class QtWindowPlatform(OverlayPlatform):
         # blur=False here dropped the frosted panel on exactly the compositor the
         # blur work was for. When a bridge is available the answer comes from it.
         self._blur = blur
+        self._drag_strategy: OverlayDragStrategy = OrdinaryWindowDragStrategy(host)
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -131,3 +181,12 @@ class QtWindowPlatform(OverlayPlatform):
         return OverlayOperationResult.failure(
             self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
         )
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        return self._drag_strategy.begin_drag(local_position, global_position)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        return self._drag_strategy.update_drag(local_position, global_position)
+
+    def end_drag(self) -> None:
+        self._drag_strategy.end_drag()

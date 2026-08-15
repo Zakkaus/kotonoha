@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from kotonoha.platform.layer_shell import LayerShellPlatform
-from kotonoha.platform.overlay_contracts import WindowPoint, WindowPolicy, WindowRectangle
-from kotonoha.platform.qt_window import QtWindowPlatform
+from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
+from kotonoha.platform.overlay_contracts import DragMode, WindowPoint, WindowPolicy, WindowRectangle
+from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
 
 
@@ -71,6 +71,19 @@ class _FakeHost:
 
     def refresh(self) -> None:
         pass
+
+
+class _MovingHost(_FakeHost):
+    def __init__(self) -> None:
+        self.position = WindowPoint(100, 200)
+        self.moves: list[WindowPoint] = []
+
+    def window_position(self) -> WindowPoint:
+        return self.position
+
+    def move_window(self, position: WindowPoint) -> None:
+        self.position = position
+        self.moves.append(position)
 
 
 def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
@@ -190,3 +203,24 @@ def test_an_x11_fallback_can_place_its_own_window() -> None:
 
     assert platform.capabilities.client_positioning is True
     assert platform.move_to(WindowPoint(120, 40)).succeeded
+def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+
+    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform._drag_strategy, LayerShellAnchorDragStrategy)
+    assert platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert platform.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
+    assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
+    platform.end_drag()
+
+
+def test_ordinary_window_strategy_moves_from_local_anchor() -> None:
+    host = _MovingHost()
+    strategy = OrdinaryWindowDragStrategy(host)
+
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert strategy.update_drag(WindowPoint(25, 17), WindowPoint(125, 217)).succeeded
+    assert host.moves == [WindowPoint(115, 207)]
+    strategy.end_drag()

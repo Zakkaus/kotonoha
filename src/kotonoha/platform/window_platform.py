@@ -6,19 +6,37 @@ from typing import Protocol
 
 from PyQt6.QtGui import QGuiApplication
 
-from .layer_shell import LayerShellPlatform
+from .layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
 from .native import LayerShellController, default_package_dir
-from .overlay_contracts import LayerShellBridge, OverlayPlatform, WindowHost
+from .overlay_contracts import LayerShellBridge, OverlayDragStrategy, OverlayPlatform, WindowHost
 from .qt_window import QtWindowPlatform
 
 
 class _Provider(Protocol):
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None: ...
 
+class _LayerShellDragProvider(Protocol):
+    """Create a strategy when a Layer Shell compositor is recognized."""
+
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None: ...
+
+
+class _DefaultLayerShellDragProvider:
+    """Provide the existing local-anchor model for unrecognized compositors."""
+
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
+        del desktop
+        return LayerShellAnchorDragStrategy(host, controller)
+
 
 class _LayerShellProvider:
-    def __init__(self, controller: LayerShellBridge) -> None:
+    def __init__(
+        self,
+        controller: LayerShellBridge,
+        drag_providers: tuple[_LayerShellDragProvider, ...] | None = None,
+    ) -> None:
         self._controller = controller
+        self._drag_providers = drag_providers or (_DefaultLayerShellDragProvider(),)
 
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
         # The controller has already asked the compositor, and its probe outranks the
@@ -29,6 +47,10 @@ class _LayerShellProvider:
         del desktop
         if not platform_name.startswith("wayland") or not self._controller.available:
             return None
+        for provider in self._drag_providers:
+            strategy = provider.create(desktop, host, self._controller)
+            if strategy is not None:
+                return LayerShellPlatform(host, self._controller, strategy)
         return LayerShellPlatform(host, self._controller)
 
 
