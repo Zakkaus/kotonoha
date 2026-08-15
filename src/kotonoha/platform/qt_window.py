@@ -56,8 +56,13 @@ class QtWindowPlatform(OverlayPlatform):
             # The rectangle was ignored before: only the whole-window pass-through
             # switch was applied, so an unlocked ordinary window kept accepting
             # clicks across its entire transparent area and swallowed input meant
-            # for whatever sits behind it.
-            self._host.set_input_mask(region)
+            # for whatever sits behind it. Click-through is carried by the policy
+            # flag above, so the mask is cleared rather than set to nothing —
+            # a shaping that fought the flag would be ambiguous.
+            if region is None:
+                self._host.clear_input_mask()
+            else:
+                self._host.set_input_mask(region)
             self._host.refresh()
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Input mode update failed: {exc}")

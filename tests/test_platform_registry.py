@@ -39,13 +39,17 @@ class _FakeController:
 
 class _FakeHost:
     def __init__(self) -> None:
-        self.masks: list[WindowRectangle | None] = []
+        self.masks: list[object] = []
+        self.policies: list[WindowPolicy] = []
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
-        del policy
+        self.policies.append(policy)
 
-    def set_input_mask(self, region: WindowRectangle | None) -> None:
+    def set_input_mask(self, region: WindowRectangle) -> None:
         self.masks.append(region)
+
+    def clear_input_mask(self) -> None:
+        self.masks.append("cleared")
 
     def native_window_pointer(self) -> int | None:
         return 1
@@ -112,9 +116,18 @@ def test_the_fallback_shapes_its_input_region_to_the_rectangle() -> None:
     platform = QtWindowPlatform(host, reason="no Layer Shell here")
 
     assert platform.set_input_region(WindowRectangle(4, 6, 40, 20)).succeeded
+
+    # Unlocked: input is confined to the rectangle, and the window is not made
+    # transparent to the pointer.
+    assert host.masks == [WindowRectangle(4, 6, 40, 20)]
+    assert host.policies[-1].mouse_events_transparent is False
+
     assert platform.set_input_region(None).succeeded
 
-    assert host.masks == [WindowRectangle(4, 6, 40, 20), None]
+    # Locked: click-through is carried by the policy flag, and the shaping is
+    # cleared rather than set to nothing — the two must not disagree.
+    assert host.masks[-1] == "cleared"
+    assert host.policies[-1].mouse_events_transparent is True
 
 
 def test_layer_shell_operations_report_failure_when_the_capability_is_off() -> None:
