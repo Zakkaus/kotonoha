@@ -1,7 +1,7 @@
 import sysconfig
 
-import kotonoha.native as native
-from kotonoha.lyrics_loader import (
+import kotonoha.platform.native as native
+from kotonoha.platform.detect import (
     find_layer_shell_library,
     overlay_mode_available,
     should_disable_layer_shell,

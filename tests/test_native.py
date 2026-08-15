@@ -20,8 +20,8 @@ from pathlib import Path
 
 import pytest
 
-from kotonoha import native
-from kotonoha.native import LayerShellController, default_package_dir
+from kotonoha.platform import native
+from kotonoha.platform.native import LayerShellController, default_package_dir
 
 
 class _FakeLib:

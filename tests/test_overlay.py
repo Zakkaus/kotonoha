@@ -9,8 +9,8 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication
 
 from kotonoha.config import Config
-from kotonoha.native import LayerShellController
 from kotonoha.overlay import LyricsOverlay
+from kotonoha.platform.native import LayerShellController
 from kotonoha.state import LyricsState
 
 
