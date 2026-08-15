@@ -6,6 +6,7 @@ import asyncio
 import contextlib
 import logging
 import time
+from dataclasses import dataclass
 from typing import Any, Protocol
 
 import aiohttp
@@ -107,6 +108,12 @@ async def _player_interface(bus: Any, name: str) -> Any:
     return obj.get_interface(PLAYER_IFACE)
 
 
+@dataclass(frozen=True)
+class PlayerInfo:
+    bus_name: str
+    identity: str
+
+
 class MprisProvider:
     def __init__(
         self,
@@ -120,6 +127,7 @@ class MprisProvider:
         self._state = state
         self._poll_interval = poll_interval
         self._lyrics_sources = lyrics_sources if lyrics_sources is not None else list(DEFAULT_LYRICS_SOURCES)
+        self._player_lock = ""
         self._gate = gate or SourceGate()
         self._resolver: ResolverLike = resolver or LyricsResolver(gate=self._gate)
         self._bus: Any = None
@@ -154,6 +162,27 @@ class MprisProvider:
         self._lyrics_sources = updated
         self._resolver.reset_memory()
         self._force_reload()
+
+    def set_player_lock(self, bus_name: str) -> None:
+        updated = bus_name if isinstance(bus_name, str) else ""
+        if updated == self._player_lock:
+            return
+        self._player_lock = updated
+        self._poll_wakeup.set()
+
+    async def available_players(self) -> list[PlayerInfo]:
+        if self._bus is None:
+            return []
+        result: list[PlayerInfo] = []
+        for name in await list_players(self._bus):
+            try:
+                obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
+                props = obj.get_interface("org.freedesktop.DBus.Properties")
+                identity = await props.call_get("org.mpris.MediaPlayer2", "Identity")
+                result.append(PlayerInfo(name, str(_unwrap(identity))))
+            except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
+                logger.debug("identity read failed for %s: %s", name, exc)
+        return result
 
     def set_cache_enabled(self, enabled: bool) -> None:
         updated = bool(enabled)
@@ -277,6 +306,7 @@ class MprisProvider:
         paused_fallback: tuple[Any, str, str, TrackInfo] | None = None
         playing_candidates: list[tuple[Any, str, str, TrackInfo]] = []
         playing_empty_fallback: tuple[Any, str, str, TrackInfo] | None = None
+        locked_record: tuple[Any, str, str, TrackInfo] | None = None
         for name in ordered:
             player = await self._safe_iface(name)
             if player is None:
@@ -285,9 +315,13 @@ class MprisProvider:
             if status not in {"Playing", "Paused"}:
                 continue
             info = await self._safe_info(player)
-            if info is None:
+            if info is None and name != self._player_lock:
                 continue
+            if info is None:
+                info = TrackInfo("", "", "", None, "")
             record = player, name, status, info
+            if name == self._player_lock:
+                locked_record = record
             if name == self._current_name:
                 current_record = record
             has_identity = bool(info.title or info.artist)
@@ -297,6 +331,10 @@ class MprisProvider:
                 paused_fallback = record
             elif status == "Playing" and not has_identity and playing_empty_fallback is None:
                 playing_empty_fallback = record
+
+        if locked_record is not None:
+            self._current_name = locked_record[1]
+            return locked_record[0], locked_record[1]
 
         if playing_candidates:
             # Two players can expose the *same* track: Chrome's own MPRIS and the

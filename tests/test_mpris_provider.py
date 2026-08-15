@@ -158,6 +158,36 @@ async def test_active_player_prefers_complete_metadata_over_alphabetical(monkeyp
     assert provider._current_name == "org.mpris.MediaPlayer2.plasma-browser-integration"
 
 
+async def test_active_player_lock_beats_more_complete_rival(monkeypatch):
+    locked = ("locked", "Playing", TrackInfo("Song", "", "", 180.0, "/locked"))
+    rival = ("rival", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/rival"))
+    players = {
+        "org.mpris.MediaPlayer2.locked": locked,
+        "org.mpris.MediaPlayer2.rival": rival,
+    }
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider.set_player_lock("org.mpris.MediaPlayer2.locked")
+    _wire_players(provider, players, monkeypatch)
+
+    result = await provider._active_player()
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.locked"
+
+
+async def test_active_player_absent_lock_falls_back_to_automatic(monkeypatch):
+    rival = ("rival", "Playing", TrackInfo("Song", "Artist", "Album", 180.0, "/rival"))
+    players = {"org.mpris.MediaPlayer2.rival": rival}
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider.set_player_lock("org.mpris.MediaPlayer2.closed")
+    _wire_players(provider, players, monkeypatch)
+
+    result = await provider._active_player()
+
+    assert result is not None
+    assert result[1] == "org.mpris.MediaPlayer2.rival"
+
+
 async def test_active_player_falls_back_to_only_source(monkeypatch):
     only = ("chrome", "Playing", TrackInfo("Song - YouTube", "", "", 180.0, "/c"))
     players = {"org.mpris.MediaPlayer2.chromium.instance1": only}

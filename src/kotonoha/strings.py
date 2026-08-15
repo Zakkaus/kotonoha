@@ -174,6 +174,19 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "歌詞ソースの優先順位：上から順に、最初に歌詞が見つかったものを使用。"
               "ドラッグで並べ替え、チェックを外すと無効。",
     },
+    "set.player": {
+        "en": "MPRIS player", "zh-Hans": "MPRIS 播放器", "zh-Hant": "MPRIS 播放器", "ja": "MPRIS プレーヤー",
+    },
+    "player.auto": {"en": "Automatic", "zh-Hans": "自动选择", "zh-Hant": "自動選擇", "ja": "自動選択"},
+    "player.unavailable": {
+        "en": " (unavailable)", "zh-Hans": "（不可用）", "zh-Hant": "（無法使用）", "ja": "（利用不可）",
+    },
+    "set.player_hint": {
+        "en": "Choose which detected MPRIS player supplies the lyrics.",
+        "zh-Hans": "选择提供歌词的 MPRIS 播放器。",
+        "zh-Hant": "選擇提供歌詞的 MPRIS 播放器。",
+        "ja": "歌詞を取得する MPRIS プレーヤーを選択します。",
+    },
     "src.netease": {"en": "Netease", "zh-Hans": "网易云", "zh-Hant": "網易雲", "ja": "网易云"},
     "src.lrclib": {"en": "lrclib", "zh-Hans": "lrclib", "zh-Hant": "lrclib", "ja": "lrclib"},
     "src.kugou": {"en": "Kugou", "zh-Hans": "酷狗", "zh-Hant": "酷狗", "ja": "酷狗（Kugou）"},

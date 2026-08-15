@@ -70,6 +70,7 @@ class Config:
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
+    player_lock: str = ""
     prefer_best_lyrics: bool = True  # query sources concurrently and pick the best-quality match
     fuzzy_match: bool = True          # salvage noisy browser titles (strip 【HD】/[歌詞]/channel tails)
     cache_enabled: bool = True
@@ -128,6 +129,7 @@ class Config:
             fx_word_pop=bool(self.fx_word_pop),
             fx_intensity=self.fx_intensity if self.fx_intensity in ("subtle", "expressive") else "subtle",
             lyrics_sources=_clean_sources(self.lyrics_sources),
+            player_lock=self.player_lock if isinstance(self.player_lock, str) else "",
             prefer_best_lyrics=bool(self.prefer_best_lyrics),
             fuzzy_match=bool(self.fuzzy_match),
             cache_enabled=bool(self.cache_enabled),

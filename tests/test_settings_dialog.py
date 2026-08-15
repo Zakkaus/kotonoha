@@ -8,6 +8,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QListWidgetItem
 
 from kotonoha.config import Config
+from kotonoha.providers.mpris import PlayerInfo
 from kotonoha.settings_dialog import SettingsDialog
 
 
@@ -27,6 +28,29 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     assert dialog.current_config().cache_enabled is True
     dialog._clear_cache.click()
     assert emitted == [True]
+    dialog.close()
+
+
+def test_unavailable_player_lock_survives_dialog_roundtrip(qapp):
+    dialog = SettingsDialog(Config(player_lock="org.mpris.MediaPlayer2.closed"), players=[])
+
+    assert dialog._player_combo.currentData() == "org.mpris.MediaPlayer2.closed"
+    assert "unavailable" in dialog._player_combo.currentText().lower()
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.closed"
+    dialog.close()
+
+
+def test_detected_players_are_readable_and_store_bus_name(qapp):
+    dialog = SettingsDialog(
+        Config(),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music")],
+    )
+
+    index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
+    assert index > 0
+    assert dialog._player_combo.itemText(index) == "YouTube Music"
+    dialog._player_combo.setCurrentIndex(index)
+    assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
     dialog.close()
 
 
