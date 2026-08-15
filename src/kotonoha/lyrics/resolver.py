@@ -18,6 +18,7 @@ from . import kugou, lrclib, netease
 from .artifact import LyricsArtifact
 from .cache import LyricsCache
 from .hint import LyricsHint
+from .local import load_sidecar
 from .match import MatchConfidence, TrackMetadata, artist_tokens, normalize, split_title
 
 logger = logging.getLogger(__name__)
@@ -131,6 +132,9 @@ class LyricsResolver:
     async def resolve_hint(
         self, session: aiohttp.ClientSession, track: TrackMetadata, sources: Sequence[str], hint: LyricsHint
     ) -> ResolvedLyrics | None:
+        if hint.provider == "local" and hint.local_path is not None:
+            lines = load_sidecar(hint.local_path)
+            return ResolvedLyrics("local", lines=tuple(lines), confidence=MatchConfidence.HIGH) if lines else None
         if hint.provider != "netease" or hint.song_id is None or "netease" not in sources:
             return None
         try:

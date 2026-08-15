@@ -1,6 +1,7 @@
 import asyncio
 import logging
 import sqlite3
+from pathlib import Path
 from typing import cast
 
 import aiohttp
@@ -124,6 +125,35 @@ async def test_exact_netease_hint_bypasses_matching(monkeypatch):
     )
     assert result is not None and result.source == "netease"
     assert calls == ["42"]
+
+
+async def test_local_hint_wins_without_using_sources_or_network(tmp_path: Path):
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_text("[00:01.00]local", encoding="utf-8")
+    calls = []
+    resolver = resolver_with_fakes(calls, cache_enabled=False, network_hits={"netease": artifact()})
+
+    result = await resolver.resolve_hint(SESSION, TRACK, ["netease"], LyricsHint("local", local_path=audio))
+
+    assert result is not None and result.source == "local"
+    assert result.confidence is MatchConfidence.HIGH
+    assert [line.text for line in result.lines] == ["local"]
+    assert calls == []
+
+
+async def test_local_hint_falls_back_to_normal_resolution_when_sidecar_is_empty(tmp_path: Path):
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_text("[ar:Artist]\n", encoding="utf-8")
+    calls = []
+    resolver = resolver_with_fakes(calls, cache_enabled=False, network_hits={"netease": artifact()})
+
+    assert await resolver.resolve_hint(SESSION, TRACK, ["netease"], LyricsHint("local", local_path=audio)) is None
+    result = await resolver.resolve(SESSION, TRACK, ["netease"])
+
+    assert result is not None and result.source == "netease"
+    assert calls == ["network:netease"]
 
 
 async def test_failed_exact_hint_falls_back_to_search(monkeypatch):
