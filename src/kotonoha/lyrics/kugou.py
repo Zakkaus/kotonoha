@@ -19,6 +19,7 @@ import aiohttp
 
 from ..model import LyricLine
 from .artifact import LyricsArtifact
+from .krc_parser import parse_krc
 from .lrc_parser import parse_lrc
 from .match import (
     Candidate,
@@ -84,11 +85,11 @@ async def search(session: aiohttp.ClientSession, keyword: str) -> list[Record]:
     return _records(data)
 
 
-async def download_lrc(session: aiohttp.ClientSession, record: Record) -> str:
+async def _download_content(session: aiohttp.ClientSession, record: Record, fmt: str) -> bytes:
     params = {
         "ver": "1",
         "client": "pc",
-        "fmt": "lrc",
+        "fmt": fmt,
         "charset": "utf8",
         "id": record.cand_id,
         "accesskey": record.accesskey,
@@ -100,11 +101,20 @@ async def download_lrc(session: aiohttp.ClientSession, record: Record) -> str:
         raise ValueError("Kugou download response is not an object")
     content = data.get("content")
     if not isinstance(content, str) or not content:
-        return ""
+        return b""
     try:
-        return base64.b64decode(content).decode("utf-8", "replace")
+        return base64.b64decode(content, validate=True)
     except (binascii.Error, ValueError):
-        return ""
+        return b""
+
+
+async def download_lrc(session: aiohttp.ClientSession, record: Record) -> str:
+    body = await _download_content(session, record, "lrc")
+    return body.decode("utf-8", "replace")
+
+
+async def download_krc(session: aiohttp.ClientSession, record: Record) -> bytes:
+    return await _download_content(session, record, "krc")
 
 
 def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
@@ -151,8 +161,28 @@ async def fetch_artifact(
     for attempt, (confidence, record) in enumerate(ranked):
         if attempt >= _MAX_FETCHES:
             break
-        lrc = await download_lrc(session, record)
-        lines = parse_payload({"lrc": lrc})
+        try:
+            krc = await download_krc(session, record)
+            lines = tuple(parse_krc(krc))
+        except (aiohttp.ClientError, ValueError):
+            lines = ()
+        if lines:
+            payload = {"krc": base64.b64encode(krc).decode("ascii")}
+        else:
+            # A few compatible endpoints return plain LRC for a KRC request.
+            plain_lrc = krc.decode("utf-8", "replace") if krc else ""
+            lines = parse_payload({"lrc": plain_lrc})
+            if lines:
+                payload = {"lrc": plain_lrc}
+            elif not krc:
+                continue
+            else:
+                try:
+                    lrc = await download_lrc(session, record)
+                except (aiohttp.ClientError, ValueError):
+                    continue
+                lines = parse_payload({"lrc": lrc})
+                payload = {"lrc": lrc}
         if not lines:
             continue
         return LyricsArtifact(
@@ -162,7 +192,7 @@ async def fetch_artifact(
             artist=record.artist,
             album="",
             duration_s=record.duration_s,
-            payload={"lrc": lrc},
+            payload=payload,
             lines=lines,
             confidence=confidence,
         )

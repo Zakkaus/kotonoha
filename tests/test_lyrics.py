@@ -1,6 +1,11 @@
+from typing import cast
+
+import aiohttp
 import pytest
 from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
+from kotonoha.lyrics import kugou
+from kotonoha.lyrics.krc_parser import parse_krc
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
 from kotonoha.lyrics.match import (
     Candidate,
@@ -43,6 +48,35 @@ def test_parse_yrc_word_timing():
 
 def test_parse_yrc_skips_metadata_and_blank():
     assert parse_yrc('{"t":0,"c":[{"tx":"x"}]}\n\n   \n') == []
+
+
+def test_parse_krc_is_exported_for_lyric_tests():
+    assert parse_krc(b"not krc") == []
+
+
+@pytest.mark.asyncio
+async def test_kugou_undecodable_krc_falls_back_to_lrc(monkeypatch):
+    record = kugou.Record("1", "key", "Song", "Artist", 180.0)
+
+    async def fake_search(*_args, **_kwargs):
+        return [record]
+
+    async def fake_download_krc(*_args, **_kwargs):
+        return b"broken"
+
+    async def fake_download_lrc(*_args, **_kwargs):
+        return "[00:01.00]fallback"
+
+    monkeypatch.setattr(kugou, "search", fake_search)
+    monkeypatch.setattr(kugou, "download_krc", fake_download_krc)
+    monkeypatch.setattr(kugou, "download_lrc", fake_download_lrc)
+
+    artifact = await kugou.fetch_artifact(
+        cast(aiohttp.ClientSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
+    )
+
+    assert artifact is not None
+    assert [line.text for line in artifact.lines] == ["fallback"]
 
 
 LRC_SAMPLE = "[00:01.30]眉目里似哭不似哭\n[00:03.44]还祈求什么说不出\n[00:10.560]陪着你轻呼着烟圈\n"
