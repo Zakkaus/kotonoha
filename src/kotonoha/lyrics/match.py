@@ -10,9 +10,9 @@ from unicodedata import normalize as unicode_normalize
 
 from .hanzi_fold import fold_to_simplified
 
-_PARENS = re.compile(r"[\(（\[【](.*?)[\)）\]】]")
+_PARENS = re.compile(r"[\(（\[【『](.*?)[\)）\]】』]")
 _DASH_SUFFIX = re.compile(r"\s+[-–—]\s+(.+)$")
-_FEAT_SUFFIX = re.compile(r"\b(?:feat(?:uring)?|ft)\b\.?.*$", re.IGNORECASE)
+_FEAT_SUFFIX = re.compile(r"(?:\b(?:feat(?:uring)?|ft)\b\.?|合作演出\s*[:：]?).*$", re.IGNORECASE)
 _ARTIST_SEPARATOR = re.compile(
     r"\s*(?:,|/|&|;|、|，|\band\b|\bwith\b|\bfeat(?:uring)?\b\.?|\bft\b\.?)\s*",
     re.IGNORECASE,
@@ -29,28 +29,48 @@ _ARTIST_SEPARATOR = re.compile(
 _AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
 _KEEP = re.compile(r"[^\w一-鿿]+")
 _VERSION_TAGS = {
-    "acoustic": ("acoustic", "unplugged"),
+    "acoustic": ("acoustic", "unplugged", "原声版", "原聲版"),
+    "cover": ("cover", "翻唱"),
     "demo": ("demo",),
     "edit": ("edit",),
     "extended": ("extended",),
-    "instrumental": ("instrumental",),
-    "karaoke": ("karaoke",),
-    "live": ("live",),
+    "instrumental": ("instrumental", "instrumental version", "off vocal", "off-vocal", "伴奏"),
+    "karaoke": ("karaoke", "卡拉ok"),
+    "live": ("live", "live版", "现场", "現場"),
     "remaster": ("remaster", "remastered"),
     "remix": ("remix",),
+    "guitar": ("吉他版",),
+    "strum": ("弹唱版", "彈唱版"),
+    "opera": ("戏腔版", "戲腔版"),
+    "cantonese": ("粤语版", "粵語版"),
+    "sped_up": ("sped up", "sped-up"),
+    "full": ("full version",),
+    "opening": ("opening title version",),
 }
 # Tags that change the recording but NOT the lyrics: a remaster has the same
 # words as the studio take, so it must not force a version conflict that rejects
 # the only correct candidate. (live/acoustic/instrumental/remix/etc. can differ.)
 _LYRIC_NEUTRAL_TAGS = frozenset({"remaster"})
-# One compiled word-boundary matcher per tag, built once — _extract_version_tags
-# runs for every candidate, so per-call re.search(f"\\b{marker}\\b") was needless.
+
+# Compiled marker matchers are reused for every candidate; CJK markers use literal
+# matching while Latin markers use ASCII-letter boundaries to avoid substring hits.
+
+
+def _version_pattern(marker: str) -> re.Pattern[str]:
+    escaped = re.escape(marker)
+    if any(char.isascii() and char.isalpha() for char in marker):
+        return re.compile(r"(?<![A-Za-z])" + escaped + r"(?![A-Za-z])", re.IGNORECASE)
+    return re.compile(escaped)
+
 _VERSION_TAG_PATTERNS = {
-    tag: re.compile(r"\b(?:" + "|".join(re.escape(marker) for marker in markers) + r")\b")
+    tag: tuple(_version_pattern(marker) for marker in markers)
     for tag, markers in _VERSION_TAGS.items()
 }
+_VERSION_SUFFIX_PATTERNS = tuple(
+    _version_pattern(marker) for markers in _VERSION_TAGS.values() for marker in markers
+)
 
-NORMALIZER_VERSION = 1
+NORMALIZER_VERSION = 2
 
 
 class MatchConfidence(str, Enum):
@@ -136,12 +156,23 @@ def split_title(title: str) -> tuple[str, frozenset[str]]:
         if suffix_tags:
             tags.update(suffix_tags)
             base = base[: suffix.start()].strip()
+    tags.update(_extract_version_tags(base))
+    for pattern in _VERSION_SUFFIX_PATTERNS:
+        suffix_match = pattern.search(base)
+        if suffix_match is not None and not base[suffix_match.end() :].strip():
+            prefix = base[: suffix_match.start()].rstrip()
+            if prefix:
+                base = prefix
+                break
     return base, frozenset(tags)
 
 
 def _extract_version_tags(value: str) -> set[str]:
-    normalized_value = value.casefold()
-    return {tag for tag, pattern in _VERSION_TAG_PATTERNS.items() if pattern.search(normalized_value)}
+    return {
+        tag
+        for tag, patterns in _VERSION_TAG_PATTERNS.items()
+        if any(pattern.search(value) for pattern in patterns)
+    }
 
 
 def base_title(title: str) -> str:

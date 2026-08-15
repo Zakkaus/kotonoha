@@ -1,3 +1,5 @@
+import pytest
+
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
 from kotonoha.lyrics.match import (
     Candidate,
@@ -91,6 +93,69 @@ def test_explicit_live_version_conflict_is_rejected():
     track = TrackMetadata("Song", "Artist", "Album", 200.0)
     candidate = Candidate("1", "Song (Live)", "Artist", 200.5, album="Album")
     assert evaluate_match(candidate, track).confidence is MatchConfidence.NONE
+
+
+def test_chinese_instrumental_title_does_not_match_vocal_candidate():
+    marked_track = TrackMetadata("甲乙丙丁 (你我怎麼兩清伴奏)", "李佳薇")
+    vocal_candidate = Candidate("vocal", "甲乙丙丁 (你我怎麼兩清)", "李佳薇", None)
+    assert evaluate_match(vocal_candidate, marked_track).confidence is MatchConfidence.NONE
+
+
+def test_chinese_alternate_title_still_matches_vocal_candidate():
+    alternate_track = TrackMetadata("甲乙丙丁 (你我怎麼兩清)", "李佳薇")
+    vocal_candidate = Candidate("vocal", "甲乙丙丁 (你我怎麼兩清)", "李佳薇", None)
+    assert evaluate_match(vocal_candidate, alternate_track).confidence is MatchConfidence.HIGH
+
+
+@pytest.mark.parametrize(
+    ("marker", "opening", "closing"),
+    [
+        ("伴奏", "(", ")"),
+        ("instrumental version", "[", "]"),
+        ("off vocal", "【", "】"),
+        ("karaoke", "（", "）"),
+        ("live", "(", ")"),
+        ("Live版", "", ""),
+        ("remix", "(", ")"),
+        ("cover", "(", ")"),
+        ("acoustic", "(", ")"),
+        ("吉他版", "(", ")"),
+        ("彈唱版", "(", ")"),
+        ("戏腔版", "(", ")"),
+        ("粤语版", "(", ")"),
+        ("原声版", "(", ")"),
+        ("Sped Up Version", "(", ")"),
+        ("Full Version", "(", ")"),
+        ("Opening Title Version", "(", ")"),
+    ],
+)
+def test_version_markers_conflict_in_both_directions(marker, opening, closing):
+    marked_title = f"Song {opening}{marker}{closing}"
+    marked_track = TrackMetadata(marked_title, "Artist")
+    plain_track = TrackMetadata("Song", "Artist")
+    plain_candidate = Candidate("plain", "Song", "Artist", None)
+    marked_candidate = Candidate("marked", marked_title, "Artist", None)
+
+    assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
+    assert evaluate_match(marked_candidate, plain_track).confidence is MatchConfidence.NONE
+    assert evaluate_match(marked_candidate, marked_track).confidence is MatchConfidence.HIGH
+
+
+def test_localized_collaboration_credit_is_not_a_version_marker():
+    track = TrackMetadata("恋の才能 (合作演出：初音ミク)", "Artist")
+    candidate = Candidate("song", "恋の才能", "Artist", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+    assert normalize("恋の才能 合作演出：初音ミク") == normalize("恋の才能")
+
+
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [("(", ")"), ("（", "）"), ("[", "]"), ("【", "】"), ("『", "』")],
+)
+def test_bracketed_alternate_title_is_not_a_version_marker(opening, closing):
+    track = TrackMetadata(f"甲乙丙丁 {opening}你我怎麼兩清{closing}", "李佳薇")
+    candidate = Candidate("vocal", "甲乙丙丁", "李佳薇", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
 
 
 def test_dash_suffix_live_version_conflict_is_rejected():
