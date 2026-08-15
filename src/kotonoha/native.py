@@ -30,7 +30,7 @@ class LayerShellController:
         self._platform = platform_name
         self._lib: ctypes.CDLL | None = None
         self._layer_shell = False
-        self._blur: bool | None = None
+        self._blur_reason: str | None = None
         self._disabled_reason: str | None = None
 
         # wlr-layer-shell is Wayland-only. On X11 the .so still dlopens (its Qt /
@@ -60,26 +60,26 @@ class LayerShellController:
         # that have no layer-shell at all.
         self._lib = lib
 
-        # Known layer-shell-less Wayland compositor (GNOME/Mutter). The runtime
-        # registry probe below is authoritative when the bridge exposes it; this
-        # name check still catches GNOME with an older bridge.
-        if should_disable_layer_shell(platform_name, current_desktop):
+        # Ask the compositor first. The runtime registry probe answers for THIS
+        # session — it catches every layer-shell-less compositor a name match misses
+        # (Weston, Cinnamon, GNOME under any XDG value), avoids the Budgie/wlroots
+        # false positive, and lets a GNOME-branded session that does advertise
+        # zwlr_layer_shell_v1 use it. The desktop name decides nothing while the
+        # probe is available; it is only the fallback for a bridge too old to have
+        # the symbol.
+        probe = getattr(lib, "koto_has_layer_shell", None)
+        if probe is not None:
+            if not probe():
+                self._disabled_reason = (
+                    "Compositor does not implement wlr-layer-shell; shown as an ordinary "
+                    "window the compositor places and stacks."
+                )
+                logger.info("%s", self._disabled_reason)
+                return
+        elif should_disable_layer_shell(platform_name, current_desktop):
             self._disabled_reason = (
                 "GNOME/Mutter Wayland does not implement wlr-layer-shell; "
                 "falling back to a normal top-most window."
-            )
-            logger.info("%s", self._disabled_reason)
-            return
-
-        # Authoritative runtime check when the bridge provides it: does THIS
-        # compositor advertise zwlr_layer_shell_v1? Catches every layer-shell-less
-        # Wayland session name-matching misses (Weston, Cinnamon, GNOME under any
-        # XDG value) and avoids the Budgie/wlroots false-positive. An older bridge
-        # without the symbol falls back to the name check above.
-        if hasattr(lib, "koto_has_layer_shell") and not lib.koto_has_layer_shell():
-            self._disabled_reason = (
-                "Compositor does not implement wlr-layer-shell; shown as an ordinary "
-                "window the compositor places and stacks."
             )
             logger.info("%s", self._disabled_reason)
             return
@@ -128,13 +128,39 @@ class LayerShellController:
         ext-background-effect-v1 (KWin 6.7+, Mutter) or org_kde_kwin_blur (Plasma
         <= 6.6). Independent of layer-shell, so the frosted-glass options can be
         offered wherever the blur actually renders instead of being guessed from
-        the desktop name. Cached: the answer needs a Wayland roundtrip."""
-        if self._blur is None:
-            if self._lib is None or not hasattr(self._lib, "koto_has_blur"):
-                self._blur = False
-            else:
-                self._blur = bool(self._lib.koto_has_blur())
-        return self._blur
+        the desktop name.
+
+        Read live, not cached. ext-background-effect-v1 sends its `capabilities`
+        event again whenever the answer changes, and the bridge keeps a listener on
+        the bound manager, so a cached Python answer was the one thing that could
+        still report blur after the compositor withdrew it — or keep the options
+        disabled after it gained it, until the process restarted."""
+        if self._lib is None:
+            self._blur_reason = "bridge"
+            return False
+        if not hasattr(self._lib, "koto_has_blur"):
+            self._blur_reason = "build"
+            return False
+        if bool(self._lib.koto_has_blur()):
+            self._blur_reason = None
+            return True
+        self._blur_reason = "protocol"
+        return False
+
+    @property
+    def blur_disabled_reason(self) -> str | None:
+        """Why blur is unavailable, as a stable cause the UI can translate.
+
+        "bridge" — the native library did not load at all.
+        "protocol" — the compositor advertises neither blur protocol.
+        "build" — this build has no blur support compiled in.
+        None when blur is available. A cause code rather than a sentence, so the
+        settings window can say which one it is in the user's language instead of
+        showing the same generic hint for every case.
+        """
+        if self.blur_available:
+            return None
+        return self._blur_reason
 
     @property
     def disabled_reason(self) -> str | None:

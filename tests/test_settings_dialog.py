@@ -165,12 +165,14 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
     from kotonoha.strings import t
 
     # Offscreen has no blur protocol, so frosted glass can't work: the checkbox
-    # reads as unavailable (disabled) and the note is shown under it.
+    # reads as unavailable (disabled), and the note under it names which of the
+    # three causes it is rather than restating the requirement.
     dialog = SettingsDialog(Config())
     assert dialog._blur_capable is False
     assert dialog._frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
-    assert t("set.frost_window_hint") in hints
+    causes = {t(f"set.frost_window.no_{cause}") for cause in ("bridge", "protocol", "build")}
+    assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
     dialog.close()
 
 

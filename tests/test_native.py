@@ -134,3 +134,47 @@ def test_load_real_bridge_declares_argtypes_and_handshake():
     assert hasattr(lib, "koto_layer_qt_version")
     assert hasattr(lib, "koto_has_layer_shell")
     assert hasattr(lib, "koto_has_blur")
+
+
+def test_the_runtime_probe_outranks_the_desktop_name(stub_load):
+    # A session branded GNOME that does advertise zwlr_layer_shell_v1 must get it.
+    # The name check decided this before the probe ever ran, so the probe could not
+    # overrule it — the capability came from the environment variable, not the
+    # compositor.
+    stub_load(_FakeLib(has_layer_shell=True))
+    ctl = LayerShellController("/pkg", "wayland", "ubuntu:GNOME")
+    assert ctl.available is True
+    assert ctl.disabled_reason is None
+
+
+def test_the_desktop_name_still_gates_a_bridge_without_the_probe(stub_load):
+    # Older bridge, no symbol to ask: the name check is the only thing left.
+    stub_load(_FakeLib(has_layer_shell=None))
+    ctl = LayerShellController("/pkg", "wayland", "ubuntu:GNOME")
+    assert ctl.available is False
+    assert "gnome" in (ctl.disabled_reason or "").lower()
+
+
+def test_blur_reports_which_cause_made_it_unavailable(stub_load):
+    stub_load(_FakeLib(has_layer_shell=True, has_blur=False))
+    ctl = LayerShellController("/pkg", "wayland", "KDE")
+    assert ctl.blur_available is False
+    assert ctl.blur_disabled_reason == "protocol"
+
+    stub_load(_FakeLib(has_layer_shell=True, has_blur=True))
+    ready = LayerShellController("/pkg", "wayland", "KDE")
+    assert ready.blur_available is True
+    assert ready.blur_disabled_reason is None
+
+
+def test_blur_availability_is_read_live(stub_load):
+    # The capabilities event fires again when the answer changes; a cached Python
+    # answer kept the UI wrong until the process restarted.
+    lib = _FakeLib(has_layer_shell=True, has_blur=True)
+    stub_load(lib)
+    ctl = LayerShellController("/pkg", "wayland", "KDE")
+    assert ctl.blur_available is True
+
+    lib.koto_has_blur = lambda: 0  # the compositor withdrew it
+    assert ctl.blur_available is False
+    assert ctl.blur_disabled_reason == "protocol"

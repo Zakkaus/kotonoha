@@ -606,6 +606,7 @@ class LyricsOverlay(QWidget):
 
         self._preserve_layer_pos_on_show = True
         self.hide()
+        self._release_blur()  # the effect object is keyed by the surface about to go
         handle = self.windowHandle()
         if handle is not None:
             handle.destroy()
@@ -636,6 +637,7 @@ class LyricsOverlay(QWidget):
             # Drop the dead layer surface rather than letting Qt reuse it: a layer
             # surface binds its output at creation and cannot be moved to another.
             self.hide()
+            self._release_blur()  # the effect object is keyed by the surface about to go
             handle = self.windowHandle()
             if handle is not None:
                 handle.destroy()
@@ -725,6 +727,16 @@ class LyricsOverlay(QWidget):
     def _refresh_input_region(self) -> None:
         if not self._passthrough:
             QTimer.singleShot(0, self._apply_input_region)
+
+    def _release_blur(self) -> None:
+        """Drop the compositor-side blur object before its surface is destroyed.
+
+        The bridge keys the effect on the wl_surface. A rebuilt surface gets a new
+        address, so an effect left behind is never found again and its proxy stays
+        alive for the life of the process — one leaked per output switch."""
+        ptr = self._window_ptr()
+        if ptr is not None:
+            self._controller.clear_blur(ptr)
 
     def _apply_blur(self) -> None:
         """Blur the compositor content behind the pill for the frosted-glass style;

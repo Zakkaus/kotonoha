@@ -361,6 +361,7 @@ class SettingsDialog(QDialog):
         platform = QGuiApplication.platformName() or ""
         self._blur = LayerShellController(default_package_dir(), platform, desktop)
         self._blur_capable = self._blur.blur_available
+        self._blur_reason = self._blur.blur_disabled_reason
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
         self._window_opacity_ok = "wayland" not in platform.lower()
@@ -581,7 +582,15 @@ class SettingsDialog(QDialog):
         self._frost_window.setChecked(self._config.frost_window)
         self._frost_window.setEnabled(self._blur_capable)
         form.addRow(self._frost_window)
-        form.addRow(self._hint(t("set.frost_window_hint")))
+        # Say which cause it is rather than repeating the generic requirement: the
+        # bridge failing to load, the compositor offering no protocol, and a build
+        # without blur are three different things to act on.
+        reason_key = {
+            "bridge": "set.frost_window.no_bridge",
+            "protocol": "set.frost_window.no_protocol",
+            "build": "set.frost_window.no_build",
+        }.get(self._blur_reason or "")
+        form.addRow(self._hint(t(reason_key) if reason_key else t("set.frost_window_hint")))
 
         # How see-through this settings window is (whole window; text stays legible).
         # Applied on OK/Apply like every other setting (no live preview) — a live

@@ -702,3 +702,24 @@ def test_a_second_output_vanishing_before_the_rebuild_does_not_strand_the_overla
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
+    # The bridge keys the compositor-side effect on the wl_surface. A rebuilt
+    # surface gets a new address, so an effect left behind is never found again and
+    # its proxy stays alive for the life of the process — one per output switch.
+    screen = qapp.primaryScreen()
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = screen
+    overlay.show()
+
+    cleared: list[int] = []
+    with patch.object(overlay._controller, "clear_blur", cleared.append), patch.object(
+        overlay, "_window_ptr", return_value=4242
+    ):
+        overlay._on_screen_removed(screen)
+
+    assert cleared == [4242], "the surface was destroyed with its effect still registered"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
