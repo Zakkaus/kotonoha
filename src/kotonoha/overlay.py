@@ -437,7 +437,11 @@ class LyricsOverlay(QWidget):
         screen_h = geo.height() if geo else 720
         x = (screen_w - width) // 2 + self._config.margin_x
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
-        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=True)
+        # Fully on screen, not the partial range a drag uses: a saved offset was
+        # computed against whatever output it was dragged on, and a smaller one
+        # (a mode change, a different monitor) would otherwise push the panel
+        # almost entirely off — the partial bounds keep only 80x60 px of it.
+        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=False)
 
     def _apply_window_geometry(self, *, reset_position: bool = True) -> None:
         """Fix the surface size and compute its position.
@@ -814,10 +818,12 @@ class LyricsOverlay(QWidget):
             min_x, max_x = -width + 80, geo.width() - 80
             min_y, max_y = 0, geo.height() - 60
         else:
+            # Fully visible, both axes. This is the startup and rebuild path: the
+            # saved margins were computed against whatever output they were
+            # dragged on, and a smaller one must not leave the panel hanging off
+            # an edge where the user cannot see or reach it.
             min_x, max_x = 0, max(0, geo.width() - width)
-            # Keep the established bottom drag range; only horizontal placement
-            # is normalized to the fully visible edge on commit.
-            min_y, max_y = 0, geo.height() - 60
+            min_y, max_y = 0, max(0, geo.height() - height)
         x = max(min_x, min(pos.x(), max_x))
         y = max(min_y, min(pos.y(), max_y))
         return QPoint(x, y)

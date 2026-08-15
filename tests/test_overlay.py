@@ -595,3 +595,24 @@ def test_overlay_moves_to_the_remaining_output_when_one_of_two_goes_away(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
+    # A margin dragged on a wide output must not push the panel off a smaller one.
+    # The partial bounds a drag uses would keep only 80x60 px of it on screen.
+    screen = FakeScreen("HDMI-A-1", 0, 0, 4096, 1152)
+    overlay = LyricsOverlay(
+        LyricsState(), Config(margin_x=2518, margin_edge=1092, anchor_top=True), UnavailableController()
+    )
+    overlay._active_screen = screen
+
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay, "_window_size", return_value=(1100, 170)
+    ):
+        pos = overlay._compute_layer_pos(1100, 170)
+
+    assert 0 <= pos.x() <= 4096 - 1100
+    assert 0 <= pos.y() <= 1152 - 170
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
