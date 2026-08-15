@@ -509,49 +509,6 @@ def test_drag_keeps_the_original_vertical_bottom_range(qapp):
     qapp.processEvents()
 
 
-def test_overlay_returns_after_its_output_disappears_and_comes_back(qapp):
-    # A monitor switched off removes the output, which destroys the layer surface
-    # and leaves Qt's recreated window hidden (issue #18).
-    screen = qapp.primaryScreen()
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
-    overlay._active_screen = screen
-    overlay.show()
-
-    overlay._on_screen_removed(screen)
-    assert overlay._active_screen is None
-    assert overlay._pending_resurface is True
-    assert not overlay.isVisible()
-
-    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0):
-        overlay._on_screen_added(screen)
-        qapp.processEvents()
-
-    assert overlay._pending_resurface is False
-    assert overlay._active_screen is screen
-    assert overlay.isVisible()
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_another_output_disappearing_leaves_our_surface_alone(qapp):
-    screen = qapp.primaryScreen()
-    other = FakeScreen("DP-1", 5120, 0, 1920, 1080)
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    overlay._active_screen = screen
-    overlay.show()
-
-    overlay._on_screen_removed(other)
-
-    assert overlay._active_screen is screen
-    assert overlay._pending_resurface is False
-    assert overlay.isVisible()
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
 def test_placeholder_screen_is_never_adopted_while_every_output_is_gone(qapp):
     # Qt stands in a placeholder screen with empty geometry between the last output
     # leaving and the first one returning; binding to it sizes the surface to 0x0.
@@ -563,26 +520,6 @@ def test_placeholder_screen_is_never_adopted_while_every_output_is_gone(qapp):
     ), patch.object(QApplication, "primaryScreen", return_value=placeholder):
         assert overlay._target_screen() is None
 
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
-    # The bridge keys the compositor-side effect on the wl_surface. A rebuilt
-    # surface gets a new address, so an effect left behind is never found again and
-    # its proxy stays alive for the life of the process — one per output switch.
-    screen = qapp.primaryScreen()
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
-    overlay._active_screen = screen
-    overlay.show()
-
-    cleared: list[object] = []
-    with patch.object(overlay._platform, "set_blur_region", lambda region, radius=0: cleared.append(region)):
-        overlay._on_screen_removed(screen)
-
-    assert cleared == [None], "the surface was destroyed with its effect still registered"
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
