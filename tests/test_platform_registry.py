@@ -98,7 +98,28 @@ def test_wayland_fallback_explains_rejected_layer_shell() -> None:
 
     assert isinstance(platform, QtWindowPlatform)
     assert platform.capabilities.layer_shell_reason == "Wayland compositor does not provide Layer Shell."
-    assert platform.capabilities.blur_reason == "Ordinary windows cannot request compositor backdrop blur."
+    # Blur is a separate capability, so the reason comes from the bridge rather
+    # than from the window being an ordinary one.
+    assert platform.capabilities.blur is False
+    assert platform.capabilities.blur_reason
+
+
+def test_a_wayland_fallback_keeps_blur_when_the_compositor_offers_it() -> None:
+    # Mutter has no Layer Shell and does speak a blur protocol. Hardcoding blur off
+    # in the fallback dropped the frosted panel on exactly that compositor.
+    controller = _FakeController(False, blur_available=True)
+    platform = DefaultOverlayPlatformFactory(
+        controller, platform_name="wayland", current_desktop="GNOME"
+    )(_FakeHost())
+
+    assert isinstance(platform, QtWindowPlatform)
+    assert platform.capabilities.blur is True
+    assert platform.capabilities.blur_reason is None
+
+    result = platform.set_blur_region(WindowRectangle(0, 0, 10, 10), 4)
+
+    assert result.succeeded, result.reason
+    assert any(call[0] == "set_blur_region" for call in controller.calls)
 
 
 def test_generic_provider_claims_unknown_platform_with_reason() -> None:

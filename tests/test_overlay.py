@@ -11,6 +11,7 @@ from PyQt6.QtWidgets import QApplication
 from kotonoha.config import Config
 from kotonoha.overlay import LyricsOverlay
 from kotonoha.platform.native import LayerShellController
+from kotonoha.platform.overlay_contracts import OverlayOperationResult
 from kotonoha.state import LyricsState
 
 
@@ -20,7 +21,13 @@ class UnavailableController(LayerShellController):
 
 
 class LayerShellStub(LayerShellController):
-    """Takes the layer-shell code path; every bridge call stays a no-op (no .so)."""
+    """Takes the layer-shell code path; every bridge call stays a no-op (no .so).
+
+    The registry picks an adapter from the Qt platform name, which is "offscreen"
+    under test, so an overlay built with this stub is given the ordinary-window
+    adapter. Tests that exercise the layer-shell paths use `layer_shell_platform`
+    to put the real adapter in place.
+    """
 
     def __init__(self) -> None:
         super().__init__("", "wayland", "KDE")
@@ -28,6 +35,14 @@ class LayerShellStub(LayerShellController):
     @property
     def available(self) -> bool:
         return True
+
+
+def layer_shell_platform(overlay):
+    """Give the overlay the Layer Shell adapter the registry cannot select offscreen."""
+    from kotonoha.platform.layer_shell import LayerShellPlatform
+
+    overlay._platform = LayerShellPlatform(overlay._host, overlay._controller)
+    return overlay._platform
 
 
 class FakeScreen:
@@ -501,6 +516,7 @@ def test_overlay_returns_after_its_output_disappears_and_comes_back(qapp):
     # and leaves Qt's recreated window hidden (issue #18).
     screen = qapp.primaryScreen()
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
     overlay._active_screen = screen
     overlay.show()
 
@@ -710,6 +726,7 @@ def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
     # its proxy stays alive for the life of the process — one per output switch.
     screen = qapp.primaryScreen()
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
     overlay._active_screen = screen
     overlay.show()
 
@@ -721,3 +738,43 @@ def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_locked_overlay_is_click_through_on_the_fallback_platform(qapp):
+    # The ordinary-window path only positioned the window, so set_input_region was
+    # never called and a config with passthrough on stayed clickable — the locked
+    # overlay swallowed the pointer.
+    overlay = LyricsOverlay(LyricsState(), Config(passthrough=True), UnavailableController())
+    regions: list[object] = []
+    with patch.object(overlay._platform, "set_input_region", lambda region: regions.append(region) or _ok()):
+        overlay.activate_layer_shell()
+
+    assert regions == [None], "the locked overlay never asked for a click-through region"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
+    # The capability is there but activation fails — a missing handle, or the bridge
+    # raising. Falling through silently left an already-mapped window unpositioned
+    # with no input region and no diagnostic.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)
+    positioned: list[bool] = []
+    with patch.object(
+        overlay._platform, "activate", lambda: OverlayOperationResult.failure("no window handle")
+    ), patch.object(overlay, "_fallback_position", lambda: positioned.append(True)), caplog.at_level("WARNING"):
+        overlay.activate_layer_shell()
+
+    assert positioned == [True], "activation failed and nothing positioned the window"
+    assert "no window handle" in caplog.text
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def _ok():
+    from kotonoha.platform.overlay_contracts import OverlayOperationResult
+
+    return OverlayOperationResult.success()

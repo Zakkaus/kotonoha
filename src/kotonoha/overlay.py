@@ -604,12 +604,23 @@ class LyricsOverlay(QWidget):
         """Promote to a layer surface. MUST be called before the first show()."""
         self._bind_widget_screen(self._target_screen())
         result = self._platform.activate()
-        if self._platform.capabilities.layer_shell and result.succeeded:
+        capabilities = self._platform.capabilities
+        if capabilities.layer_shell and result.succeeded:
             self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
             self._apply_input_region()
             self._apply_blur()
-        elif not self._platform.capabilities.layer_shell:
-            self._fallback_position()
+            return
+        if capabilities.layer_shell:
+            # The capability is there but activation failed — a missing window
+            # handle, or the bridge raising. Falling through silently left an
+            # already-mapped ordinary window unpositioned and with no input region,
+            # and said nothing about why.
+            logger.warning("Layer Shell activation failed: %s", result.reason or "no reason given")
+        self._fallback_position()
+        # An ordinary window still needs its input region: without this a config
+        # with passthrough on stayed clickable, so a locked overlay swallowed the
+        # pointer.
+        self._apply_input_region()
 
     def _recreate_layer_surface(self, screen) -> None:
         """Recreate a mapped layer surface on ``screen``.
@@ -658,9 +669,10 @@ class LyricsOverlay(QWidget):
         self._active_screen = None
         self._pending_resurface = True
         logger.info("Output %s disappeared; releasing the overlay surface", screen.name())
-        if self._controller.available:
+        if self._platform.capabilities.output_rebinding:
             # Drop the dead layer surface rather than letting Qt reuse it: a layer
             # surface binds its output at creation and cannot be moved to another.
+            # Asked of the platform, which owns that fact, not of the bridge.
             self.hide()
             self._release_blur()  # the effect object is keyed by the surface about to go
             handle = self.windowHandle()
@@ -830,8 +842,15 @@ class LyricsOverlay(QWidget):
                 # just re-positions the cached buffer, so heavy lyric text is not
                 # re-rendered every frame.
             else:
+                # Through the platform, not self.move(): on Wayland without Layer
+                # Shell the toolkit move is a no-op, so the position was persisted
+                # while the visible window stayed put. The adapter reports that.
                 geo = screen.geometry()
-                self.move(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+                moved = self._platform.move_to(
+                    WindowPoint(geo.x() + self._layer_pos.x(), geo.y() + self._layer_pos.y())
+                )
+                if not moved.succeeded:
+                    logger.debug("Drag move was not applied: %s", moved.reason)
             a0.accept()
         else:
             super().mouseMoveEvent(a0)
