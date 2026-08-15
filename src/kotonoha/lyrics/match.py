@@ -29,8 +29,14 @@ _ARTIST_SEPARATOR = re.compile(
 _AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)")
 _KEEP = re.compile(r"[^\w一-鿿]+")
 _VERSION_TAGS = {
-    "acoustic": ("acoustic", "unplugged", "原声版", "原聲版"),
-    "cover": ("cover", "翻唱"),
+    # "acounstic" is not a typo here: it is how the upload spells it, and the
+    # misspelling is what the title actually carries.
+    "acoustic": ("acoustic", "acounstic", "unplugged", "原声版", "原聲版"),
+    # 歌ってみた is the Japanese "I tried singing it" — a user cover, so the words
+    # are the same but the performance and its timings are not.
+    "cover": ("cover", "翻唱", "歌ってみた"),
+    # An alternate vocalist for the same song (Vocaloid uploads name the singer).
+    "alt_vocal": ("バーチャル・シンガーver", "バーチャルシンガーver"),
     "demo": ("demo",),
     "edit": ("edit",),
     "extended": ("extended",),

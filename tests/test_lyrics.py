@@ -117,6 +117,10 @@ def test_quoted_platform_titles_keep_the_real_title(reported, expected):
 
 
 def test_platform_title_bars_choose_the_song_segment_and_keep_cjk_pipe():
+    # Segment selection only. This particular upload never reaches the matcher in
+    # production — the corpus classifies it as not_music and the lookup gate skips
+    # it on the "一小時" marker — so this asserts which segment is chosen, not that
+    # a one-hour compilation should get the song's lyrics.
     track = TrackMetadata(
         "路小雨 Lu Xiao Yu｜不能說的秘密 Secret OST | One hour 一小時放鬆音樂｜周杰倫 Jay Chou｜"
         "Played by Elvis Piano 維敏彈鋼琴",
@@ -594,3 +598,20 @@ def test_title_cleaning_never_rewrites_an_artist_identity():
         ).confidence
         is MatchConfidence.HIGH
     )
+
+
+@pytest.mark.parametrize(
+    ("marked", "plain"),
+    [
+        ("Song (Acounstic Version)", "Song"),          # the upload's own spelling
+        ("ツギハギスタッカート 歌ってみた。", "ツギハギスタッカート"),   # a user cover
+        ("ハローセカイ / バーチャル・シンガーver.", "ハローセカイ"),  # another vocalist
+    ],
+)
+def test_real_version_markers_from_the_corpus_conflict(marked, plain):
+    # Each of these appears in a real library. Unrecognised, the studio take was
+    # matched to a different performance and every line landed out of time.
+    marked_track = TrackMetadata(marked, "Artist")
+    plain_candidate = Candidate("plain", plain, "Artist", None)
+
+    assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
