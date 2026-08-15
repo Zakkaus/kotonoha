@@ -652,6 +652,10 @@ async def test_available_players_unwraps_the_identity_variant_through_the_bus(mo
             assert (interface, name) == ("org.mpris.MediaPlayer2", "Identity")
             return Variant("s", "ElectronNCM")
 
+        async def call_get_all(self, interface: str) -> dict[str, object]:
+            # The player interface, read for the row detail; empty is a valid answer.
+            return {}
+
     class _Obj:
         def get_interface(self, name: str) -> _Props:
             assert name == "org.freedesktop.DBus.Properties"
