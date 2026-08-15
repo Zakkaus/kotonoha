@@ -48,6 +48,12 @@ class Config:
     margin_edge: int = 64            # distance from the anchored edge (px)
     margin_x: int = 0                # horizontal nudge (px)
     screen_name: str = ""            # Qt output name; empty means choose the current/primary screen
+    # Size of the output the offsets above were measured against. 0 means unknown
+    # (a config from before this field, or one never dragged). A saved offset is
+    # only meaningful on the geometry it was taken on, so this is what tells a
+    # deliberate edge park apart from an offset stranded by a resolution change.
+    screen_width: int = 0
+    screen_height: int = 0
     # Typography / appearance
     font_family: str = "Inter, 'Segoe UI', 'Microsoft YaHei', sans-serif"
     font_style: str = "Regular"     # named style/weight for the family (e.g. "Bold", "Light Italic")
@@ -98,6 +104,8 @@ class Config:
             margin_edge=_clamp_int(self.margin_edge, 0, 4000, 64),
             margin_x=_clamp_int(self.margin_x, -4000, 4000, 0),
             screen_name=str(self.screen_name),
+            screen_width=_clamp_int(self.screen_width, 0, 65535, 0),
+            screen_height=_clamp_int(self.screen_height, 0, 65535, 0),
             font_family=str(self.font_family),
             font_style=str(self.font_style),
             # All three ranges match the Appearance spin boxes (8..120), so opening
