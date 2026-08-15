@@ -630,24 +630,6 @@ def test_a_failed_activation_positions_as_an_ordinary_window(qapp):
     qapp.processEvents()
 
 
-def test_a_returning_output_that_cannot_be_rebuilt_stays_owed(qapp):
-    # Clearing the pending flag after a failed activation retires a rebuild that is
-    # still owed, and nothing tries again.
-    screen = qapp.primaryScreen()
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    platform = layer_shell_platform(overlay)
-    overlay._active_screen = screen
-    overlay._pending_resurface = True
-
-    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")):
-        overlay._restore_surface(screen)
-
-    assert overlay._pending_resurface is True
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
 def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
     # Wayland without Layer Shell ignores a client-side move, so saving the dragged
     # position would leave the config describing somewhere the window never went.

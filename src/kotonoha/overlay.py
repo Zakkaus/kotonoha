@@ -411,16 +411,18 @@ class LyricsOverlay(QWidget):
         if self._output(screen) is not None:
             self._platform.output_added(self._connected_outputs(), self._config.screen_name or None)
 
-    def _restore_output(self, output: Output) -> None:
+    def _restore_output(self, output: Output) -> bool:
+        """Rebuild on a returning output, reporting whether a surface now exists."""
         screen = next((candidate for candidate in QGuiApplication.screens() if self._output(candidate) == output), None)
         if screen is None:
-            return
+            return False
         self._active_screen = screen
         self._bind_widget_screen(screen)
         self._apply_window_geometry()  # the returning output may have a new mode
         self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
-        self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
+        rebuilt = self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
         self.show()
+        return rebuilt
 
     @staticmethod
     def _same_screen(first, second) -> bool:

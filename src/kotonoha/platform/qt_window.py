@@ -189,7 +189,7 @@ class QtWindowPlatform:
             self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
         )
 
-    def set_output_handler(self, handler: Callable[[Output], None]) -> None:
+    def set_output_handler(self, handler: Callable[[Output], bool]) -> None:
         del handler
 
     def set_active_output(self, output: Output | None) -> None:

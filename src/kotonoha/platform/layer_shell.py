@@ -77,7 +77,7 @@ class LayerShellPlatform:
         self._controller = controller
         self._drag_strategy = drag_strategy or LayerShellAnchorDragStrategy(host, controller)
         self._active_output: Output | None = None
-        self._output_handler: Callable[[Output], None] | None = None
+        self._output_handler: Callable[[Output], bool] | None = None
         self._pending_resurface = False
         self._resurface_output: Output | None = None
         self._resurface_timer = QTimer()
@@ -195,7 +195,7 @@ class LayerShellPlatform:
             return OverlayOperationResult.failure(f"Output rebinding failed: {exc}")
         return OverlayOperationResult.success()
 
-    def set_output_handler(self, handler: Callable[[Output], None]) -> None:
+    def set_output_handler(self, handler: Callable[[Output], bool]) -> None:
         self._output_handler = handler
 
     def set_active_output(self, output: Output | None) -> None:
@@ -227,7 +227,8 @@ class LayerShellPlatform:
         self._host.destroy_surface()
         if self._output_handler is None:
             return OverlayOperationResult.failure("No output handler is registered.")
-        self._output_handler(output)
+        if not self._output_handler(output):
+            return OverlayOperationResult.failure("The surface was not rebuilt on the new output.")
         return OverlayOperationResult.success()
 
     def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
@@ -285,8 +286,12 @@ class LayerShellPlatform:
         if not self._host.is_alive():
             return
         self._active_output = output
-        if self._output_handler is not None:
-            self._output_handler(output)
+        if self._output_handler is None:
+            return
+        if not self._output_handler(output):
+            # No surface was rebuilt on the returning output, so a rebuild is still
+            # owed; clearing the flag here would retire it with nothing retrying.
+            return
         self._pending_resurface = False  # only a rebuild that happened clears it
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:

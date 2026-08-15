@@ -323,7 +323,7 @@ def test_layer_shell_rebuilds_on_returning_output_after_release() -> None:
     active = _output("HDMI-A-1")
     restored: list[Output] = []
     platform.set_active_output(active)
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
     platform.output_removed(active, (), None)
     platform._resurface_timer.setInterval(0)
     platform.output_added((active,), None)
@@ -341,7 +341,7 @@ def test_layer_shell_configured_output_wins_when_outputs_return() -> None:
     other = _output("HDMI-A-2")
     restored: list[Output] = []
     platform.set_active_output(active)
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
     platform.output_removed(active, (), None)
     platform._resurface_timer.setInterval(0)
     platform.output_added((other, wanted), "DP-2")
@@ -357,7 +357,7 @@ def test_layer_shell_falls_back_to_output_still_connected() -> None:
     live = _output("HDMI-A-1")
     restored: list[Output] = []
     platform.set_active_output(lost)
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
     platform.output_removed(lost, (live,), None)
     platform._resurface_timer.timeout.emit()
 
@@ -395,7 +395,7 @@ def test_moving_to_another_output_rebuilds_the_surface() -> None:
     platform = LayerShellPlatform(host, _FakeController(available=True))
     restored: list[Output] = []
     platform.set_active_output(_output("HDMI-A-1"))
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
 
     target = _output("DP-1", 2560)
     result = platform.move_to_output(target)
@@ -414,7 +414,7 @@ def test_a_returning_output_does_not_rebuild_a_closed_overlay() -> None:
     active = _output("HDMI-A-1")
     restored: list[Output] = []
     platform.set_active_output(active)
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
     platform.output_removed(active, (), None)
     platform.output_added((active,), None)
 
@@ -435,7 +435,7 @@ def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed() -> None:
     survivor = _output("DP-1")
     restored: list[Output] = []
     platform.set_active_output(active)
-    platform.set_output_handler(restored.append)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
 
     platform.output_removed(active, (survivor,), None)   # schedules a rebuild on DP-1
     platform.output_removed(survivor, (), None)          # DP-1 goes too, before the timer
@@ -447,3 +447,27 @@ def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed() -> None:
     platform._resurface_timer.timeout.emit()
 
     assert restored == [active], "nothing remembered that a rebuild was owed"
+
+
+def test_a_returning_output_that_cannot_be_rebuilt_stays_owed() -> None:
+    # Activation can fail on the returning output. Retiring the pending rebuild
+    # then leaves the overlay hidden with nothing that will try again.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: False)  # nothing was rebuilt
+
+    platform.output_removed(active, (), None)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert platform._pending_resurface is True
+
+    rebuilt: list[Output] = []
+    platform.set_output_handler(lambda output: bool(rebuilt.append(output)) or True)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert rebuilt == [active]
+    assert platform._pending_resurface is False
