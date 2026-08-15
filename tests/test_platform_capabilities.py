@@ -44,7 +44,10 @@ def test_capabilities_match_controller_booleans(
     assert capabilities.blur is controller.blur_available is expected_blur
     assert capabilities.layer_shell_reason == controller.disabled_reason
     assert capabilities.layer_shell_reason == controller.disabled_reason
-    assert capabilities.blur_reason == (None if expected_blur else "Compositor does not advertise a blur protocol.")
+    # The cause the controller reports, not a sentence invented here: the UI needs
+    # to tell a non-Wayland session apart from a compositor with no blur protocol.
+    assert capabilities.blur_reason == controller.blur_disabled_reason
+    assert (capabilities.blur_reason is None) is expected_blur
 
 
 def test_capabilities_match_missing_library(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -56,5 +59,7 @@ def test_capabilities_match_missing_library(monkeypatch: pytest.MonkeyPatch) -> 
         layer_shell=False,
         blur=False,
         layer_shell_reason=controller.disabled_reason,
-        blur_reason="Compositor does not advertise a blur protocol.",
+        # The library never loaded, which is a different thing to tell the user than
+        # a compositor that simply has no blur protocol.
+        blur_reason="bridge",
     )
