@@ -40,6 +40,9 @@ logger = logging.getLogger(__name__)
 RENDER_INTERVAL_MS = 16  # ~60fps
 CONTROL_ICON_COLOR = "#9AA0A6"  # soft grey so the lock/gear don't glare against the panel
 PILL_RADIUS = 16  # corner radius shared by the pill paint and the input region
+# Wait for the compositor to publish the returning output's mode and scale before
+# rebuilding on it; anchoring in the same event pass uses the outgoing geometry.
+RESURFACE_DELAY_MS = 250
 
 # Appended after the user's chosen family so a Latin-only font (e.g. Inter) still
 # renders CJK lyrics via Qt's per-glyph substitution instead of showing tofu.
@@ -81,6 +84,8 @@ class LyricsOverlay(QWidget):
         self._layer_pos = QPoint()  # screen-local top-left of the surface
         self._active_screen = None
         self._preserve_layer_pos_on_show = False
+        self._pending_resurface = False
+        self._resurface_screen = None
         self._dragging = False
         self._drag_moved = False
         self._drag_local = QPoint()
@@ -106,11 +111,20 @@ class LyricsOverlay(QWidget):
 
         self._state.snapshot_changed.connect(self._on_snapshot)
         self._state.time_ticked.connect(self._on_tick)
+        if isinstance(app, QGuiApplication):
+            app.screenAdded.connect(self._on_screen_added)
+            app.screenRemoved.connect(self._on_screen_removed)
 
         self._render_timer = QTimer(self)
         self._render_timer.setInterval(RENDER_INTERVAL_MS)
         self._render_timer.timeout.connect(self._render_tick)
         self._render_timer.start()
+
+        # Parented to the overlay so a queued rebuild dies with it, and single-shot
+        # so a burst of screenAdded signals collapses into one surface rebuild.
+        self._resurface_timer = QTimer(self)
+        self._resurface_timer.setSingleShot(True)
+        self._resurface_timer.timeout.connect(self._restore_pending_surface)
 
         self._on_snapshot(self._state.snapshot)
 
@@ -220,7 +234,9 @@ class LyricsOverlay(QWidget):
         previous_screen = self._active_screen
         self._config = config
         self._passthrough = config.passthrough
-        self._active_screen = self._configured_screen() or self._active_screen or self.screen()
+        self._active_screen = (
+            self._configured_screen() or self._usable_screen(self._active_screen) or self._usable_screen(self.screen())
+        )
         self._update_lock_icon()
         self._settings_btn.setIcon(settings_icon(self._control_icon_color()))
         # Configure the pill width for the fit/fixed mode; `avail` is the inner width
@@ -338,18 +354,49 @@ class LyricsOverlay(QWidget):
         )
 
     def _target_screen(self):
+        if not self._live_screen(self._active_screen):
+            self._active_screen = None
         screens = QGuiApplication.screens()
         if self._active_screen is not None and self._active_screen in screens:
             return self._active_screen
-        screen = self._configured_screen() or self.screen() or QApplication.primaryScreen()
+        screen = (
+            self._configured_screen()
+            or self._usable_screen(self.screen())
+            or self._usable_screen(QApplication.primaryScreen())
+            or next((candidate for candidate in screens if self._usable_screen(candidate) is not None), None)
+        )
         self._active_screen = screen
+        return screen
+
+    @staticmethod
+    def _live_screen(screen) -> bool:
+        """False once Qt has destroyed the QScreen, which happens as soon as its
+        output disappears (a monitor switched off drops the DP/HDMI link). Touching
+        the wrapper after that raises RuntimeError, so every screen lookup and
+        comparison goes through here."""
+        if screen is None:
+            return False
+        try:
+            return not sip.isdeleted(screen)
+        except TypeError:  # test doubles are not sip wrappers
+            return True
+
+    @classmethod
+    def _usable_screen(cls, screen):
+        """The screen itself when it can host the surface, else None.
+
+        Qt substitutes a placeholder screen with empty geometry while every output
+        is gone (QPlatformPlaceholderScreen); binding to it would size the surface
+        to 0x0 and anchor it nowhere."""
+        if not cls._live_screen(screen) or screen.geometry().isEmpty():
+            return None
         return screen
 
     @staticmethod
     def _same_screen(first, second) -> bool:
         if first is second:
             return True
-        if first is None or second is None:
+        if not LyricsOverlay._live_screen(first) or not LyricsOverlay._live_screen(second):
             return False
         return first.name() == second.name() and first.geometry() == second.geometry()
 
@@ -553,6 +600,77 @@ class LyricsOverlay(QWidget):
         self._apply_window_geometry(reset_position=False)
         self.activate_layer_shell()
         self.show()
+
+    # --- output hotplug ---
+    #
+    # Switching a monitor off drops the DP/HDMI link, so the compositor removes the
+    # output: KWin destroys every layer surface anchored to it and Qt deletes the
+    # QScreen. Qt then recreates the window on its placeholder screen but leaves it
+    # hidden, so without this the overlay never came back when the monitor woke up.
+
+    def _on_screen_removed(self, screen) -> None:
+        if self._active_screen is not screen:
+            return  # another output went away; ours still holds the surface
+        self._active_screen = None
+        self._pending_resurface = True
+        logger.info("Output %s disappeared; releasing the overlay surface", screen.name())
+        if self._controller.available:
+            # Drop the dead layer surface rather than letting Qt reuse it: a layer
+            # surface binds its output at creation and cannot be moved to another.
+            self.hide()
+            handle = self.windowHandle()
+            if handle is not None:
+                handle.destroy()
+        remaining = self._surviving_screen(screen)
+        if remaining is not None:
+            self._schedule_resurface(remaining)  # multi-monitor: move to what is left
+
+    def _on_screen_added(self, screen) -> None:
+        if self._usable_screen(screen) is None:
+            return  # Qt's placeholder screen, which stands in while no output exists
+        configured = self._configured_screen()
+        # Also act when the chosen output returns while the overlay sits on a
+        # stand-in one, so it goes back where the user put it.
+        returning_home = configured is screen and self._active_screen is not screen
+        if not self._pending_resurface and not returning_home:
+            return
+        self._schedule_resurface(configured or screen)
+
+    def _surviving_screen(self, removed):
+        """A still-connected output to rebuild on, preferring the configured one."""
+        configured = self._configured_screen()
+        if configured is not None and configured is not removed:
+            return configured
+        return next(
+            (
+                candidate
+                for candidate in QGuiApplication.screens()
+                if candidate is not removed and self._usable_screen(candidate) is not None
+            ),
+            None,
+        )
+
+    def _schedule_resurface(self, screen) -> None:
+        self._pending_resurface = False
+        self._resurface_screen = screen
+        self._resurface_timer.start(RESURFACE_DELAY_MS)
+
+    def _restore_pending_surface(self) -> None:
+        screen, self._resurface_screen = self._resurface_screen, None
+        if screen is not None:
+            self._restore_surface(screen)
+
+    def _restore_surface(self, screen) -> None:
+        """Rebuild and remap the surface on an output that came back."""
+        if self._usable_screen(screen) is None or screen not in QGuiApplication.screens():
+            return
+        self._active_screen = screen
+        self._bind_widget_screen(screen)
+        self._apply_window_geometry()  # the returning output may have a new mode
+        self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
+        self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
+        self.show()
+        logger.info("Rebuilt the overlay surface on %s", screen.name())
 
     def _fallback_position(self) -> None:
         """Position manually when layer-shell is unavailable (X11 / GNOME)."""

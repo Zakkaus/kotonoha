@@ -19,6 +19,17 @@ class UnavailableController(LayerShellController):
         super().__init__("", "wayland", "GNOME")
 
 
+class LayerShellStub(LayerShellController):
+    """Takes the layer-shell code path; every bridge call stays a no-op (no .so)."""
+
+    def __init__(self) -> None:
+        super().__init__("", "wayland", "KDE")
+
+    @property
+    def available(self) -> bool:
+        return True
+
+
 class FakeScreen:
     def __init__(self, name: str, x: int, y: int, width: int, height: int) -> None:
         self._name = name
@@ -480,6 +491,107 @@ def test_drag_keeps_the_original_vertical_bottom_range(qapp):
         overlay.mouseMoveEvent(event)
 
     assert overlay._layer_pos == QPoint(400, 1180)
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_overlay_returns_after_its_output_disappears_and_comes_back(qapp):
+    # A monitor switched off removes the output, which destroys the layer surface
+    # and leaves Qt's recreated window hidden (issue #18).
+    screen = qapp.primaryScreen()
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = screen
+    overlay.show()
+
+    overlay._on_screen_removed(screen)
+    assert overlay._active_screen is None
+    assert overlay._pending_resurface is True
+    assert not overlay.isVisible()
+
+    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0):
+        overlay._on_screen_added(screen)
+        qapp.processEvents()
+
+    assert overlay._pending_resurface is False
+    assert overlay._active_screen is screen
+    assert overlay.isVisible()
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_another_output_disappearing_leaves_our_surface_alone(qapp):
+    screen = qapp.primaryScreen()
+    other = FakeScreen("DP-1", 5120, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = screen
+    overlay.show()
+
+    overlay._on_screen_removed(other)
+
+    assert overlay._active_screen is screen
+    assert overlay._pending_resurface is False
+    assert overlay.isVisible()
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_placeholder_screen_is_never_adopted_while_every_output_is_gone(qapp):
+    # Qt stands in a placeholder screen with empty geometry between the last output
+    # leaving and the first one returning; binding to it sizes the surface to 0x0.
+    placeholder = FakeScreen("", 0, 0, 0, 0)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = None
+
+    with patch.object(QGuiApplication, "screens", return_value=[placeholder]), patch.object(
+        overlay, "screen", return_value=placeholder
+    ), patch.object(QApplication, "primaryScreen", return_value=placeholder):
+        assert overlay._target_screen() is None
+
+    overlay._pending_resurface = True
+    overlay._on_screen_added(placeholder)
+    assert overlay._pending_resurface is True  # still waiting for a real output
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_configured_output_wins_when_several_outputs_return(qapp):
+    wanted = FakeScreen("DP-2", 0, 0, 5120, 1440)
+    other = FakeScreen("HDMI-A-2", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(screen_name="DP-2"), LayerShellStub())
+    overlay._pending_resurface = True
+    restored: list[object] = []
+
+    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0), patch.object(
+        QGuiApplication, "screens", return_value=[wanted, other]
+    ), patch.object(overlay, "_restore_surface", side_effect=restored.append):
+        overlay._on_screen_added(other)  # a different output announced itself first
+        qapp.processEvents()
+
+    assert restored == [wanted]
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_overlay_moves_to_the_remaining_output_when_one_of_two_goes_away(qapp):
+    live = qapp.primaryScreen()
+    lost = FakeScreen("DP-2", 5120, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = lost
+    overlay.show()
+
+    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0), patch.object(
+        QGuiApplication, "screens", return_value=[live]
+    ):
+        overlay._on_screen_removed(lost)
+        qapp.processEvents()
+
+    assert overlay._active_screen is live
+    assert overlay.isVisible()
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
