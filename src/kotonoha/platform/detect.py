@@ -19,6 +19,11 @@ def current_desktop() -> str:
     return os.environ.get("XDG_CURRENT_DESKTOP", "")
 
 
+def session_desktop() -> str:
+    """Return the desktop identifier published by the session manager."""
+    return os.environ.get("XDG_SESSION_DESKTOP", "")
+
+
 def should_disable_layer_shell(platform_name: str, current_desktop: str) -> bool:
     """GNOME/Mutter Wayland does not implement wlr-layer-shell -> disable it."""
     desktops = {part.strip().lower() for part in current_desktop.split(":")}

@@ -6,7 +6,8 @@ from typing import Protocol
 
 from PyQt6.QtGui import QGuiApplication
 
-from .layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
+from .detect import current_desktop, session_desktop
+from .layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from .native import LayerShellController, default_package_dir
 from .overlay_contracts import LayerShellBridge, OverlayDragStrategy, OverlayPlatform, WindowHost
 from .qt_window import QtWindowPlatform
@@ -19,6 +20,16 @@ class _LayerShellDragProvider(Protocol):
     """Create a strategy when a Layer Shell compositor is recognized."""
 
     def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None: ...
+
+
+class _NiriLayerShellDragProvider:
+    """Select global-delta dragging for niri's asynchronous configure behavior."""
+
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
+        desktops = {part.strip().lower() for part in desktop.split(":")}
+        if "niri" not in desktops:
+            return None
+        return NiriLayerShellDragStrategy(host, controller)
 
 
 class _DefaultLayerShellDragProvider:
@@ -36,7 +47,7 @@ class _LayerShellProvider:
         drag_providers: tuple[_LayerShellDragProvider, ...] | None = None,
     ) -> None:
         self._controller = controller
-        self._drag_providers = drag_providers or (_DefaultLayerShellDragProvider(),)
+        self._drag_providers = drag_providers or (_NiriLayerShellDragProvider(), _DefaultLayerShellDragProvider())
 
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
         # The controller has already asked the compositor, and its probe outranks the
@@ -139,4 +150,6 @@ class DefaultOverlayPlatformFactory:
     @staticmethod
     def _current_desktop() -> str:
         app = QGuiApplication.instance()
-        return str(app.property("xdg_current_desktop") or "") if app is not None else ""
+        qt_desktop = str(app.property("xdg_current_desktop") or "") if app is not None else ""
+        detected_desktops = (current_desktop(), session_desktop())
+        return ":".join(value for value in (qt_desktop, *detected_desktops) if value)

@@ -67,6 +67,45 @@ class LayerShellAnchorDragStrategy:
         self._drag_local = None
 
 
+class NiriLayerShellDragStrategy:
+    """Move a Layer Shell surface using global pointer deltas."""
+
+    def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
+        self._host = host
+        self._controller = controller
+        self._position = WindowPoint(0, 0)
+        self._drag_global: WindowPoint | None = None
+
+    def set_position(self, position: WindowPoint) -> None:
+        self._position = position
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        del local_position
+        self._drag_global = global_position
+        return DragStartResult(DragMode.MANUAL)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        del local_position
+        if self._drag_global is None:
+            return OverlayOperationResult.failure("Niri Layer Shell drag has not started")
+        delta_x = global_position.x - self._drag_global.x
+        delta_y = global_position.y - self._drag_global.y
+        position = WindowPoint(self._position.x + delta_x, self._position.y + delta_y)
+        pointer = self._host.native_window_pointer()
+        if pointer is None:
+            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
+        try:
+            self._controller.set_anchor_position(pointer, position.x, position.y)
+        except (OSError, RuntimeError):
+            return OverlayOperationResult.failure("Layer Shell position update failed")
+        self._position = position
+        self._drag_global = global_position
+        return OverlayOperationResult.success()
+
+    def end_drag(self) -> None:
+        self._drag_global = None
+
+
 class LayerShellPlatform:
     """Drive layer-shell, input, blur, positioning, and output binding calls."""
 

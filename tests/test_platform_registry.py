@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
+from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from kotonoha.platform.overlay_contracts import DragMode, Output, WindowPoint, WindowPolicy, WindowRectangle
 from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
@@ -227,6 +227,47 @@ def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
     assert platform.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
     platform.end_drag()
+
+
+def test_layer_shell_registry_selects_niri_strategy() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="niri")(host)
+
+    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+
+
+def test_layer_shell_registry_keeps_default_strategy_for_kde() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+
+    assert isinstance(platform, LayerShellPlatform)
+    assert not isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+
+
+def test_layer_shell_registry_selects_niri_from_session_desktop(monkeypatch) -> None:
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    monkeypatch.setenv("XDG_SESSION_DESKTOP", "niri")
+    platform = DefaultOverlayPlatformFactory(_FakeController(available=True), platform_name="wayland")(_MovingHost())
+
+    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+
+
+def test_niri_strategy_integrates_global_pointer_displacement() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+    strategy.set_position(WindowPoint(100, 200))
+
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert strategy.update_drag(WindowPoint(10, 10), WindowPoint(115, 213)).succeeded
+    assert controller.calls[-1] == ("set_anchor_position", (1, 105, 203))
+    assert strategy.update_drag(WindowPoint(99, 99), WindowPoint(108, 205)).succeeded
+    assert controller.calls[-1] == ("set_anchor_position", (1, 98, 195))
+    strategy.end_drag()
 
 
 def test_ordinary_window_strategy_moves_from_local_anchor() -> None:
