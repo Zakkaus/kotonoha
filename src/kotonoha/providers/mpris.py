@@ -23,6 +23,7 @@ from .mpris_track import (
     TrackInfo,
     TrackObservation,
     TrackStabilizer,
+    lyrics_lookup_reason,
     parse_metadata,
 )
 from .mpris_track import (
@@ -556,6 +557,13 @@ class MprisProvider:
                 is_playing=True,
             )
         )
+        skip_reason = lyrics_lookup_reason(commit.info)
+        if skip_reason is not None:
+            # A 14-hour compilation is not a song; querying every provider for it
+            # costs traffic and can match a title that merely appears inside it.
+            logger.info("Skipping lyric lookup for %r: %s", commit.info.title, skip_reason)
+            self._content_owner = "none"
+            return
         track = commit.info.metadata()
         cider_timing = self._gate.current_timing(track)
         if cider_timing is not None and cider_timing.duration_s is not None:

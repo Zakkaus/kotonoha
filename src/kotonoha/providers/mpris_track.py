@@ -10,6 +10,28 @@ from typing import Any
 from ..lyrics.match import TrackMetadata
 
 _MAX_TRACK_LENGTH_S = 24 * 60 * 60
+_LYRICS_LOOKUP_MAX_LENGTH_S = 2 * 60 * 60
+
+_NON_SONG_TITLE_MARKERS = (
+    "complete performance",
+    "official playlist",
+    "online concert",
+    "study with",
+    "pet therapy",
+    "music for pets",
+    "一小時",
+    "一小时",
+    "合輯",
+    "合集",
+    "串燒",
+    "精选",
+    "精選",
+    "演唱會",
+    "オンラインコンサート",
+    "完整演出",
+    "單曲循環",
+    "单曲循环",
+)
 
 # Chrome's own MPRIS bridge prefixes the tab's unread-notification count and
 # appends the site name to the page title, e.g. "(3) Song - YouTube". Both are
@@ -46,6 +68,31 @@ def _length_seconds(value: Any) -> float | None:
     if length_s <= 0.0 or length_s > _MAX_TRACK_LENGTH_S:
         return None
     return length_s
+
+
+def lyrics_lookup_reason(track: TrackInfo) -> str | None:
+    """Return why lyrics should be skipped, or ``None`` when lookup is worthwhile."""
+    if track.length_s is not None and track.length_s > _LYRICS_LOOKUP_MAX_LENGTH_S:
+        return f"duration {track.length_s:.0f}s is longer than a normal song"
+
+    title = track.title.casefold()
+    for marker in _NON_SONG_TITLE_MARKERS:
+        if marker.casefold() in title:
+            return f"title contains non-song marker {marker!r}"
+
+    if title.count("|") >= 2 or title.count("｜") >= 2:
+        return "title lists several works"
+
+    words = track.title.split()
+    if "remix" in title and len(words) >= 4 and sum(any("一" <= char <= "鿿" for char in word) for word in words) >= 3:
+        return "title combines several song names"
+
+    return None
+
+
+def should_lookup_lyrics(track: TrackInfo) -> bool:
+    """Return whether the track should be sent to lyric providers."""
+    return lyrics_lookup_reason(track) is None
 
 
 @dataclass(frozen=True)

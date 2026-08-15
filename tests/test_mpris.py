@@ -1,3 +1,5 @@
+from fixtures.mpris_titles import MPRIS_TITLE_CASES
+
 from kotonoha.providers.mpris import (
     TrackInfo,
     TrackObservation,
@@ -5,6 +7,7 @@ from kotonoha.providers.mpris import (
     _unwrap,
     parse_metadata,
 )
+from kotonoha.providers.mpris_track import lyrics_lookup_reason
 
 
 def observation(track_id, title, artist, *, at, duration=180.0, pos=0.0):
@@ -165,3 +168,21 @@ def test_duration_drift_does_not_create_a_new_track_transition():
 
     assert stabilizer.observe(observation("/1", "Song", "Artist", at=1.0, duration=190.0)) is None
     assert stabilizer.transitioning is False
+
+
+def test_lyrics_lookup_gate_matches_classified_corpus():
+    results = {
+        case.raw_title: lyrics_lookup_reason(TrackInfo(case.clean_title, case.clean_artist, "", None, ""))
+        for case in MPRIS_TITLE_CASES
+    }
+
+    assert all(results[case.raw_title] for case in MPRIS_TITLE_CASES if case.category == "not_music")
+    assert all(not results[case.raw_title] for case in MPRIS_TITLE_CASES if case.category != "not_music")
+
+
+def test_lyrics_lookup_gate_explains_duration_and_keeps_song_lengths():
+    long_track = TrackInfo("Long video", "Uploader", "", 2 * 60 * 60 + 1, "")
+    song = TrackInfo("Long song", "Artist", "", 2 * 60 * 60, "")
+
+    assert lyrics_lookup_reason(long_track) == "duration 7201s is longer than a normal song"
+    assert lyrics_lookup_reason(song) is None
