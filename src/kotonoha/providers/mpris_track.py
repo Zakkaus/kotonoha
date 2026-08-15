@@ -7,7 +7,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from ..lyrics.match import TrackMetadata
+from ..lyrics.match import TrackMetadata, clean_title
 
 _MAX_TRACK_LENGTH_S = 24 * 60 * 60
 
@@ -21,9 +21,10 @@ _TITLE_BADGE_PREFIX = re.compile(r"^\(\d+\)\s+")
 _TITLE_SITE_SUFFIX = re.compile(r"\s*[-|–—]\s*YouTube(?:\s+Music)?\s*$", re.IGNORECASE)
 
 
-def _clean_title(title: str) -> str:
+def _clean_title(title: str, artist: str = "") -> str:
     cleaned = _TITLE_BADGE_PREFIX.sub("", title)
     cleaned = _TITLE_SITE_SUFFIX.sub("", cleaned)
+    cleaned = clean_title(cleaned, artist)
     # Never strip a title down to nothing (a page literally titled "YouTube").
     return cleaned.strip() or title.strip()
 
@@ -66,9 +67,10 @@ class TrackInfo:
 
 def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
     length_s = _length_seconds(raw.get("mpris:length"))
+    artist = _as_text(raw.get("xesam:artist"))
     return TrackInfo(
-        title=_clean_title(_as_text(raw.get("xesam:title"))),
-        artist=_as_text(raw.get("xesam:artist")),
+        title=_clean_title(_as_text(raw.get("xesam:title")), artist),
+        artist=artist,
         album=_as_text(raw.get("xesam:album")),
         length_s=length_s,
         track_id=str(raw.get("mpris:trackid") or ""),

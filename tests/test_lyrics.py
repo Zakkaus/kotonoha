@@ -1,3 +1,5 @@
+import pytest
+
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
 from kotonoha.lyrics.match import (
     Candidate,
@@ -5,9 +7,11 @@ from kotonoha.lyrics.match import (
     TrackMetadata,
     artist_tokens,
     best_match,
+    clean_title,
     evaluate_match,
     normalize,
     query_variants,
+    split_title,
 )
 from kotonoha.lyrics.yrc_parser import parse_yrc
 
@@ -81,6 +85,88 @@ def test_normalize_uses_nfkc_and_safe_feat_boundaries():
     assert normalize("Song feat. Guest") == "song"
 
 
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ("Ariana Grande - hate that i made you love me (official music video)", "hate that i made you love me"),
+        ("Bad Bunny - Tití Me Preguntó (Video Oficial) | Un Verano Sin Ti", "tití me preguntó"),
+        ("汪峰《春天里》高清MV", "春天里"),
+        ("美秀集團 Amazing Show－捲菸 Roll-Cigg【Official Music Video】", "美秀集團 Amazing Show 捲菸 Roll-Cigg"),
+    ],
+)
+def test_platform_title_grammar_is_removed_before_matching(reported, expected):
+    artist = "Ariana Grande" if "Ariana" in reported else "Bad Bunny" if "Bad Bunny" in reported else "汪峰"
+    track = TrackMetadata(reported, artist)
+    candidate = Candidate("song", expected, track.artist, None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ("BTS (방탄소년단) '2.0' Official MV", "2.0"),
+        ("BTS (방탄소년단) ‘SWIM’ Official MV", "SWIM"),
+        ("Hearts2Hearts 하츠투하츠 'RUDE!' MV", "RUDE!"),
+        ('"PINKY UP" MV (Choreography Ver.) | KATSEYE', "PINKY UP (Choreography Ver.)"),
+    ],
+)
+def test_quoted_platform_titles_keep_the_real_title(reported, expected):
+    track = TrackMetadata(reported, "HYBE LABELS" if reported.startswith("BTS") else "KATSEYE")
+    candidate = Candidate("song", expected, track.artist, None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_platform_title_bars_choose_the_song_segment_and_keep_cjk_pipe():
+    # Segment selection only. This particular upload never reaches the matcher in
+    # production — the corpus classifies it as not_music and the lookup gate skips
+    # it on the "一小時" marker — so this asserts which segment is chosen, not that
+    # a one-hour compilation should get the song's lyrics.
+    track = TrackMetadata(
+        "路小雨 Lu Xiao Yu｜不能說的秘密 Secret OST | One hour 一小時放鬆音樂｜周杰倫 Jay Chou｜"
+        "Played by Elvis Piano 維敏彈鋼琴",
+        "Elvis Piano 維敏彈鋼琴",
+    )
+    candidate = Candidate("song", "不能說的秘密 Secret OST", "Elvis Piano 維敏彈鋼琴", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+    # Asserted through the title path, not through normalize(): that function is
+    # also the comparison key for artist and album, so a title-only rule applied
+    # there would rewrite an identity rather than tidy a title.
+    cjk_pipe = TrackMetadata("单曲循环丨张远深情嗓好适合《达尔文》！", "中國浙江衛視官方頻道")
+    plain = TrackMetadata("张远深情嗓好适合《达尔文》！", cjk_pipe.artist)
+    assert normalize(split_title(cjk_pipe.title, cjk_pipe.artist)[0]) == normalize(
+        split_title(plain.title, plain.artist)[0]
+    )
+
+
+def test_platform_bar_skips_artist_segment_before_matching():
+    track = TrackMetadata("老王樂隊｜我還年輕 我還年輕 Official Music Video", "老王樂隊")
+    candidate = Candidate("song", "我還年輕 我還年輕", "老王樂隊", None)
+    assert split_title(track.title, track.artist) == ("我還年輕 我還年輕", frozenset())
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_ascii_bar_selects_the_title_segment_directly():
+    title = "Bad Bunny - Tití Me Preguntó (Video Oficial) | Un Verano Sin Ti"
+    assert split_title(title, "Bad Bunny") == ("Tití Me Preguntó", frozenset())
+
+
+def test_platform_title_whitespace_and_case_are_comparison_insensitive():
+    track = TrackMetadata("阿拉善  ", "貳佰")
+    candidate = Candidate("song", "阿拉善", "贰佰", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+    spaced_artist = TrackMetadata("顽疾 (Live)", "薛之 謙")
+    candidate = Candidate("song", "顽疾 (Live)", "薛之謙", None)
+    assert evaluate_match(candidate, spaced_artist).confidence is MatchConfidence.HIGH
+
+
+def test_parenthesized_artist_name_survives_platform_cleanup():
+    from kotonoha.lyrics.match import split_title
+
+    assert split_title("(G)I-DLE")[0] == "(G)I-DLE"
+
+
 def test_duration_alone_is_not_a_match():
     track = TrackMetadata("Target", "Artist", "", 180.0)
     candidate = Candidate("1", "Other", "Someone", 180.0)
@@ -91,6 +177,77 @@ def test_explicit_live_version_conflict_is_rejected():
     track = TrackMetadata("Song", "Artist", "Album", 200.0)
     candidate = Candidate("1", "Song (Live)", "Artist", 200.5, album="Album")
     assert evaluate_match(candidate, track).confidence is MatchConfidence.NONE
+
+
+def test_chinese_instrumental_title_does_not_match_vocal_candidate():
+    marked_track = TrackMetadata("甲乙丙丁 (你我怎麼兩清伴奏)", "李佳薇")
+    vocal_candidate = Candidate("vocal", "甲乙丙丁 (你我怎麼兩清)", "李佳薇", None)
+    assert evaluate_match(vocal_candidate, marked_track).confidence is MatchConfidence.NONE
+
+
+def test_chinese_alternate_title_still_matches_vocal_candidate():
+    alternate_track = TrackMetadata("甲乙丙丁 (你我怎麼兩清)", "李佳薇")
+    vocal_candidate = Candidate("vocal", "甲乙丙丁 (你我怎麼兩清)", "李佳薇", None)
+    assert evaluate_match(vocal_candidate, alternate_track).confidence is MatchConfidence.HIGH
+
+
+@pytest.mark.parametrize(
+    ("marker", "opening", "closing"),
+    [
+        ("伴奏", "(", ")"),
+        ("instrumental version", "[", "]"),
+        ("off vocal", "【", "】"),
+        ("karaoke", "（", "）"),
+        ("live", "(", ")"),
+        ("Live版", "", ""),
+        ("remix", "(", ")"),
+        ("cover", "(", ")"),
+        ("acoustic", "(", ")"),
+        ("吉他版", "(", ")"),
+        ("彈唱版", "(", ")"),
+        ("戏腔版", "(", ")"),
+        ("粤语版", "(", ")"),
+        ("原声版", "(", ")"),
+        ("Sped Up Version", "(", ")"),
+        ("Full Version", "(", ")"),
+        ("Opening Title Version", "(", ")"),
+        # The re-upload family: same words, different tempo, so the timings a
+        # karaoke overlay needs do not line up with the studio take.
+        ("Slowed", "(", ")"),
+        ("Slowed + Reverb", "(", ")"),
+        ("Nightcore", "(", ")"),
+        ("烟嗓版", "(", ")"),
+        ("律动版", "（", "）"),
+        ("R&B心碎版", "(", ")"),
+    ],
+)
+def test_version_markers_conflict_in_both_directions(marker, opening, closing):
+    marked_title = f"Song {opening}{marker}{closing}"
+    marked_track = TrackMetadata(marked_title, "Artist")
+    plain_track = TrackMetadata("Song", "Artist")
+    plain_candidate = Candidate("plain", "Song", "Artist", None)
+    marked_candidate = Candidate("marked", marked_title, "Artist", None)
+
+    assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
+    assert evaluate_match(marked_candidate, plain_track).confidence is MatchConfidence.NONE
+    assert evaluate_match(marked_candidate, marked_track).confidence is MatchConfidence.HIGH
+
+
+def test_localized_collaboration_credit_is_not_a_version_marker():
+    track = TrackMetadata("恋の才能 (合作演出：初音ミク)", "Artist")
+    candidate = Candidate("song", "恋の才能", "Artist", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+    assert normalize("恋の才能 合作演出：初音ミク") == normalize("恋の才能")
+
+
+@pytest.mark.parametrize(
+    ("opening", "closing"),
+    [("(", ")"), ("（", "）"), ("[", "]"), ("【", "】"), ("『", "』")],
+)
+def test_bracketed_alternate_title_is_not_a_version_marker(opening, closing):
+    track = TrackMetadata(f"甲乙丙丁 {opening}你我怎麼兩清{closing}", "李佳薇")
+    candidate = Candidate("vocal", "甲乙丙丁", "李佳薇", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
 
 
 def test_dash_suffix_live_version_conflict_is_rejected():
@@ -397,3 +554,64 @@ def test_best_match_rejects_when_nothing_close():
 
 def test_best_match_empty():
     assert best_match([], TrackMetadata("t", "a", duration_s=100.0)) is None
+
+
+def test_a_title_that_is_only_a_bracketed_span_is_still_a_title():
+    # "【七月上】" stripped to nothing and could then never match the song it names.
+    assert normalize("【七月上】") == normalize("七月上")
+    assert split_title("【不露聲色】")[0] == "不露聲色"
+
+    track = TrackMetadata("【七月上】", "Jam", "", None)
+    assert evaluate_match(Candidate("1", "七月上", "Jam", None), track).confidence is MatchConfidence.HIGH
+
+    # Two such titles must still agree exactly: different interludes, not a ratio.
+    interlude = TrackMetadata("(intro)", "A", "", 100.0)
+    assert evaluate_match(Candidate("2", "(outro)", "A", 101.0), interlude).confidence is MatchConfidence.NONE
+
+
+def test_a_choreography_video_keeps_the_studio_lyrics():
+    # A dance-practice upload carries the studio recording's audio, so it must not
+    # reject the only candidate that has lyrics.
+    track = TrackMetadata("PINKY UP (Choreography Ver.)", "KATSEYE", "", None)
+    candidate = Candidate("1", "PINKY UP", "KATSEYE", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_title_cleaning_never_rewrites_an_artist_identity():
+    # normalize() is the comparison key for artist and album as well as titles, so
+    # applying the title-only upload-grammar rules there turned two different
+    # performers into one: "Audio Love" lost its first word and matched "Love".
+    assert normalize("Audio Love") != normalize("Love")
+    assert artist_tokens("Audio Love") != artist_tokens("Love")
+
+    track = TrackMetadata("Song", "Audio Love")
+    candidate = Candidate("c", "Song", "Love", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.NONE
+
+    # The same rule still applies where it belongs — to the title.
+    assert clean_title("Track - Official Audio", "Artist") == "Track"
+    assert (
+        evaluate_match(
+            Candidate("c", "Track", "Artist", None),
+            TrackMetadata("Track - Official Audio", "Artist"),
+            fuzzy=True,
+        ).confidence
+        is MatchConfidence.HIGH
+    )
+
+
+@pytest.mark.parametrize(
+    ("marked", "plain"),
+    [
+        ("Song (Acounstic Version)", "Song"),          # the upload's own spelling
+        ("ツギハギスタッカート 歌ってみた。", "ツギハギスタッカート"),   # a user cover
+        ("ハローセカイ / バーチャル・シンガーver.", "ハローセカイ"),  # another vocalist
+    ],
+)
+def test_real_version_markers_from_the_corpus_conflict(marked, plain):
+    # Each of these appears in a real library. Unrecognised, the studio take was
+    # matched to a different performance and every line landed out of time.
+    marked_track = TrackMetadata(marked, "Artist")
+    plain_candidate = Candidate("plain", plain, "Artist", None)
+
+    assert evaluate_match(plain_candidate, marked_track).confidence is MatchConfidence.NONE
