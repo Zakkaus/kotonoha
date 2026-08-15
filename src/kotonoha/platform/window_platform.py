@@ -33,25 +33,47 @@ class _LayerShellProvider:
 
 
 class _X11Provider:
+    def __init__(self, controller: LayerShellBridge | None = None) -> None:
+        self._controller = controller
+
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
         del desktop
         if platform_name != "xcb":
             return None
-        return QtWindowPlatform(host, reason="X11 has no Layer Shell overlay capability.")
+        return QtWindowPlatform(
+            host, reason="X11 has no Layer Shell overlay capability.", blur=self._controller
+        )
 
 
 class _WaylandFallbackProvider:
+    def __init__(self, controller: LayerShellBridge | None = None) -> None:
+        self._controller = controller
+
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
         del desktop
         if not platform_name.startswith("wayland"):
             return None
-        return QtWindowPlatform(host, reason="Wayland compositor does not provide Layer Shell.")
+        # Still hand over the bridge: a Wayland compositor without Layer Shell can
+        # speak a blur protocol, which is exactly the Mutter case.
+        return QtWindowPlatform(
+            host,
+            reason="Wayland compositor does not provide Layer Shell.",
+            blur=self._controller,
+            # Wayland gives a client no way to place its own toplevel, and no
+            # readback can tell: Qt reports the requested position either way.
+            client_positioning=False,
+        )
 
 
 class _GenericFallbackProvider:
+    def __init__(self, controller: LayerShellBridge | None = None) -> None:
+        self._controller = controller
+
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform:
         del platform_name, desktop
-        return QtWindowPlatform(host, reason="Layer Shell is unavailable on this platform.")
+        return QtWindowPlatform(
+            host, reason="Layer Shell is unavailable on this platform.", blur=self._controller
+        )
 
 
 class DefaultOverlayPlatformFactory:
@@ -74,9 +96,9 @@ class DefaultOverlayPlatformFactory:
         self._current_desktop_value = current_desktop
         self._providers = providers or (
             _LayerShellProvider(self._controller),
-            _X11Provider(),
-            _WaylandFallbackProvider(),
-            _GenericFallbackProvider(),
+            _X11Provider(self._controller),
+            _WaylandFallbackProvider(self._controller),
+            _GenericFallbackProvider(self._controller),
         )
 
     def __call__(self, host: WindowHost) -> OverlayPlatform:

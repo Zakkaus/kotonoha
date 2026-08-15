@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from .overlay_contracts import (
+    LayerShellBridge,
     OverlayCapabilities,
     OverlayOperationResult,
     OverlayPlatform,
@@ -16,22 +17,48 @@ from .overlay_contracts import (
 class QtWindowPlatform(OverlayPlatform):
     """Use toolkit window flags when compositor-specific overlay APIs are absent."""
 
-    def __init__(self, host: WindowHost, *, reason: str | None = None) -> None:
+    def __init__(
+        self,
+        host: WindowHost,
+        *,
+        reason: str | None = None,
+        blur: LayerShellBridge | None = None,
+        client_positioning: bool = True,
+    ) -> None:
         self._host = host
         self._reason = reason
-        self._capabilities = OverlayCapabilities(
-            layer_shell=False,
-            blur=False,
-            input_region=True,
-            output_rebinding=False,
-            layer_shell_reason=reason,
-            blur_reason="Ordinary windows cannot request compositor backdrop blur.",
-            output_rebinding_reason="Ordinary windows cannot rebind a mapped output.",
-        )
+        # Wayland without Layer Shell ignores a client-side move of a toplevel, and
+        # the client cannot detect it: Qt reports the requested position either way.
+        # So the provider states it here instead of the adapter guessing afterwards.
+        self._client_positioning = client_positioning
+        # Blur is a separate capability from Layer Shell: Mutter offers no
+        # layer-shell and does speak ext-background-effect-v1, so hardcoding
+        # blur=False here dropped the frosted panel on exactly the compositor the
+        # blur work was for. When a bridge is available the answer comes from it.
+        self._blur = blur
 
     @property
     def capabilities(self) -> OverlayCapabilities:
-        return self._capabilities
+        blur = self._blur is not None and self._blur.blur_available
+        return OverlayCapabilities(
+            layer_shell=False,
+            blur=blur,
+            input_region=True,
+            output_rebinding=False,
+            layer_shell_reason=self._reason,
+            blur_reason=None
+            if blur
+            else (
+                getattr(self._blur, "blur_disabled_reason", "protocol")
+                if self._blur is not None
+                else "Ordinary windows have no bridge to request compositor blur."
+            ),
+            output_rebinding_reason="Ordinary windows cannot rebind a mapped output.",
+            client_positioning=self._client_positioning,
+            client_positioning_reason=None
+            if self._client_positioning
+            else "This compositor ignores a client-side move of an ordinary window.",
+        )
 
     def prepare(self) -> OverlayOperationResult:
         try:
@@ -69,10 +96,30 @@ class QtWindowPlatform(OverlayPlatform):
         return OverlayOperationResult.success()
 
     def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> OverlayOperationResult:
-        del region, radius
-        return OverlayOperationResult.failure(self._capabilities.blur_reason or "Blur is unavailable.")
+        # An ordinary window can still carry a compositor blur where the protocol
+        # exists — Mutter has no Layer Shell and does speak it — so this is a real
+        # operation here, not a permanent failure.
+        capabilities = self.capabilities
+        if not capabilities.blur or self._blur is None:
+            return OverlayOperationResult.failure(capabilities.blur_reason or "Blur is unavailable.")
+        pointer = self._host.native_window_pointer()
+        if pointer is None:
+            return OverlayOperationResult.failure("The window handle is unavailable.")
+        try:
+            if region is None:
+                self._blur.clear_blur(pointer)
+            else:
+                self._blur.set_blur_region(pointer, region.x, region.y, region.width, region.height, radius)
+        except (OSError, RuntimeError):
+            return OverlayOperationResult.failure("Blur update failed.")
+        return OverlayOperationResult.success()
 
     def move_to(self, position: WindowPoint) -> OverlayOperationResult:
+        capabilities = self.capabilities
+        if not capabilities.client_positioning:
+            return OverlayOperationResult.failure(
+                capabilities.client_positioning_reason or "This window cannot be positioned by the client."
+            )
         try:
             self._host.move_window(position)
         except RuntimeError as exc:
@@ -82,5 +129,5 @@ class QtWindowPlatform(OverlayPlatform):
     def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:
         del output
         return OverlayOperationResult.failure(
-            self._capabilities.output_rebinding_reason or "Output rebinding is unavailable."
+            self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
         )

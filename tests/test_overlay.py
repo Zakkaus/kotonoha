@@ -3,14 +3,17 @@ from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+from dataclasses import replace
+
 import pytest
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
-from PyQt6.QtWidgets import QApplication
+from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config
 from kotonoha.overlay import LyricsOverlay
 from kotonoha.platform.native import LayerShellController
+from kotonoha.platform.overlay_contracts import OverlayOperationResult
 from kotonoha.state import LyricsState
 
 
@@ -20,7 +23,13 @@ class UnavailableController(LayerShellController):
 
 
 class LayerShellStub(LayerShellController):
-    """Takes the layer-shell code path; every bridge call stays a no-op (no .so)."""
+    """Takes the layer-shell code path; every bridge call stays a no-op (no .so).
+
+    The registry picks an adapter from the Qt platform name, which is "offscreen"
+    under test, so an overlay built with this stub is given the ordinary-window
+    adapter. Tests that exercise the layer-shell paths use `layer_shell_platform`
+    to put the real adapter in place.
+    """
 
     def __init__(self) -> None:
         super().__init__("", "wayland", "KDE")
@@ -28,6 +37,14 @@ class LayerShellStub(LayerShellController):
     @property
     def available(self) -> bool:
         return True
+
+
+def layer_shell_platform(overlay):
+    """Give the overlay the Layer Shell adapter the registry cannot select offscreen."""
+    from kotonoha.platform.layer_shell import LayerShellPlatform
+
+    overlay._platform = LayerShellPlatform(overlay._host, overlay._controller)
+    return overlay._platform
 
 
 class FakeScreen:
@@ -501,6 +518,7 @@ def test_overlay_returns_after_its_output_disappears_and_comes_back(qapp):
     # and leaves Qt's recreated window hidden (issue #18).
     screen = qapp.primaryScreen()
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
     overlay._active_screen = screen
     overlay.show()
 
@@ -710,16 +728,149 @@ def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp):
     # its proxy stays alive for the life of the process — one per output switch.
     screen = qapp.primaryScreen()
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)  # offscreen would otherwise get the ordinary-window adapter
     overlay._active_screen = screen
     overlay.show()
 
-    cleared: list[int] = []
-    with patch.object(overlay._controller, "clear_blur", cleared.append), patch.object(
-        overlay, "_window_ptr", return_value=4242
-    ):
+    cleared: list[object] = []
+    with patch.object(overlay._platform, "set_blur_region", lambda region, radius=0: cleared.append(region)):
         overlay._on_screen_removed(screen)
 
-    assert cleared == [4242], "the surface was destroyed with its effect still registered"
+    assert cleared == [None], "the surface was destroyed with its effect still registered"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_locked_overlay_is_click_through_on_the_fallback_platform(qapp):
+    # The ordinary-window path only positioned the window, so set_input_region was
+    # never called and a config with passthrough on stayed clickable — the locked
+    # overlay swallowed the pointer.
+    overlay = LyricsOverlay(LyricsState(), Config(passthrough=True), UnavailableController())
+    regions: list[object] = []
+    with patch.object(overlay._platform, "set_input_region", lambda region: regions.append(region) or _ok()):
+        overlay.activate_layer_shell()
+
+    assert regions == [None], "the locked overlay never asked for a click-through region"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
+    # The capability is there but activation fails — a missing handle, or the bridge
+    # raising. Falling through silently left an already-mapped window unpositioned
+    # with no input region and no diagnostic.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)
+    positioned: list[bool] = []
+    with patch.object(
+        overlay._platform, "activate", lambda: OverlayOperationResult.failure("no window handle")
+    ), patch.object(overlay, "_fallback_position", lambda: positioned.append(True)), caplog.at_level("WARNING"):
+        overlay.activate_layer_shell()
+
+    assert positioned == [True], "activation failed and nothing positioned the window"
+    assert "no window handle" in caplog.text
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def _ok():
+    from kotonoha.platform.overlay_contracts import OverlayOperationResult
+
+    return OverlayOperationResult.success()
+
+
+def test_the_qt_host_shapes_and_clears_the_real_input_mask(qapp):
+    # The production host has to implement the shaping the contract describes, or
+    # the ordinary-window path calls a method nothing provides.
+    from kotonoha.platform.overlay_contracts import WindowRectangle
+    from kotonoha.platform.qt_host import QtWindowHost
+
+    widget = QWidget()
+    host = QtWindowHost(widget)
+
+    host.set_input_mask(WindowRectangle(3, 4, 20, 10))
+    assert widget.mask().boundingRect() == QRect(3, 4, 20, 10)
+
+    host.clear_input_mask()
+    assert widget.mask().isEmpty()
+    widget.deleteLater()
+    qapp.processEvents()
+
+
+def test_the_qt_host_implements_every_method_the_contract_names():
+    # The host used to inherit the Protocol, so a method it forgot became a silent
+    # no-op: the adapter reported success while nothing happened.
+    from kotonoha.platform.overlay_contracts import WindowHost
+    from kotonoha.platform.qt_host import QtWindowHost
+
+    required = {name for name in vars(WindowHost) if not name.startswith("_")}
+    missing = {name for name in required if not callable(getattr(QtWindowHost, name, None))}
+    assert not missing, f"QtWindowHost does not implement: {sorted(missing)}"
+
+
+def test_a_failed_activation_positions_as_an_ordinary_window(qapp):
+    # The Layer Shell adapter is still in place when activation fails, so asking it
+    # to move set a native anchor on a surface that was never promoted — no real
+    # fallback happened.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    platform = layer_shell_platform(overlay)
+    moves: list[tuple[str, object]] = []
+    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")), patch.object(
+        platform, "move_to", lambda position: moves.append(("anchor", position)) or OverlayOperationResult.success()
+    ), patch.object(overlay._host, "move_window", lambda position: moves.append(("host", position))):
+        overlay.activate_layer_shell()
+
+    assert [kind for kind, _ in moves] == ["host"], f"positioned through the wrong path: {moves}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_returning_output_that_cannot_be_rebuilt_stays_owed(qapp):
+    # Clearing the pending flag after a failed activation retires a rebuild that is
+    # still owed, and nothing tries again.
+    screen = qapp.primaryScreen()
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    platform = layer_shell_platform(overlay)
+    overlay._active_screen = screen
+    overlay._pending_resurface = True
+
+    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")):
+        overlay._restore_surface(screen)
+
+    assert overlay._pending_resurface is True
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
+    # Wayland without Layer Shell ignores a client-side move, so saving the dragged
+    # position would leave the config describing somewhere the window never went.
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    committed: list[object] = []
+    unplaceable = replace(
+        overlay._platform.capabilities, client_positioning=False, client_positioning_reason="no"
+    )
+    with patch.object(
+        type(overlay._platform), "capabilities", property(lambda self: unplaceable)
+    ), patch.object(overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)):
+        overlay._dragging = True
+        overlay._drag_moved = True
+        overlay.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                QPointF(10, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    assert committed == [], "a position the window never took was saved"
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

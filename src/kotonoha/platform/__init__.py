@@ -10,6 +10,7 @@ from .overlay_contracts import (
     WindowPolicy,
     WindowRectangle,
 )
+from .qt_host import QtWindowHost
 from .window_platform import DefaultOverlayPlatformFactory
 
 __all__ = [
@@ -22,5 +23,6 @@ __all__ = [
     "WindowPoint",
     "WindowPolicy",
     "WindowRectangle",
+    "QtWindowHost",
     "default_package_dir",
 ]
