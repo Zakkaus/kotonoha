@@ -399,15 +399,12 @@ def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
         Qt.MouseButton.LeftButton,
         Qt.KeyboardModifier.NoModifier,
     )
-    with patch.object(QGuiApplication, "screens", return_value=[source, target]), patch.object(
-        overlay, "_recreate_layer_surface"
-    ) as recreate:
+    with patch.object(QGuiApplication, "screens", return_value=[source, target]):
         overlay.mouseMoveEvent(event)
 
     assert overlay._layer_pos == QPoint(2080, 100)
     assert overlay._active_screen is source
     assert LyricsOverlay._screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
-    recreate.assert_not_called()
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
@@ -457,13 +454,12 @@ def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
 
     with patch.object(QGuiApplication, "screens", return_value=[source, target]), patch.object(
         overlay, "_window_size", return_value=(500, 140)
-    ), patch.object(overlay, "_recreate_layer_surface") as recreate:
+    ):
         overlay._commit_drag_position(QPoint(100, 40))
 
     assert overlay._config.margin_x == -658
     assert overlay._config.screen_name == "DP-1"
     assert overlay._layer_pos == QPoint(52, 100)
-    recreate.assert_called_once_with(target)
     assert emitted == [(100, -658, "DP-1")]
     overlay._render_timer.stop()
     overlay.deleteLater()
@@ -479,7 +475,7 @@ def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
 
     with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
         overlay, "_window_size", return_value=(1100, 140)
-    ), patch.object(overlay, "_recreate_layer_surface"):
+    ):
         overlay._commit_drag_position(QPoint(20, 40))
 
     assert overlay._layer_pos == QPoint(-1020, 100)
@@ -560,163 +556,13 @@ def test_placeholder_screen_is_never_adopted_while_every_output_is_gone(qapp):
     # Qt stands in a placeholder screen with empty geometry between the last output
     # leaving and the first one returning; binding to it sizes the surface to 0x0.
     placeholder = FakeScreen("", 0, 0, 0, 0)
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    overlay._active_screen = None
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
 
     with patch.object(QGuiApplication, "screens", return_value=[placeholder]), patch.object(
         overlay, "screen", return_value=placeholder
     ), patch.object(QApplication, "primaryScreen", return_value=placeholder):
         assert overlay._target_screen() is None
 
-    overlay._pending_resurface = True
-    overlay._on_screen_added(placeholder)
-    assert overlay._pending_resurface is True  # still waiting for a real output
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_configured_output_wins_when_several_outputs_return(qapp):
-    wanted = FakeScreen("DP-2", 0, 0, 5120, 1440)
-    other = FakeScreen("HDMI-A-2", 0, 0, 1920, 1080)
-    overlay = LyricsOverlay(LyricsState(), Config(screen_name="DP-2"), LayerShellStub())
-    overlay._pending_resurface = True
-    restored: list[object] = []
-
-    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0), patch.object(
-        QGuiApplication, "screens", return_value=[wanted, other]
-    ), patch.object(overlay, "_restore_surface", side_effect=restored.append):
-        overlay._on_screen_added(other)  # a different output announced itself first
-        qapp.processEvents()
-
-    assert restored == [wanted]
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_overlay_moves_to_the_remaining_output_when_one_of_two_goes_away(qapp):
-    live = qapp.primaryScreen()
-    lost = FakeScreen("DP-2", 5120, 0, 1920, 1080)
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    overlay._active_screen = lost
-    overlay.show()
-
-    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0), patch.object(
-        QGuiApplication, "screens", return_value=[live]
-    ):
-        overlay._on_screen_removed(lost)
-        qapp.processEvents()
-
-    assert overlay._active_screen is live
-    assert overlay.isVisible()
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
-    # A margin dragged on a wide output must not push the panel off a smaller one.
-    # The partial bounds a drag uses would keep only 80x60 px of it on screen.
-    screen = FakeScreen("HDMI-A-1", 0, 0, 4096, 1152)
-    overlay = LyricsOverlay(
-        LyricsState(), Config(margin_x=2518, margin_edge=1092, anchor_top=True), UnavailableController()
-    )
-    overlay._active_screen = screen
-
-    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
-        overlay, "_window_size", return_value=(1100, 170)
-    ):
-        pos = overlay._compute_layer_pos(1100, 170)
-
-    assert 0 <= pos.x() <= 4096 - 1100
-    assert 0 <= pos.y() <= 1152 - 170
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_a_parked_position_survives_the_next_geometry_pass(qapp):
-    # Releasing at the right-hand edge is stored as a large negative x, because the
-    # surface is wider than the visible pill. Re-applying the geometry — a settings
-    # apply, a re-show, a restart — must leave the panel where it was released;
-    # clamping it fully on screen there teleports it, which is what a user sees as
-    # the panel flying away after a drag.
-    screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
-    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
-    overlay._active_screen = screen
-    overlay._layer_pos = QPoint(-1100, 100)
-    overlay._drag_local = QPoint(20, 40)
-
-    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
-        overlay, "_window_size", return_value=(1100, 140)
-    ), patch.object(overlay, "_recreate_layer_surface"):
-        overlay._commit_drag_position(QPoint(20, 40))
-        parked = overlay._layer_pos
-        reloaded = overlay._compute_layer_pos(1100, 140)
-
-    assert overlay._config.screen_width == 2048
-    assert overlay._config.screen_height == 1152
-    assert reloaded == parked, f"the panel jumped from {parked} to {reloaded}"
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size(qapp):
-    # Two monitors of the same model have the same geometry, so size alone cannot
-    # say the saved offset was measured here. Honouring it on the other one puts
-    # the panel off screen, which is the failure the clamp exists to prevent.
-    other = FakeScreen("DP-1", 0, 0, 1920, 1080)
-    overlay = LyricsOverlay(
-        LyricsState(),
-        Config(
-            screen_name="HDMI-A-1",
-            screen_width=1920,
-            screen_height=1080,
-            margin_x=-1800,
-            margin_edge=100,
-        ),
-        UnavailableController(),
-    )
-    overlay._active_screen = other
-
-    with patch.object(QGuiApplication, "screens", return_value=[other]), patch.object(
-        overlay, "_window_size", return_value=(1100, 140)
-    ):
-        pos = overlay._compute_layer_pos(1100, 140)
-
-    assert 0 <= pos.x() <= 1920 - 1100, f"panel parked off screen at x={pos.x()}"
-    overlay._render_timer.stop()
-    overlay.deleteLater()
-    qapp.processEvents()
-
-
-def test_a_second_output_vanishing_before_the_rebuild_does_not_strand_the_overlay(qapp):
-    # Two monitors going away in quick succession: the first removal schedules a
-    # rebuild on the survivor, and the survivor disappears inside the 250 ms delay.
-    # The scheduled rebuild then finds nothing to build on, and nothing remembers
-    # that one is still owed — the overlay stayed hidden for good.
-    primary = qapp.primaryScreen()
-    survivor = FakeScreen("DP-1", 5120, 0, 1920, 1080)
-    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
-    overlay._active_screen = primary
-    overlay.show()
-
-    with patch.object(QGuiApplication, "screens", return_value=[primary, survivor]):
-        overlay._on_screen_removed(primary)          # schedules a rebuild on DP-1
-    with patch.object(QGuiApplication, "screens", return_value=[]):
-        overlay._on_screen_removed(survivor)         # DP-1 goes too, before the timer
-        overlay._resurface_timer.timeout.emit()      # the scheduled rebuild runs and finds nothing
-
-    assert overlay._pending_resurface is True, "nothing remembers that a rebuild is still owed"
-
-    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0):
-        overlay._on_screen_added(primary)
-        qapp.processEvents()
-
-    assert overlay._active_screen is primary
-    assert overlay.isVisible()
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

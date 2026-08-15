@@ -1,9 +1,9 @@
-"""Ordered overlay-platform provider selection without a compositor."""
+"""Ordered overlay-platform provider selection and output lifecycle."""
 
 from __future__ import annotations
 
 from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
-from kotonoha.platform.overlay_contracts import DragMode, WindowPoint, WindowPolicy, WindowRectangle
+from kotonoha.platform.overlay_contracts import DragMode, Output, WindowPoint, WindowPolicy, WindowRectangle
 from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
 
@@ -41,6 +41,7 @@ class _FakeHost:
     def __init__(self) -> None:
         self.masks: list[object] = []
         self.policies: list[WindowPolicy] = []
+        self.lifecycle: list[str] = []
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         self.policies.append(policy)
@@ -65,6 +66,12 @@ class _FakeHost:
 
     def bind_output(self, output: WindowRectangle) -> None:
         del output
+
+    def hide_window(self) -> None:
+        self.lifecycle.append("hide")
+
+    def destroy_surface(self) -> None:
+        self.lifecycle.append("destroy")
 
     def move_window(self, position: WindowPoint) -> None:
         del position
@@ -290,3 +297,70 @@ def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
     assert not result.succeeded
     assert result.reason == platform.capabilities.client_positioning_reason
     assert host.moves == [], "the window must not be moved when the compositor ignores it"
+
+def _output(name: str, width: int = 1920) -> Output:
+    return Output(name, WindowRectangle(0, 0, width, 1080))
+
+
+def test_layer_shell_ignores_vanishing_output_that_is_not_active() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+
+    platform.output_removed(_output("DP-1"), (), None)
+
+    assert host.lifecycle == []
+
+
+def test_layer_shell_rebuilds_on_returning_output_after_release() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(restored.append)
+    platform.output_removed(active, (), None)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert host.lifecycle == ["hide", "destroy"]
+    assert restored == [active]
+
+
+def test_layer_shell_configured_output_wins_when_outputs_return() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    wanted = _output("DP-2", 5120)
+    other = _output("HDMI-A-2")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(restored.append)
+    platform.output_removed(active, (), None)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((other, wanted), "DP-2")
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [wanted]
+
+
+def test_layer_shell_falls_back_to_output_still_connected() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    lost = _output("DP-2")
+    live = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(lost)
+    platform.set_output_handler(restored.append)
+    platform.output_removed(lost, (live,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [live]
+
+
+def test_qt_window_output_events_are_explicitly_ignored() -> None:
+    platform = QtWindowPlatform(_FakeHost())
+    platform.output_removed(_output("DP-1"), (), None)
+    platform.output_added((_output("DP-1"),), "DP-1")

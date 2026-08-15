@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from .overlay_contracts import (
     DragMode,
     DragStartResult,
     LayerShellBridge,
+    Output,
     OverlayCapabilities,
     OverlayDragStrategy,
     OverlayOperationResult,
@@ -185,6 +188,18 @@ class QtWindowPlatform:
         return OverlayOperationResult.failure(
             self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
         )
+
+    def set_output_handler(self, handler: Callable[[Output], None]) -> None:
+        del handler
+
+    def set_active_output(self, output: Output | None) -> None:
+        del output
+
+    def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
+        del output, connected, configured_name
+
+    def output_added(self, connected: tuple[Output, ...], configured_name: str | None) -> None:
+        del connected, configured_name
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
         return self._drag_strategy.begin_drag(local_position, global_position)

@@ -2,10 +2,15 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
+from PyQt6.QtCore import QTimer
+
 from .overlay_contracts import (
     DragMode,
     DragStartResult,
     LayerShellBridge,
+    Output,
     OverlayCapabilities,
     OverlayDragStrategy,
     OverlayOperationResult,
@@ -14,6 +19,8 @@ from .overlay_contracts import (
     WindowPolicy,
     WindowRectangle,
 )
+
+RESURFACE_DELAY_MS = 250
 
 
 class LayerShellAnchorDragStrategy:
@@ -69,6 +76,14 @@ class LayerShellPlatform:
         self._host = host
         self._controller = controller
         self._drag_strategy = drag_strategy or LayerShellAnchorDragStrategy(host, controller)
+        self._active_output: Output | None = None
+        self._output_handler: Callable[[Output], None] | None = None
+        self._pending_resurface = False
+        self._resurface_output: Output | None = None
+        self._resurface_timer = QTimer()
+        self._resurface_timer.setSingleShot(True)
+        self._resurface_timer.setInterval(RESURFACE_DELAY_MS)
+        self._resurface_timer.timeout.connect(self._restore_pending_surface)
         self._capabilities = OverlayCapabilities(
             layer_shell=controller.available,
             blur=controller.blur_available,
@@ -179,6 +194,76 @@ class LayerShellPlatform:
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Output rebinding failed: {exc}")
         return OverlayOperationResult.success()
+
+    def set_output_handler(self, handler: Callable[[Output], None]) -> None:
+        self._output_handler = handler
+
+    def set_active_output(self, output: Output | None) -> None:
+        self._active_output = output
+
+    def _release_blur(self) -> None:
+        """Drop the compositor-side blur object before its surface goes.
+
+        The bridge keys the effect on the wl_surface, and a rebuilt surface gets a
+        new address, so one left behind can never be found again — it would leak
+        for the life of the process, once per output change."""
+        if self._capabilities.blur:
+            self.set_blur_region(None)
+
+    def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
+        if self._resurface_output is not None and self._resurface_output.name == output.name:
+            # It went away before the rebuild ran; drop the target but stay owed.
+            self._resurface_timer.stop()
+            self._resurface_output = None
+            self._pending_resurface = True
+        if self._active_output is None or self._active_output.name != output.name:
+            return
+        self._active_output = None
+        self._pending_resurface = True
+        self._host.hide_window()
+        self._release_blur()
+        self._host.destroy_surface()
+        remaining = self._select_output(connected, configured_name)
+        if remaining is not None:
+            self._schedule_resurface(remaining)
+
+    def output_added(self, connected: tuple[Output, ...], configured_name: str | None) -> None:
+        if not connected:
+            return
+        configured = next((output for output in connected if output.name == configured_name), None)
+        if not self._pending_resurface and (
+            configured is None or self._active_output is not None and self._active_output.name == configured.name
+        ):
+            return
+        output = self._select_output(connected, configured_name)
+        if output is not None:
+            self._schedule_resurface(output)
+
+    @staticmethod
+    def _select_output(outputs: tuple[Output, ...], configured_name: str | None) -> Output | None:
+        if configured_name:
+            configured = next((output for output in outputs if output.name == configured_name), None)
+            if configured is not None:
+                return configured
+        return outputs[0] if outputs else None
+
+    def _schedule_resurface(self, output: Output) -> None:
+        # The flag stays set until a rebuild actually happens. Clearing it here
+        # stranded the overlay when the scheduled output vanished inside the delay:
+        # the second removal returns early (the surface is already released), the
+        # scheduled rebuild finds its target gone, and nothing is left to tell the
+        # next output_added that a rebuild is still owed.
+        self._resurface_output = output
+        self._resurface_timer.start()
+
+    def _restore_pending_surface(self) -> None:
+        output, self._resurface_output = self._resurface_output, None
+        if output is None:
+            return
+        self._active_output = output
+        if self._output_handler is not None:
+            self._output_handler(output)
+        self._pending_resurface = False  # only a rebuild that happened clears it
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
         return self._drag_strategy.begin_drag(local_position, global_position)

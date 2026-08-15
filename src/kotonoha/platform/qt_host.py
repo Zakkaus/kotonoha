@@ -84,6 +84,14 @@ class QtWindowHost:
                 return
         raise RuntimeError("Requested output is not available.")
 
+    def hide_window(self) -> None:
+        self._widget.hide()
+
+    def destroy_surface(self) -> None:
+        handle = self._widget.windowHandle()
+        if handle is not None:
+            handle.destroy()
+
     def move_window(self, position: WindowPoint) -> None:
         self._widget.move(position.x, position.y)
 
