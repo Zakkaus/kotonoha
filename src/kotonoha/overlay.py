@@ -622,6 +622,11 @@ class LyricsOverlay(QWidget):
     # hidden, so without this the overlay never came back when the monitor woke up.
 
     def _on_screen_removed(self, screen) -> None:
+        if self._resurface_screen is screen:
+            # It went away before the rebuild ran; drop the target but stay owed.
+            self._resurface_timer.stop()
+            self._resurface_screen = None
+            self._pending_resurface = True
         if self._active_screen is not screen:
             return  # another output went away; ours still holds the surface
         self._active_screen = None
@@ -664,7 +669,11 @@ class LyricsOverlay(QWidget):
         )
 
     def _schedule_resurface(self, screen) -> None:
-        self._pending_resurface = False
+        # The flag stays set until a rebuild actually succeeds. Clearing it here
+        # lost the overlay for good when the target output vanished inside the
+        # delay: the second removal returns early (the surface is already
+        # released), the scheduled rebuild finds its target gone, and nothing is
+        # left to tell the next screenAdded that a rebuild is still owed.
         self._resurface_screen = screen
         self._resurface_timer.start(RESURFACE_DELAY_MS)
 
@@ -683,6 +692,7 @@ class LyricsOverlay(QWidget):
         self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
         self.activate_layer_shell()  # must precede show(): see the bridge's make_overlay
         self.show()
+        self._pending_resurface = False  # only a rebuild that happened clears it
         logger.info("Rebuilt the overlay surface on %s", screen.name())
 
     def _fallback_position(self) -> None:

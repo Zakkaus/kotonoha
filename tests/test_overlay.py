@@ -672,3 +672,33 @@ def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_second_output_vanishing_before_the_rebuild_does_not_strand_the_overlay(qapp):
+    # Two monitors going away in quick succession: the first removal schedules a
+    # rebuild on the survivor, and the survivor disappears inside the 250 ms delay.
+    # The scheduled rebuild then finds nothing to build on, and nothing remembers
+    # that one is still owed — the overlay stayed hidden for good.
+    primary = qapp.primaryScreen()
+    survivor = FakeScreen("DP-1", 5120, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = primary
+    overlay.show()
+
+    with patch.object(QGuiApplication, "screens", return_value=[primary, survivor]):
+        overlay._on_screen_removed(primary)          # schedules a rebuild on DP-1
+    with patch.object(QGuiApplication, "screens", return_value=[]):
+        overlay._on_screen_removed(survivor)         # DP-1 goes too, before the timer
+        overlay._resurface_timer.timeout.emit()      # the scheduled rebuild runs and finds nothing
+
+    assert overlay._pending_resurface is True, "nothing remembers that a rebuild is still owed"
+
+    with patch("kotonoha.overlay.RESURFACE_DELAY_MS", 0):
+        overlay._on_screen_added(primary)
+        qapp.processEvents()
+
+    assert overlay._active_screen is primary
+    assert overlay.isVisible()
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
