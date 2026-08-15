@@ -76,6 +76,16 @@ def test_parse_strips_trailing_dash_youtube():
     assert parse_metadata({"xesam:title": "Song - YouTube"}).title == "Song"
 
 
+def test_parse_cleans_platform_grammar_from_mpris_title():
+    info = parse_metadata(
+        {
+            "xesam:title": "BTS (방탄소년단) ‘SWIM’ Official MV",
+            "xesam:artist": ["HYBE LABELS"],
+        }
+    )
+    assert info.title == "SWIM"
+
+
 def test_parse_keeps_clean_title_and_never_empties():
     assert parse_metadata({"xesam:title": "Normal Song"}).title == "Normal Song"
     # "YouTube" alone has no separator to strip, so it must survive intact.

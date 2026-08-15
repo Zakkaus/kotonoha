@@ -10,6 +10,7 @@ from kotonoha.lyrics.match import (
     evaluate_match,
     normalize,
     query_variants,
+    split_title,
 )
 from kotonoha.lyrics.yrc_parser import parse_yrc
 
@@ -81,6 +82,78 @@ def test_normalize_uses_nfkc_and_safe_feat_boundaries():
     assert normalize("Feather") == "feather"
     assert normalize("FTISLAND") == "ftisland"
     assert normalize("Song feat. Guest") == "song"
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ("Ariana Grande - hate that i made you love me (official music video)", "hate that i made you love me"),
+        ("Bad Bunny - Tití Me Preguntó (Video Oficial) | Un Verano Sin Ti", "tití me preguntó"),
+        ("汪峰《春天里》高清MV", "春天里"),
+        ("美秀集團 Amazing Show－捲菸 Roll-Cigg【Official Music Video】", "美秀集團 Amazing Show 捲菸 Roll-Cigg"),
+    ],
+)
+def test_platform_title_grammar_is_removed_before_matching(reported, expected):
+    artist = "Ariana Grande" if "Ariana" in reported else "Bad Bunny" if "Bad Bunny" in reported else "汪峰"
+    track = TrackMetadata(reported, artist)
+    candidate = Candidate("song", expected, track.artist, None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+@pytest.mark.parametrize(
+    ("reported", "expected"),
+    [
+        ("BTS (방탄소년단) '2.0' Official MV", "2.0"),
+        ("BTS (방탄소년단) ‘SWIM’ Official MV", "SWIM"),
+        ("Hearts2Hearts 하츠투하츠 'RUDE!' MV", "RUDE!"),
+        ('"PINKY UP" MV (Choreography Ver.) | KATSEYE', "PINKY UP (Choreography Ver.)"),
+    ],
+)
+def test_quoted_platform_titles_keep_the_real_title(reported, expected):
+    track = TrackMetadata(reported, "HYBE LABELS" if reported.startswith("BTS") else "KATSEYE")
+    candidate = Candidate("song", expected, track.artist, None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_platform_title_bars_choose_the_song_segment_and_keep_cjk_pipe():
+    track = TrackMetadata(
+        "路小雨 Lu Xiao Yu｜不能說的秘密 Secret OST | One hour 一小時放鬆音樂｜周杰倫 Jay Chou｜"
+        "Played by Elvis Piano 維敏彈鋼琴",
+        "Elvis Piano 維敏彈鋼琴",
+    )
+    candidate = Candidate("song", "不能說的秘密 Secret OST", "Elvis Piano 維敏彈鋼琴", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+    cjk_pipe = TrackMetadata("单曲循环丨张远深情嗓好适合《达尔文》！", "中國浙江衛視官方頻道")
+    assert normalize(cjk_pipe.title) == normalize("张远深情嗓好适合《达尔文》！")
+
+
+def test_platform_bar_skips_artist_segment_before_matching():
+    track = TrackMetadata("老王樂隊｜我還年輕 我還年輕 Official Music Video", "老王樂隊")
+    candidate = Candidate("song", "我還年輕 我還年輕", "老王樂隊", None)
+    assert split_title(track.title, track.artist) == ("我還年輕 我還年輕", frozenset())
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+
+def test_ascii_bar_selects_the_title_segment_directly():
+    title = "Bad Bunny - Tití Me Preguntó (Video Oficial) | Un Verano Sin Ti"
+    assert split_title(title, "Bad Bunny") == ("Tití Me Preguntó", frozenset())
+
+
+def test_platform_title_whitespace_and_case_are_comparison_insensitive():
+    track = TrackMetadata("阿拉善  ", "貳佰")
+    candidate = Candidate("song", "阿拉善", "贰佰", None)
+    assert evaluate_match(candidate, track).confidence is MatchConfidence.HIGH
+
+    spaced_artist = TrackMetadata("顽疾 (Live)", "薛之 謙")
+    candidate = Candidate("song", "顽疾 (Live)", "薛之謙", None)
+    assert evaluate_match(candidate, spaced_artist).confidence is MatchConfidence.HIGH
+
+
+def test_parenthesized_artist_name_survives_platform_cleanup():
+    from kotonoha.lyrics.match import split_title
+
+    assert split_title("(G)I-DLE")[0] == "(G)I-DLE"
 
 
 def test_duration_alone_is_not_a_match():

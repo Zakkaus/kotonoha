@@ -46,11 +46,28 @@ _VERSION_TAGS = {
     "sped_up": ("sped up", "sped-up"),
     "full": ("full version",),
     "opening": ("opening title version",),
+    "choreography": ("choreography ver", "choreography version"),
 }
 # Tags that change the recording but NOT the lyrics: a remaster has the same
 # words as the studio take, so it must not force a version conflict that rejects
 # the only correct candidate. (live/acoustic/instrumental/remix/etc. can differ.)
 _LYRIC_NEUTRAL_TAGS = frozenset({"remaster"})
+
+_TITLE_BARS = re.compile(r"[|｜丨]")
+_TITLE_QUOTE = re.compile(r"""[\"“](.+?)[\"”]|‘(.+?)’|(?<![\w])'(.+)'""")
+_TITLE_NOISE_LATIN = re.compile(
+    r"(?i)(?<![A-Za-z])(?:official hd mv|official music video|official lyric video|official visualizer|"
+    r"official video|official mv|video oficial|music video|audio|mv)(?![A-Za-z])"
+)
+_TITLE_NOISE_CJK = re.compile(
+    r"動態歌詞Lyrics|动态歌词Lyrics|歌詞字幕|歌词字幕|完整高清音質|完整高清音质|官方高畫質|官方高画质|"
+    r"高清MV|高清mv|高清|官方MV|官方mv|Chinese Subs|中文字幕",
+    re.IGNORECASE,
+)
+_TITLE_TAIL_NOISE = re.compile(
+    r"(?i)\b(?:music video|one hour|played by|kpop demon hunters|sony animation|league of legends)\b|"
+    r"串燒|無間斷|完整聆聽|KTV必唱|在频道内|在頻道內|放鬆音樂"
+)
 
 # Compiled marker matchers are reused for every candidate; CJK markers use literal
 # matching while Latin markers use ASCII-letter boundaries to avoid substring hits.
@@ -136,20 +153,26 @@ def normalize(text: str) -> str:
     match their plain spelling. Both folds are applied to the track and the
     candidate alike, so they are symmetric and only ever affect this comparison
     key (never display, search queries, or version semantics)."""
-    value = _fold_latin_accents(unicode_normalize("NFKC", text).casefold())
+    value = _fold_latin_accents(unicode_normalize("NFKC", _clean_platform_title(text)).casefold())
     value = fold_to_simplified(value)
     value = _PARENS.sub("", value)
     value = _FEAT_SUFFIX.sub("", value)
     return _KEEP.sub("", value).strip()
 
 
-def split_title(title: str) -> tuple[str, frozenset[str]]:
+def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
     """Split a display title into its base title and known version qualifiers."""
-    value = unicode_normalize("NFKC", title)
+    value = _clean_platform_title(title, artist)
     tags: set[str] = set()
     for group in _PARENS.findall(value):
         tags.update(_extract_version_tags(group))
-    base = _PARENS.sub("", value).strip()
+    def remove_parenthetical(match: re.Match[str]) -> str:
+        # Parentheses can be part of a token, as in the artist name (G)I-DLE.
+        if match.end() < len(value) and value[match.end()].isalnum() and len(match.group(1)) <= 3:
+            return match.group(0)
+        return ""
+
+    base = _PARENS.sub(remove_parenthetical, value).strip()
     suffix = _DASH_SUFFIX.search(base)
     if suffix is not None:
         suffix_tags = _extract_version_tags(suffix.group(1))
@@ -202,7 +225,7 @@ def _fuzzy_contains(candidate: Candidate, track: TrackMetadata) -> bool:
     song ("陳一發兒 童話鎮"). The title must be substantial (>=2 CJK chars or >=5
     letters) so a short common word does not match a longer string by accident."""
     haystack = normalize(track.title)  # brackets already stripped by normalize()
-    title = normalize(split_title(candidate.title)[0])
+    title = normalize(split_title(candidate.title, candidate.artist)[0])
     if not haystack or not title or title not in haystack:
         return False
     cjk_chars = len(_CJK_ONE.findall(title))
@@ -216,8 +239,8 @@ def _fuzzy_contains(candidate: Candidate, track: TrackMetadata) -> bool:
 
 
 def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = False) -> MatchEvidence:
-    track_base, track_tags = split_title(track.title)
-    candidate_base, candidate_tags = split_title(candidate.title)
+    track_base, track_tags = split_title(track.title, track.artist)
+    candidate_base, candidate_tags = split_title(candidate.title, candidate.artist)
     normalized_track = normalize(track_base)
     # Compare against the candidate's primary title AND any alias/translated name,
     # keeping the best evidence: a track reported as "Life Like Summer Flowers"
@@ -412,6 +435,8 @@ def _debracket(text: str) -> str:
     One And Only ]), and blindly stripping every bracket loses the title."""
     def keep_or_drop(match: re.Match[str]) -> str:
         inner = match.group(1)
+        if match.end() < len(text) and text[match.end()].isalnum() and len(inner) <= 3:
+            return match.group(0)
         residue = _UPLOAD_NOISE_CJK.sub("", _UPLOAD_NOISE_LATIN.sub("", inner))
         residue = _NONWORD.sub("", residue)
         substantial = len(_CJK_ONE.findall(residue)) >= 2 or len(residue) >= 4
@@ -419,6 +444,94 @@ def _debracket(text: str) -> str:
 
     return _BRACKETED.sub(keep_or_drop, text)
 _WHITESPACE = re.compile(r"\s+")
+
+
+def _quote_at_top_level(text: str) -> tuple[str, int] | None:
+    for match in _TITLE_QUOTE.finditer(text):
+        depth = 0
+        for char in text[: match.start()]:
+            if char in "([{【（":
+                depth += 1
+            elif char in ")]}】）" and depth:
+                depth -= 1
+        if depth == 0:
+            content = next((group for group in match.groups() if group is not None), "").strip()
+            if content:
+                return content, match.end()
+    return None
+
+
+def _strip_leading_artist(value: str, artist: str) -> str:
+    candidate = artist.strip()
+    if not candidate or not value.casefold().startswith(candidate.casefold()):
+        return value
+    remainder = value[len(candidate) :]
+    if not remainder or remainder[0].isspace() or remainder[0] in "-–—－:：《〈「『【[":
+        return remainder.lstrip(" \t\r\n-–—－:：")
+    return value
+
+
+def _segment_key(value: str) -> str:
+    folded = _fold_latin_accents(unicode_normalize("NFKC", value).casefold())
+    folded = fold_to_simplified(folded)
+    return _KEEP.sub("", folded)
+
+
+def _segment_score(segment: str, index: int, artist_key: str = "") -> tuple[int, int]:
+    cleaned = _TITLE_NOISE_CJK.sub(" ", _TITLE_NOISE_LATIN.sub(" ", segment))
+    score = len(_WHITESPACE.sub("", cleaned))
+    score += 2 * len(_CJK_ONE.findall(cleaned))
+    if len(_LATIN_TOKEN.findall(cleaned)) > 2 and _CJK_ONE.search(cleaned):
+        score -= 5 * (len(_LATIN_TOKEN.findall(cleaned)) - 2)
+    if _TITLE_QUOTE.search(segment):
+        score += 1000
+    if _TITLE_TAIL_NOISE.search(segment):
+        score -= 100
+    segment_key = _segment_key(segment)
+    if artist_key and segment_key and segment_key in artist_key:
+        # A bar-delimited segment contained in the reported artist is metadata,
+        # not the title to send to lyric matching.
+        score -= 10_000
+    if index == 0:
+        score += 4
+    return score, -index
+
+
+def _clean_platform_title(title: str, artist: str = "") -> str:
+    original = title.strip()
+    value = unicode_normalize("NFKC", title).replace("\u3000", " ")
+    segments = _TITLE_BARS.split(value)
+    artist_key = _segment_key(artist)
+    value = max(
+        enumerate(segments),
+        key=lambda item: _segment_score(item[1], item[0], artist_key),
+    )[1].strip()
+
+    quoted = _quote_at_top_level(value)
+    if quoted is not None:
+        content, end = quoted
+        value = f"{content} {value[end:]}"
+    value = _strip_leading_artist(value, artist)
+    protected = re.sub(r"\([A-Za-z]\)(?=[A-Za-z])", lambda match: f"__PAREN_{match.group(0)[1]}__", value)
+    value = protected
+    def remove_upload_bracket(match: re.Match[str]) -> str:
+        inner = match.group(1)
+        residue = _TITLE_NOISE_CJK.sub("", _TITLE_NOISE_LATIN.sub("", inner))
+        residue = _NONWORD.sub("", residue)
+        return " " if not residue else match.group(0)
+
+    value = _BRACKETED.sub(remove_upload_bracket, value)
+    value = re.sub(r"__PAREN_([A-Za-z])__", r"(\1)", value)
+    value = re.sub(r"[《》〈〉「」]", " ", value)
+    value = _TITLE_NOISE_LATIN.sub(" ", value)
+    value = _TITLE_NOISE_CJK.sub(" ", value)
+    value = _WHITESPACE.sub(" ", value).strip(" \t\r\n-–—－")
+    return value or original
+
+
+def clean_title(title: str, artist: str = "") -> str:
+    """Remove observed platform grammar while retaining recording markers."""
+    return _clean_platform_title(title, artist)
 
 
 def noisy_title_queries(track: TrackMetadata) -> tuple[str, ...]:
