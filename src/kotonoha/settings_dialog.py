@@ -63,8 +63,8 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon
 from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
-from .players import PlayerInfo
 from .native import LayerShellController, default_package_dir
+from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
 from .tray import discover_icon_paths
 
