@@ -43,14 +43,29 @@ def test_unavailable_player_lock_survives_dialog_roundtrip(qapp):
 def test_detected_players_are_readable_and_store_bus_name(qapp):
     dialog = SettingsDialog(
         Config(),
-        players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music")],
+        players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music", "Song", "Artist", "Playing", True)],
     )
 
     index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
     assert index > 0
-    assert dialog._player_combo.itemText(index) == "YouTube Music"
+    assert dialog._player_combo.itemText(index) == "automatic · YouTube Music · Playing · Song by Artist"
     dialog._player_combo.setCurrentIndex(index)
     assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
+    dialog.close()
+
+
+def test_idle_player_row_has_status_and_unavailable_choice_stays_selected(qapp):
+    bus_name = "org.mpris.MediaPlayer2.closed"
+    dialog = SettingsDialog(
+        Config(player_lock=bus_name),
+        players=[PlayerInfo("org.mpris.MediaPlayer2.idle", "Idle player", playback_status="Stopped")],
+    )
+
+    idle_index = dialog._player_combo.findData("org.mpris.MediaPlayer2.idle")
+    assert dialog._player_combo.itemText(idle_index) == "Idle player · Stopped"
+    assert dialog._player_combo.currentData() == bus_name
+    assert dialog._player_combo.currentText() == bus_name + " (unavailable)"
+    assert dialog.current_config().player_lock == bus_name
     dialog.close()
 
 

@@ -17,6 +17,11 @@ class PlayerInfo:
 
     bus_name: str
     identity: str
+    # What the row shows besides the name, so two browsers can be told apart.
+    title: str = ""
+    artist: str = ""
+    playback_status: str = ""
+    automatic: bool = False
 
 
 __all__ = ["PlayerInfo"]

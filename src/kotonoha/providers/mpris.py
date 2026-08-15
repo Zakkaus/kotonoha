@@ -178,17 +178,28 @@ class MprisProvider:
         if self._bus is None:
             return []
         result: list[PlayerInfo] = []
+        records: list[tuple[Any, str, str, TrackInfo]] = []
         for name in await list_players(self._bus):
             try:
                 obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
                 props = obj.get_interface("org.freedesktop.DBus.Properties")
                 identity = await props.call_get("org.mpris.MediaPlayer2", "Identity")
+                player_props = await props.call_get_all(PLAYER_IFACE)
+                values = _unwrap(player_props)
+                status = str(values.get("PlaybackStatus") or "")
+                info = parse_metadata(_unwrap(values.get("Metadata", {})))
                 # A single property arrives as a Variant, not the a{sv} map _unwrap
                 # takes: passing it there yields "{}" as every player's display name.
-                result.append(PlayerInfo(name, str(getattr(identity, "value", identity) or "")))
+                identity_text = str(getattr(identity, "value", identity) or "")
+                records.append((None, name, status, info))
+                result.append(PlayerInfo(name, identity_text, info.title, info.artist, status))
             except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
-                logger.debug("identity read failed for %s: %s", name, exc)
-        return result
+                logger.debug("player details read failed for %s: %s", name, exc)
+        automatic_name = self._automatic_name(records)
+        return [
+            PlayerInfo(p.bus_name, p.identity, p.title, p.artist, p.playback_status, p.bus_name == automatic_name)
+            for p in result
+        ]
 
     def set_cache_enabled(self, enabled: bool) -> None:
         updated = bool(enabled)
@@ -318,6 +329,22 @@ class MprisProvider:
             1 if info.title else 0,
             1 if name == self._current_name else 0,  # break ties toward the current source
         )
+
+    def _automatic_name(self, records: list[tuple[Any, str, str, TrackInfo]]) -> str | None:
+        locked = next((record for record in records if record[1] == self._player_lock), None)
+        if locked is not None and locked[2] in {"Playing", "Paused"}:
+            return locked[1]
+        playing = [record for record in records if record[2] == "Playing"]
+        playing_with_metadata = [record for record in playing if record[3].title or record[3].artist]
+        if playing_with_metadata:
+            return max(playing_with_metadata, key=self._selection_score)[1]
+        if playing:
+            return playing[0][1]
+        paused = next(
+            (record for record in records if record[2] == "Paused" and (record[3].title or record[3].artist)),
+            None,
+        )
+        return paused[1] if paused is not None else None
 
     async def _active_player(self, *, now: float | None = None) -> tuple[Any, str] | None:
         observed_at = time.monotonic() if now is None else now

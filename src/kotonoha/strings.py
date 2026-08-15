@@ -181,6 +181,14 @@ STRINGS: dict[str, dict[str, str]] = {
     "player.unavailable": {
         "en": " (unavailable)", "zh-Hans": "（不可用）", "zh-Hant": "（無法使用）", "ja": "（利用不可）",
     },
+    "player.status.playing": {"en": "Playing", "zh-Hans": "播放中", "zh-Hant": "播放中", "ja": "再生中"},
+    "player.status.paused": {"en": "Paused", "zh-Hans": "已暂停", "zh-Hant": "已暫停", "ja": "一時停止"},
+    "player.status.stopped": {"en": "Stopped", "zh-Hans": "已停止", "zh-Hant": "已停止", "ja": "停止"},
+    "player.track_artist": {
+        "en": " by {artist}", "zh-Hans": " - {artist}", "zh-Hant": " - {artist}", "ja": " - {artist}",
+    },
+    "player.automatic": {"en": "automatic", "zh-Hans": "自动", "zh-Hant": "自動", "ja": "自動"},
+    "player.status.unknown": {"en": "Unknown", "zh-Hans": "未知", "zh-Hant": "未知", "ja": "不明"},
     "set.player_hint": {
         "en": "Choose which detected MPRIS player supplies the lyrics.",
         "zh-Hans": "选择提供歌词的 MPRIS 播放器。",

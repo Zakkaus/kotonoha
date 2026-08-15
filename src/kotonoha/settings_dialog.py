@@ -94,6 +94,17 @@ class _FontNameDelegate(QStyledItemDelegate):
             option.font = QFont(family)  # render the name in its own font
 
 
+# A long "player · status · title - artist" row must not stretch the combo, and a
+# QStyledItemDelegate is the wrong tool for it: its initStyleOption runs during
+# sizeHint, where the option's widget may already be destroyed — Qt then crashes
+# in QWidget::style(). Elide when the row is built instead; it is our own string.
+_PLAYER_ROW_MAX_CHARS = 60
+
+
+def _elide_row(text: str) -> str:
+    return text if len(text) <= _PLAYER_ROW_MAX_CHARS else text[: _PLAYER_ROW_MAX_CHARS - 1] + "…"
+
+
 class _IconStrip(QListWidget):
     """Icon grid that keeps its height equal to exactly the rows its items wrap
     into, so there is never a scrollbar and the hint below sits right under the
@@ -904,10 +915,23 @@ class SettingsDialog(QDialog):
         layout.addWidget(self._hint(t("set.sources_hint")))
 
         self._player_combo = QComboBox()
+        self._player_combo.setMinimumContentsLength(24)
+        self._player_combo.setSizeAdjustPolicy(QComboBox.SizeAdjustPolicy.AdjustToMinimumContentsLengthWithIcon)
         self._player_combo.addItem(t("player.auto"), "")
         offered = {player.bus_name for player in self._players}
         for player in self._players:
-            self._player_combo.addItem(player.identity, player.bus_name)
+            # MPRIS reports the status as a protocol constant; show it in the UI language.
+            status_key = f"player.status.{(player.playback_status or '').lower()}"
+            status = t(status_key) if status_key != "player.status." else ""
+            parts = [player.identity or player.bus_name, status or t("player.status.unknown")]
+            if player.title:
+                track = player.title
+                if player.artist:
+                    track += t("player.track_artist").format(artist=player.artist)
+                parts.append(track)
+            if player.automatic:
+                parts.insert(0, t("player.automatic"))
+            self._player_combo.addItem(_elide_row(" · ".join(parts)), player.bus_name)
         if self._config.player_lock and self._config.player_lock not in offered:
             self._player_combo.addItem(self._config.player_lock + t("player.unavailable"), self._config.player_lock)
         player_index = self._player_combo.findData(self._config.player_lock)
