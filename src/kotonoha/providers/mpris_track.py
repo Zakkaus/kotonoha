@@ -114,6 +114,7 @@ class TrackInfo:
     # very text the title cleaner removes. Defaults to the cleaned title so a
     # hand-built TrackInfo keeps the old behaviour.
     reported_title: str = ""
+    url: str = ""
 
     def metadata(self) -> TrackMetadata:
         return TrackMetadata(self.title, self.artist, self.album, self.length_s)
@@ -134,6 +135,7 @@ def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
         length_s=length_s,
         track_id=str(raw.get("mpris:trackid") or ""),
         reported_title=reported,
+        url=_as_text(raw.get("xesam:url")),
     )
 
 
@@ -154,6 +156,7 @@ class TrackObservation:
     playback_status: str
     position_s: float | None
     observed_at: float
+    player_identity: str = ""
 
 
 @dataclass(frozen=True)
@@ -167,6 +170,7 @@ class TrackCommit:
     # realigns the position with the (0-based) lyric timestamps. ~0 for normal
     # players, so it is a no-op there. None on the first track (join point unknown).
     start_position: float | None = None
+    player_identity: str = ""
 
 
 class TrackStabilizer:
@@ -229,7 +233,7 @@ class TrackStabilizer:
         self._committed_key = key
         self._generation += 1
         self._transitioning = False
-        return TrackCommit(self._generation, observation.player_name, info, start_position)
+        return TrackCommit(self._generation, observation.player_name, info, start_position, observation.player_identity)
 
     @property
     def transitioning(self) -> bool:

@@ -6,6 +6,7 @@ from typing import cast
 import aiohttp
 
 from kotonoha.lyrics.artifact import LyricsArtifact
+from kotonoha.lyrics.hint import LyricsHint
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
 from kotonoha.lyrics.resolver import LyricsResolver, NetworkProvider
 from kotonoha.model import LyricLine, LyricsSnapshot
@@ -107,6 +108,37 @@ async def test_set_fuzzy_clears_the_negative_cache_so_a_miss_can_retry():
     resolver.set_fuzzy(True)
     assert await resolver.resolve(SESSION, TRACK, ["netease"]) is None
     assert calls.count("network:netease") == first + 1
+
+
+async def test_exact_netease_hint_bypasses_matching(monkeypatch):
+    calls = []
+
+    async def exact(_session, song_id):
+        calls.append(song_id)
+        return {"lrc": "[00:01.00]exact", "yrc": "", "tlyric": ""}
+
+    monkeypatch.setattr("kotonoha.lyrics.netease.fetch_payload", exact)
+    resolver = resolver_with_fakes(calls, cache_enabled=False)
+    result = await resolver.resolve_hint(
+        SESSION, TrackMetadata("Wrong", "Wrong"), ["netease"], LyricsHint("netease", "42")
+    )
+    assert result is not None and result.source == "netease"
+    assert calls == ["42"]
+
+
+async def test_failed_exact_hint_falls_back_to_search(monkeypatch):
+    calls = []
+
+    async def exact(_session, _song_id):
+        raise TimeoutError
+
+    monkeypatch.setattr("kotonoha.lyrics.netease.fetch_payload", exact)
+    resolver = resolver_with_fakes(calls, cache_enabled=False, network_hits={"netease": artifact()})
+    hinted = await resolver.resolve_hint(SESSION, TRACK, ["netease"], LyricsHint("netease", "42"))
+    assert hinted is None
+    result = await resolver.resolve(SESSION, TRACK, ["netease"])
+    assert result is not None
+    assert calls == ["network:netease"]
 
 
 async def test_default_order_is_cache_network_per_provider_then_cider():
