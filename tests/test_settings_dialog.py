@@ -646,3 +646,34 @@ def test_the_player_dto_is_exported_by_the_module_that_defines_it():
 
     assert players.__all__ == ["PlayerInfo"]
     assert "PlayerInfo" not in getattr(__import__("kotonoha.model", fromlist=["model"]), "__all__", [])
+
+
+def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
+    # The window is painted translucent because a compositor blur is meant to sit
+    # behind it. Discarding the result left the panel see-through over an unblurred
+    # backdrop — unreadable — while still reporting frosted glass as on.
+    from dataclasses import replace
+
+    from kotonoha.platform.overlay_contracts import OverlayCapabilities, OverlayOperationResult
+    from kotonoha.platform.qt_window import QtWindowPlatform
+
+    class RefusingPlatform(QtWindowPlatform):
+        """Advertises blur and then refuses to install it, as a compositor may."""
+
+        @property
+        def capabilities(self) -> OverlayCapabilities:
+            return replace(super().capabilities, blur=True, blur_reason=None)
+
+        def set_blur_region(self, region, radius: int = 0) -> OverlayOperationResult:
+            del region, radius
+            return OverlayOperationResult.failure("compositor refused the effect")
+
+    dialog = SettingsDialog(Config(frost_window=True), platform_factory=RefusingPlatform)
+    assert dialog._frosted is True, "the dialog should start out expecting frosted glass"
+
+    with caplog.at_level("WARNING"):
+        dialog._apply_blur()
+
+    assert dialog._frosted is False, "the panel stayed translucent with nothing blurred behind it"
+    assert "compositor refused the effect" in caplog.text
+    dialog.close()

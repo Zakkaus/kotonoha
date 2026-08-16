@@ -96,7 +96,8 @@ class LayerShellPlatform:
         its capabilities event again whenever the answer changes. A snapshot kept
         reporting blur after the compositor withdrew it, and kept reporting none
         after it gained it, until the adapter was rebuilt."""
-        return OverlayCapabilities.from_controller(self._controller)
+        # A layer surface only exists on Wayland, which has no window-opacity protocol.
+        return OverlayCapabilities.from_controller(self._controller, window_opacity=False)
 
     def _pointer(self) -> int | None:
         return self._host.native_window_pointer()

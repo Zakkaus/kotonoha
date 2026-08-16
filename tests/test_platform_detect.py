@@ -63,3 +63,17 @@ def test_overlay_mode_available_with_layer_shell():
 
 def test_overlay_mode_available_on_x11_without_layer_shell():
     assert overlay_mode_available("xcb", has_layer_shell=False, layer_shell_disabled=False) is True
+
+
+def test_current_desktop_reads_the_session_environment(monkeypatch):
+    from kotonoha.platform.detect import current_desktop
+
+    monkeypatch.setenv("XDG_CURRENT_DESKTOP", "KDE:KWin")
+    assert current_desktop() == "KDE:KWin"
+
+
+def test_current_desktop_defaults_to_empty(monkeypatch):
+    from kotonoha.platform.detect import current_desktop
+
+    monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
+    assert current_desktop() == ""

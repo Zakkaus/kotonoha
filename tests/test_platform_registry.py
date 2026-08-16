@@ -516,3 +516,35 @@ def test_a_failed_output_move_stays_owed_so_a_later_event_retries() -> None:
     platform._resurface_timer.timeout.emit()
 
     assert restored, "a destroyed surface was never rebuilt"
+
+
+def test_a_wayland_session_reports_that_window_opacity_does_nothing() -> None:
+    # Wayland has no client-side window-opacity protocol, so setting it only logs
+    # "plugin does not support setting window opacity" once per frame. The settings
+    # window used to decide that from the Qt platform name itself.
+    layer_shell = DefaultOverlayPlatformFactory(
+        _FakeController(available=True), platform_name="wayland", current_desktop="KDE"
+    )(_FakeHost())
+    fallback = DefaultOverlayPlatformFactory(
+        _FakeController(False), platform_name="wayland", current_desktop="GNOME"
+    )(_FakeHost())
+    x11 = DefaultOverlayPlatformFactory(_FakeController(False), platform_name="xcb")(_FakeHost())
+
+    assert layer_shell.capabilities.window_opacity is False
+    assert fallback.capabilities.window_opacity is False
+    assert layer_shell.capabilities.window_opacity_reason
+    assert x11.capabilities.window_opacity is True
+    assert x11.capabilities.window_opacity_reason is None
+
+
+def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None:
+    # The settings window was handed a Layer Shell adapter unconditionally, so on
+    # X11 it reported no window opacity — a Wayland fact — and dropped its own
+    # fade-in. It is a window on the same session as the overlay, and the registry
+    # is what knows which session that is.
+    controller = _FakeController(available=False)
+
+    settings = DefaultOverlayPlatformFactory(controller, platform_name="xcb")(_FakeHost())
+
+    assert isinstance(settings, QtWindowPlatform)
+    assert settings.capabilities.window_opacity is True

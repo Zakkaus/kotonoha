@@ -1,10 +1,12 @@
 """Platform integration for overlay capabilities and native bridges."""
 
+from .layer_shell import LayerShellPlatform
 from .native import LayerShellController, default_package_dir
 from .overlay_contracts import (
     OverlayCapabilities,
     OverlayOperationResult,
     OverlayPlatform,
+    OverlayPlatformFactory,
     WindowHost,
     WindowPoint,
     WindowPolicy,
@@ -19,10 +21,12 @@ __all__ = [
     "OverlayCapabilities",
     "OverlayOperationResult",
     "OverlayPlatform",
+    "OverlayPlatformFactory",
     "WindowHost",
     "WindowPoint",
     "WindowPolicy",
     "WindowRectangle",
     "QtWindowHost",
+    "LayerShellPlatform",
     "default_package_dir",
 ]
