@@ -874,3 +874,52 @@ def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_drag_whose_update_failed_is_not_persisted(qapp):
+    # The strategy fails when the window handle is gone or the native call raises.
+    # Discarding that result meant the release still saved the new position while
+    # the visible surface stayed where it was.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    committed: list[object] = []
+
+    def _fail(local, glob):
+        from kotonoha.platform.overlay_contracts import OverlayOperationResult
+
+        return OverlayOperationResult.failure("no window handle")
+
+    with patch.object(overlay._platform, "update_drag", _fail), patch.object(
+        overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)
+    ), patch.object(overlay, "_target_screen", return_value=qapp.primaryScreen()):
+        overlay.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress,
+                QPointF(10, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(40, 10),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                QPointF(40, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    assert committed == [], "a drag that never took effect was saved"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()

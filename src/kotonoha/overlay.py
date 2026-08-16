@@ -97,6 +97,7 @@ class LyricsOverlay(QWidget):
         self._resurface_screen = None
         self._dragging = False
         self._drag_moved = False
+        self._drag_applied = True
         self._drag_local = QPoint()
         app = QApplication.instance()
         desktop = app.property("xdg_current_desktop") if app is not None else ""
@@ -843,6 +844,7 @@ class LyricsOverlay(QWidget):
                 return
             self._dragging = True
             self._drag_moved = False
+            self._drag_applied = True
             self._drag_local = local
             self._render_timer.stop()  # pause the sweep so it isn't repainted mid-drag
             a0.accept()
@@ -865,10 +867,16 @@ class LyricsOverlay(QWidget):
             # the next mouse event disappear.
             self._layer_pos += diff
             global_position = a0.globalPosition().toPoint()
-            self._platform.update_drag(
+            moved = self._platform.update_drag(
                 WindowPoint(local.x(), local.y()),
                 WindowPoint(global_position.x(), global_position.y()),
             )
+            if not moved.succeeded:
+                # The surface is where it was, so the drag has not taken effect.
+                # Remember that, or the release would save a position the visible
+                # window never reached.
+                self._drag_applied = False
+                logger.debug("Drag update was not applied: %s", moved.reason)
             # The platform commits the surface, so avoid repainting heavy lyric text.
             a0.accept()
         else:
@@ -877,11 +885,13 @@ class LyricsOverlay(QWidget):
     def mouseReleaseEvent(self, a0: QMouseEvent | None) -> None:
         if self._dragging:
             moved = self._drag_moved
+            applied = self._drag_applied
             self._dragging = False
             self._drag_moved = False
+            self._drag_applied = True
             self._platform.end_drag()
             self._render_timer.start()  # resume the sweep
-            if moved and self._platform.capabilities.client_positioning:
+            if moved and applied and self._platform.capabilities.client_positioning:
                 self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)
             elif moved:
                 # The window never went where the drag asked, so saving that

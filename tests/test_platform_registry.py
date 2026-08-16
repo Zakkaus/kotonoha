@@ -244,3 +244,33 @@ def test_anchor_drag_does_not_oscillate_when_the_surface_follows_the_pointer() -
     moves = [(x, y) for name, (_ptr, x, y) in controller.calls if name == "set_anchor_position"]
     assert moves[0] == (120, 100), "the first delta should move the surface"
     assert all(move == (120, 100) for move in moves[1:]), f"surface oscillated: {moves}"
+
+
+def test_the_ordinary_window_drag_measures_every_delta_from_the_press_point() -> None:
+    # The window follows the pointer, so the pointer's local position re-settles
+    # toward where the press landed. Advancing that anchor counts the settling
+    # twice: after one move the window snapped back to where it started.
+    host = _RecordingHost()
+    strategy = OrdinaryWindowDragStrategy(host)
+    strategy.set_position(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    for _ in range(3):                                            # window caught up
+        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    assert host.moves[0] == WindowPoint(120, 100), "the first delta should move the window"
+    assert all(move == WindowPoint(120, 100) for move in host.moves[1:]), f"window oscillated: {host.moves}"
+
+
+class _RecordingHost(_FakeHost):
+    def __init__(self, position: WindowPoint | None = None) -> None:
+        super().__init__()
+        self.moves: list[WindowPoint] = []
+        self._position = position or WindowPoint(100, 100)
+
+    def window_position(self) -> WindowPoint | None:
+        return self._position
+
+    def move_window(self, position: WindowPoint) -> None:
+        self.moves.append(position)

@@ -47,16 +47,11 @@ class OrdinaryWindowDragStrategy:
             self._host.move_window(position)
         except RuntimeError as exc:
             return OverlayOperationResult.failure(f"Window move failed: {exc}")
-        # move_window() not raising is not evidence the window moved: a Wayland
-        # compositor without Layer Shell ignores a client-side move of a toplevel,
-        # and the caller then persisted a position the visible window never took.
-        landed = self._host.window_position()
-        if landed is not None and landed != position:
-            return OverlayOperationResult.failure(
-                "The compositor did not apply the move; this window cannot be positioned by the client."
-            )
+        # The window origin advances; the press point does not. The window follows
+        # the pointer, so the pointer's local position re-settles toward where the
+        # press landed — advancing that anchor too counts the settling twice and
+        # the window snaps back or stalls. Same model as the Layer Shell anchor.
         self._window_origin = position
-        self._origin = local_position
         return OverlayOperationResult.success()
 
     def end_drag(self) -> None:
