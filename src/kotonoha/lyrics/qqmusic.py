@@ -16,10 +16,22 @@ from .artifact import LyricsArtifact
 from .lrc_parser import merge_translation, parse_lrc
 from .match import TrackMetadata
 
-LYRIC_URL = "http://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
+LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
 DETAIL_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 HEADERS = {"Referer": "https://y.qq.com"}
 TIMEOUT = aiohttp.ClientTimeout(total=6.0, connect=3.0)
+# A timeout bounds how long a response may take, not how large it may be: a server
+# that streams steadily can hold the connection under the limit while the buffered
+# body grows without end. Lyrics for one song are a few kilobytes.
+MAX_RESPONSE_BYTES = 2 * 1024 * 1024
+
+
+async def _read_capped(response: aiohttp.ClientResponse) -> bytes:
+    """Return the body, refusing one larger than MAX_RESPONSE_BYTES."""
+    body = await response.content.read(MAX_RESPONSE_BYTES + 1)
+    if len(body) > MAX_RESPONSE_BYTES:
+        raise ValueError("QQ Music response exceeded the size limit")
+    return body
 
 
 def _decode_lyric(value: object) -> str:
@@ -32,12 +44,14 @@ def _decode_lyric(value: object) -> str:
 
 
 def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
+    """Return timed lines from a stored payload, merging any translation track."""
     lyric = parse_lrc(payload.get("lyric", ""))
     translation = parse_lrc(payload.get("trans", ""))
     return tuple(merge_translation(lyric, translation) if translation else lyric)
 
 
 def parse_response(body: str) -> dict[str, str]:
+    """Return the lyric and translation fields from the endpoint's JSONP body."""
     prefix = "MusicJsonCallback("
     if not body.startswith(prefix) or not body.endswith(")"):
         raise ValueError("QQ Music lyric response is not JSONP")
@@ -53,6 +67,7 @@ def parse_response(body: str) -> dict[str, str]:
 
 
 async def fetch_payload(session: aiohttp.ClientSession, song_mid: str) -> dict[str, str]:
+    """Fetch the raw lyric payload for a song mid, as it is cached."""
     params = {
         "songmid": song_mid,
         "pcachetime": str(int(time.time() * 1000)),
@@ -67,11 +82,12 @@ async def fetch_payload(session: aiohttp.ClientSession, song_mid: str) -> dict[s
     }
     async with session.get(LYRIC_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        body = await response.text()
-    return parse_response(body)
+        body = await _read_capped(response)
+    return parse_response(body.decode("utf-8", "replace"))
 
 
 async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | None:
+    """Resolve a numeric song id to the mid the lyric endpoint takes, or None."""
     try:
         numeric_id = int(song_id)
     except ValueError:
@@ -95,7 +111,11 @@ async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | 
     }
     async with session.post(DETAIL_URL, json=payload, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        raw = await _read_capped(response)
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"QQ Music song detail response is not JSON: {exc}") from exc
     if not isinstance(data, dict):
         raise ValueError("QQ Music song detail response is not an object")
     detail = data.get("detail")
@@ -108,11 +128,13 @@ async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | 
 
 
 async def fetch_payload_for_song_id(session: aiohttp.ClientSession, song_id: str) -> dict[str, str]:
+    """Fetch the lyric payload for a numeric song id; empty when it resolves to nothing."""
     song_mid = await fetch_song_mid(session, song_id)
     return await fetch_payload(session, song_mid) if song_mid is not None else {}
 
 
 async def fetch_lyrics(session: aiohttp.ClientSession, song_mid: str) -> list[LyricLine]:
+    """Fetch and parse the timed lines for a song mid."""
     return list(parse_payload(await fetch_payload(session, song_mid)))
 
 

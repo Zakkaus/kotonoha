@@ -29,9 +29,25 @@ def test_nonzero_retcode_and_empty_lyric_are_misses():
     assert qqmusic.parse_payload(qqmusic.parse_response(_response(lyric="", trans=""))) == ()
 
 
+class _Content:
+    """The streaming half of a response, which is what the provider reads.
+
+    The provider caps how much of a body it will buffer, so it reads through
+    content.read(limit) rather than text()/json(); a fake that offered only the
+    convenience methods would let the cap go untested.
+    """
+
+    def __init__(self, body: bytes) -> None:
+        self._body = body
+
+    async def read(self, limit: int) -> bytes:
+        return self._body[:limit]
+
+
 class _Response:
     def __init__(self, body):
         self.body = body
+        self.content = _Content(body.encode() if isinstance(body, str) else body)
 
     async def __aenter__(self):
         return self
@@ -41,12 +57,6 @@ class _Response:
 
     def raise_for_status(self):
         return None
-
-    async def text(self):
-        return self.body
-
-    async def json(self, content_type=None):
-        return json.loads(self.body)
 
 
 class _Session:
@@ -90,3 +100,17 @@ async def test_song_id_conversion_then_lyric_fetch_uses_recorded_responses():
     assert session.calls[0][1]["json"]["detail"]["param"] == {"song_id": 4830342}
     assert session.calls[1][1]["params"]["songmid"] == "001OyHbk2MSIi4"
     assert await qqmusic.fetch_song_mid(cast(aiohttp.ClientSession, session), "not-numeric") is None
+
+
+async def test_an_oversized_response_is_refused_rather_than_buffered():
+    # A timeout bounds how long a response may take, not how large it may be: a
+    # server that streams steadily holds the connection under the limit while the
+    # buffered body grows without end.
+    session = _Session("x" * (qqmusic.MAX_RESPONSE_BYTES + 10))
+
+    try:
+        await qqmusic.fetch_payload(cast(aiohttp.ClientSession, session), "mid")
+    except ValueError as exc:
+        assert "size limit" in str(exc)
+    else:
+        raise AssertionError("an unbounded body was buffered")
