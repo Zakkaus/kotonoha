@@ -5,7 +5,7 @@ from __future__ import annotations
 from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from kotonoha.platform.overlay_contracts import DragMode, Output, WindowPoint, WindowPolicy, WindowRectangle
 from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
-from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
+from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory, _LayerShellProvider
 
 
 class _FakeController:
@@ -95,6 +95,28 @@ class _MovingHost(_FakeHost):
     def move_window(self, position: WindowPoint) -> None:
         self.position = position
         self.moves.append(position)
+
+
+def _assert_measures_global_pointer(platform, controller) -> None:
+    """The niri model: the surface follows the global pointer reading.
+
+    The two Layer Shell strategies differ in exactly which reading they measure the
+    displacement from, and that is observable — hold the local position still and
+    move the global one, and only this model commits a new anchor. Asserting the
+    concrete strategy object would tie the test to a private field instead.
+    """
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210))
+    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213))
+    anchors = [call for call in controller.calls if call[0] == "set_anchor_position"]
+    assert anchors and anchors[-1][1][1:] == (5, 3), f"global displacement was not applied: {anchors}"
+
+
+def _assert_measures_local_pointer(platform, controller) -> None:
+    """The default model: the surface follows the press-relative local reading."""
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210))
+    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213))
+    anchors = [call for call in controller.calls if call[0] == "set_anchor_position"]
+    assert anchors and anchors[-1][1][1:] == (0, 0), f"a still pointer moved the surface: {anchors}"
 
 
 def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
@@ -235,25 +257,30 @@ def test_layer_shell_registry_selects_niri_strategy() -> None:
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="niri")(host)
 
     assert isinstance(platform, LayerShellPlatform)
-    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+    _assert_measures_global_pointer(platform, controller)
 
 
 def test_layer_shell_registry_keeps_default_strategy_for_kde() -> None:
     host = _MovingHost()
     controller = _FakeController(available=True)
-    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+    # The session is stated, not inherited: with NIRI_SOCKET exported by whoever
+    # launched the suite, this used to select niri's model and fail.
+    platform = DefaultOverlayPlatformFactory(
+        controller, platform_name="wayland", current_desktop="KDE", niri_socket_present=False
+    )(host)
 
     assert isinstance(platform, LayerShellPlatform)
-    assert not isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+    _assert_measures_local_pointer(platform, controller)
 
 
 def test_layer_shell_registry_selects_niri_from_session_desktop(monkeypatch) -> None:
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
     monkeypatch.setenv("XDG_SESSION_DESKTOP", "niri")
-    platform = DefaultOverlayPlatformFactory(_FakeController(available=True), platform_name="wayland")(_MovingHost())
+    controller = _FakeController(available=True)
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland")(_MovingHost())
 
     assert isinstance(platform, LayerShellPlatform)
-    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+    _assert_measures_global_pointer(platform, controller)
 
 
 def test_niri_strategy_integrates_global_pointer_displacement() -> None:
@@ -591,16 +618,31 @@ def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None
     assert settings.capabilities.window_opacity is True
 
 
-def test_layer_shell_registry_selects_niri_from_its_socket(monkeypatch) -> None:
+def test_layer_shell_registry_selects_niri_from_its_socket() -> None:
     # niri sets XDG_CURRENT_DESKTOP=niri only when it runs as a session; started
     # nested or without the session wrapper it leaves the parent's value, so a real
     # niri can present itself as KDE. It always exports NIRI_SOCKET to its clients.
-    monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
-    monkeypatch.setenv("NIRI_SOCKET", "/run/user/1000/niri.wayland-1.1.sock")
     controller = _FakeController(available=True)
     host = _FakeHost()
 
-    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+    platform = DefaultOverlayPlatformFactory(
+        controller, platform_name="wayland", current_desktop="KDE", niri_socket_present=True
+    )(host)
 
     assert isinstance(platform, LayerShellPlatform)
-    assert isinstance(platform._drag_strategy, NiriLayerShellDragStrategy)
+    _assert_measures_global_pointer(platform, controller)
+
+
+def test_an_empty_drag_provider_tuple_is_not_a_missing_one() -> None:
+    # `drag_providers or (...)` reinstalled the defaults when a caller passed an
+    # empty tuple, so a test that meant to isolate the platform from every provider
+    # silently got niri's back and depended on the ambient session again.
+    controller = _FakeController(available=True)
+    provider = _LayerShellProvider(controller, drag_providers=())
+
+    # A niri desktop, so a reinstalled niri provider would be selected and measure
+    # the global reading instead.
+    platform = provider.select("wayland", "niri", _MovingHost())
+
+    assert isinstance(platform, LayerShellPlatform)
+    _assert_measures_local_pointer(platform, controller)

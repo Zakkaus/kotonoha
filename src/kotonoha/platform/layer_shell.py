@@ -26,84 +26,87 @@ logger = logging.getLogger(__name__)
 RESURFACE_DELAY_MS = 250
 
 
-class LayerShellAnchorDragStrategy:
+class _LayerShellDragStrategy:
+    """Commit a dragged Layer Shell surface through the bridge's anchor.
+
+    The two strategies below differ in one thing: which pointer reading they measure
+    the displacement from, and whether that reading is re-anchored after each commit.
+    Everything else — the window handle, the anchor call, its two failure modes and
+    the committed position — was written out twice, so a fix to either copy had to be
+    remembered for the other.
+    """
+
+    #: Whether the origin moves to the latest reading after each committed step.
+    _reanchors = False
+    #: Names this strategy in the "drag has not started" result.
+    _label = "Layer Shell"
+
+    def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
+        self._host = host
+        self._controller = controller
+        self._position = WindowPoint(0, 0)
+        self._origin: WindowPoint | None = None
+
+    def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
+        raise NotImplementedError
+
+    def set_position(self, position: WindowPoint) -> None:
+        self._position = position
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        self._origin = self._reading(local_position, global_position)
+        return DragStartResult(DragMode.MANUAL)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        if self._origin is None:
+            return OverlayOperationResult.failure(f"{self._label} drag has not started")
+        reading = self._reading(local_position, global_position)
+        position = WindowPoint(
+            self._position.x + reading.x - self._origin.x,
+            self._position.y + reading.y - self._origin.y,
+        )
+        pointer = self._host.native_window_pointer()
+        if pointer is None:
+            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
+        try:
+            self._controller.set_anchor_position(pointer, position.x, position.y)
+        except (OSError, RuntimeError):
+            return OverlayOperationResult.failure("Layer Shell position update failed")
+        self._position = position
+        if self._reanchors:
+            self._origin = reading
+        return OverlayOperationResult.success()
+
+    def end_drag(self) -> None:
+        self._origin = None
+
+
+class LayerShellAnchorDragStrategy(_LayerShellDragStrategy):
     """Move a Layer Shell surface with press-relative local pointer deltas."""
 
-    def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
-        self._host = host
-        self._controller = controller
-        self._position = WindowPoint(0, 0)
-        self._drag_local: WindowPoint | None = None
+    # The anchor stays where the press landed. The surface follows the pointer, so
+    # the pointer's local position re-settles toward that anchor by itself;
+    # re-anchoring here counts that settling twice and the panel accelerates away,
+    # which is the runaway drag #7 and #9 were about.
+    _reanchors = False
 
-    def set_position(self, position: WindowPoint) -> None:
-        self._position = position
-
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         del global_position
-        self._drag_local = local_position
-        return DragStartResult(DragMode.MANUAL)
-
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
-        del global_position
-        if self._drag_local is None:
-            return OverlayOperationResult.failure("Layer Shell drag has not started")
-        delta = local_position.x - self._drag_local.x, local_position.y - self._drag_local.y
-        position = WindowPoint(self._position.x + delta[0], self._position.y + delta[1])
-        pointer = self._host.native_window_pointer()
-        if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
-        try:
-            self._controller.set_anchor_position(pointer, position.x, position.y)
-        except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell position update failed")
-        self._position = position
-        # The anchor stays where the press landed. The surface follows the pointer,
-        # so the pointer's local position re-settles toward that anchor by itself;
-        # advancing it here counts that settling twice and the panel accelerates
-        # away, which is the runaway drag #7 and #9 were about.
-        return OverlayOperationResult.success()
-
-    def end_drag(self) -> None:
-        self._drag_local = None
+        return local_position
 
 
-class NiriLayerShellDragStrategy:
+class NiriLayerShellDragStrategy(_LayerShellDragStrategy):
     """Move a Layer Shell surface using global pointer deltas."""
 
-    def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
-        self._host = host
-        self._controller = controller
-        self._position = WindowPoint(0, 0)
-        self._drag_global: WindowPoint | None = None
+    # niri configures asynchronously, so the surface has not moved under the pointer
+    # by the next event and the local reading does not re-settle. The global reading
+    # is re-anchored each step to keep the displacement incremental.
+    _reanchors = True
+    _label = "Niri Layer Shell"
 
-    def set_position(self, position: WindowPoint) -> None:
-        self._position = position
-
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         del local_position
-        self._drag_global = global_position
-        return DragStartResult(DragMode.MANUAL)
-
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
-        del local_position
-        if self._drag_global is None:
-            return OverlayOperationResult.failure("Niri Layer Shell drag has not started")
-        delta_x = global_position.x - self._drag_global.x
-        delta_y = global_position.y - self._drag_global.y
-        position = WindowPoint(self._position.x + delta_x, self._position.y + delta_y)
-        pointer = self._host.native_window_pointer()
-        if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
-        try:
-            self._controller.set_anchor_position(pointer, position.x, position.y)
-        except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell position update failed")
-        self._position = position
-        self._drag_global = global_position
-        return OverlayOperationResult.success()
-
-    def end_drag(self) -> None:
-        self._drag_global = None
+        return global_position
 
 
 class LayerShellPlatform:

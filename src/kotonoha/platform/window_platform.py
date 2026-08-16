@@ -25,11 +25,17 @@ class _LayerShellDragProvider(Protocol):
 class _NiriLayerShellDragProvider:
     """Select global-delta dragging for niri's asynchronous configure behavior."""
 
-    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
-        desktops = {part.strip().lower() for part in desktop.split(":")}
+    def __init__(self, *, socket_present: bool) -> None:
         # The socket is the reliable half: niri exports NIRI_SOCKET to every client
         # it spawns, but publishes the desktop name only when it runs as a session.
-        if "niri" not in desktops and not niri_socket():
+        # It is read once at the composition boundary and handed over here, because
+        # reading the process environment from inside selection made the answer
+        # depend on whoever happened to launch the test.
+        self._socket_present = socket_present
+
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
+        desktops = {part.strip().lower() for part in desktop.split(":")}
+        if "niri" not in desktops and not self._socket_present:
             return None
         return NiriLayerShellDragStrategy(host, controller)
 
@@ -47,9 +53,23 @@ class _LayerShellProvider:
         self,
         controller: LayerShellBridge,
         drag_providers: tuple[_LayerShellDragProvider, ...] | None = None,
+        *,
+        niri_socket_present: bool | None = None,
     ) -> None:
         self._controller = controller
-        self._drag_providers = drag_providers or (_NiriLayerShellDragProvider(), _DefaultLayerShellDragProvider())
+        # An explicit None, not a falsy check: an empty tuple is a caller asking for
+        # no drag providers at all, and the truthiness test silently reinstalled the
+        # defaults instead.
+        self._drag_providers = (
+            drag_providers
+            if drag_providers is not None
+            else (
+                _NiriLayerShellDragProvider(
+                    socket_present=bool(niri_socket()) if niri_socket_present is None else niri_socket_present
+                ),
+                _DefaultLayerShellDragProvider(),
+            )
+        )
 
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform | None:
         # The controller has already asked the compositor, and its probe outranks the
@@ -125,6 +145,7 @@ class DefaultOverlayPlatformFactory:
         platform_name: str | None = None,
         current_desktop: str | None = None,
         providers: tuple[_Provider, ...] | None = None,
+        niri_socket_present: bool | None = None,
     ) -> None:
         self._controller = controller or LayerShellController(
             default_package_dir(),
@@ -134,7 +155,12 @@ class DefaultOverlayPlatformFactory:
         self._platform_name = platform_name
         self._current_desktop_value = current_desktop
         self._providers = providers or (
-            _LayerShellProvider(self._controller),
+            # The session is read once here, where the platform name and desktop
+            # already come from, rather than from inside provider selection.
+            _LayerShellProvider(
+                self._controller,
+                niri_socket_present=bool(niri_socket()) if niri_socket_present is None else niri_socket_present,
+            ),
             _X11Provider(self._controller),
             _WaylandFallbackProvider(self._controller),
             _GenericFallbackProvider(self._controller),
