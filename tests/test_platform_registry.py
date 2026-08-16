@@ -490,3 +490,29 @@ def test_the_blur_object_is_released_even_when_blur_arrived_after_startup() -> N
     assert [call for call in controller.calls if call[0] == "clear_blur"], (
         f"the effect outlived the surface it was keyed on: {controller.calls}"
     )
+
+
+def test_a_failed_output_move_stays_owed_so_a_later_event_retries() -> None:
+    # move_to_output clears the debt and records the target before destroying the
+    # old surface. When the rebuild then failed, nothing was owed and the active
+    # output already matched, so the next output event returned early and the
+    # overlay stayed hidden for the rest of the session.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    target = _output("DP-1")
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda _output: False)
+
+    result = platform.move_to_output(target)
+
+    assert not result.succeeded
+    assert host.lifecycle == ["hide", "destroy"], "the old surface is already gone"
+
+    restored: list[Output] = []
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((active, target), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert restored, "a destroyed surface was never rebuilt"

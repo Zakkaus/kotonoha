@@ -232,8 +232,14 @@ class LayerShellPlatform:
         self._release_blur()
         self._host.destroy_surface()
         if self._output_handler is None:
+            self._pending_resurface = True
             return OverlayOperationResult.failure("No output handler is registered.")
         if not self._output_handler(output):
+            # The old surface is already destroyed. Clearing the debt up front and
+            # then failing here left nothing owed and the active output already set
+            # to the target, so the next output event returned early and the overlay
+            # stayed hidden for the rest of the session. Stay owed instead.
+            self._pending_resurface = True
             return OverlayOperationResult.failure("The surface was not rebuilt on the new output.")
         return OverlayOperationResult.success()
 

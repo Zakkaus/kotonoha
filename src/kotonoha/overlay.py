@@ -413,7 +413,14 @@ class LyricsOverlay(QWidget):
 
     def _restore_output(self, output: Output) -> bool:
         """Rebuild on a returning output, reporting whether a surface now exists."""
-        screen = next((candidate for candidate in QGuiApplication.screens() if self._output(candidate) == output), None)
+        # Matched on name, not on the whole Output. The geometry recorded when the
+        # screen appeared can be a mode Qt has since replaced — screenAdded and
+        # geometryChanged are separate signals, and a mode change does not fire the
+        # former again — so full equality rejected the very output it was waiting
+        # for and left the surface unbuilt. The live geometry is read below.
+        screen = next(
+            (candidate for candidate in QGuiApplication.screens() if candidate.name() == output.name), None
+        )
         if screen is None:
             return False
         self._active_screen = screen
@@ -469,7 +476,20 @@ class LyricsOverlay(QWidget):
         screen_h = geo.height() if geo else 720
         x = (screen_w - width) // 2 + self._config.margin_x
         y = self._config.margin_edge if self._config.anchor_top else (screen_h - height - self._config.margin_edge)
-        return self._clamp_to_screen(QPoint(x, y), screen=screen, width=width, height=height, allow_partial=True)
+        # A drag may legitimately park the panel past the edge — the surface is
+        # wider than the visible pill, so a right-hand park is stored as a large
+        # negative x. Honour that only on the output it was measured on: clamping
+        # it fully there would yank the panel back on the next geometry pass, and
+        # trusting it on a *smaller* output leaves 80x60 px of panel on screen.
+        same_output = (
+            geo is not None
+            and screen is not None
+            and screen.name() == self._config.screen_name
+            and (geo.width(), geo.height()) == (self._config.screen_width, self._config.screen_height)
+        )
+        return self._clamp_to_screen(
+            QPoint(x, y), screen=screen, width=width, height=height, allow_partial=same_output
+        )
 
     def _apply_window_geometry(self, *, reset_position: bool = True) -> None:
         """Fix the surface size and compute its position.
@@ -797,10 +817,12 @@ class LyricsOverlay(QWidget):
             min_x, max_x = -width + 80, geo.width() - 80
             min_y, max_y = 0, geo.height() - 60
         else:
+            # Fully visible, both axes. This is the startup and rebuild path: the
+            # saved margins were computed against whatever output they were
+            # dragged on, and a smaller one must not leave the panel hanging off
+            # an edge where the user cannot see or reach it.
             min_x, max_x = 0, max(0, geo.width() - width)
-            # Keep the established bottom drag range; only horizontal placement
-            # is normalized to the fully visible edge on commit.
-            min_y, max_y = 0, geo.height() - 60
+            min_y, max_y = 0, max(0, geo.height() - height)
         x = max(min_x, min(pos.x(), max_x))
         y = max(min_y, min(pos.y(), max_y))
         return QPoint(x, y)
@@ -849,13 +871,19 @@ class LyricsOverlay(QWidget):
         # center-relative coordinate system used by _compute_layer_pos().
         self._config.margin_x = self._layer_pos.x() - (target_geo.width() - width) // 2
         self._config.screen_name = target_screen.name()
+        # Record the geometry this offset was measured against, so loading it back
+        # can tell a deliberate park from one stranded by a resolution change.
+        self._config.screen_width = target_geo.width()
+        self._config.screen_height = target_geo.height()
         if not self._same_screen(surface_screen, target_screen):
             # The platform owns any protocol-specific output rebinding. Recording
             # the output is not enough on layer shell: the surface stays on the
             # output it was dragged away from until it is rebuilt.
             output = self._output(target_screen)
             if output is not None:
-                self._platform.move_to_output(output)
+                moved = self._platform.move_to_output(output)
+                if not moved.succeeded:
+                    logger.warning("Output change failed: %s", moved.reason or "no reason given")
         elif self._platform.capabilities.layer_shell:
             self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
         self.position_changed.emit(

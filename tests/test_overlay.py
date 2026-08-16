@@ -13,7 +13,7 @@ from PyQt6.QtWidgets import QApplication, QWidget
 from kotonoha.config import Config
 from kotonoha.overlay import LyricsOverlay
 from kotonoha.platform.native import LayerShellController
-from kotonoha.platform.overlay_contracts import OverlayOperationResult
+from kotonoha.platform.overlay_contracts import Output, OverlayOperationResult, WindowRectangle
 from kotonoha.state import LyricsState
 
 
@@ -703,6 +703,105 @@ def test_a_drag_whose_update_failed_is_not_persisted(qapp):
         )
 
     assert committed == [], "a drag that never took effect was saved"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
+    # A margin dragged on a wide output must not push the panel off a smaller one.
+    # The partial bounds a drag uses would keep only 80x60 px of it on screen.
+    screen = FakeScreen("HDMI-A-1", 0, 0, 4096, 1152)
+    overlay = LyricsOverlay(
+        LyricsState(), Config(margin_x=2518, margin_edge=1092, anchor_top=True), UnavailableController()
+    )
+    overlay._active_screen = screen
+
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay, "_window_size", return_value=(1100, 170)
+    ):
+        pos = overlay._compute_layer_pos(1100, 170)
+
+    assert 0 <= pos.x() <= 4096 - 1100
+    assert 0 <= pos.y() <= 1152 - 170
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_parked_position_survives_the_next_geometry_pass(qapp):
+    # Releasing at the right-hand edge is stored as a large negative x, because the
+    # surface is wider than the visible pill. Re-applying the geometry — a settings
+    # apply, a re-show, a restart — must leave the panel where it was released;
+    # clamping it fully on screen there teleports it, which is what a user sees as
+    # the panel flying away after a drag.
+    screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay._active_screen = screen
+    overlay._layer_pos = QPoint(-1100, 100)
+    overlay._drag_local = QPoint(20, 40)
+
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay, "_window_size", return_value=(1100, 140)
+    ), patch.object(overlay._platform, "move_to_output"):
+        overlay._commit_drag_position(QPoint(20, 40))
+        parked = overlay._layer_pos
+        reloaded = overlay._compute_layer_pos(1100, 140)
+
+    assert overlay._config.screen_width == 2048
+    assert overlay._config.screen_height == 1152
+    assert reloaded == parked, f"the panel jumped from {parked} to {reloaded}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size(qapp):
+    # Two monitors of the same model have the same geometry, so size alone cannot
+    # say the saved offset was measured here. Honouring it on the other one puts
+    # the panel off screen, which is the failure the clamp exists to prevent.
+    other = FakeScreen("DP-1", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(
+        LyricsState(),
+        Config(
+            screen_name="HDMI-A-1",
+            screen_width=1920,
+            screen_height=1080,
+            margin_x=-1800,
+            margin_edge=100,
+        ),
+        UnavailableController(),
+    )
+    overlay._active_screen = other
+
+    with patch.object(QGuiApplication, "screens", return_value=[other]), patch.object(
+        overlay, "_window_size", return_value=(1100, 140)
+    ):
+        pos = overlay._compute_layer_pos(1100, 140)
+
+    assert 0 <= pos.x() <= 1920 - 1100, f"panel parked off screen at x={pos.x()}"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_returning_output_is_matched_by_name_not_by_its_old_mode(qapp):
+    # The geometry recorded when the screen appeared can be a mode Qt has since
+    # replaced: screenAdded and geometryChanged are separate signals, and a mode
+    # change does not fire the former again. Full Output equality therefore
+    # rejected the very output the rebuild was waiting for, and the surface that
+    # had already been destroyed was never rebuilt.
+    live = FakeScreen("DP-1", 0, 0, 3840, 2160)
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    stale = Output("DP-1", WindowRectangle(0, 0, 1920, 1080))
+
+    with patch.object(QGuiApplication, "screens", return_value=[live]), patch.object(
+        overlay, "_bind_widget_screen"
+    ), patch.object(overlay, "activate_layer_shell", return_value=True), patch.object(overlay, "show"):
+        rebuilt = overlay._restore_output(stale)
+
+    assert rebuilt is True, "the returning output was rejected for changing mode"
+    assert overlay._active_screen is live
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
