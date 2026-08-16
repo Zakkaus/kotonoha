@@ -133,7 +133,10 @@ class LyricsResolver:
         self, session: aiohttp.ClientSession, track: TrackMetadata, sources: Sequence[str], hint: LyricsHint
     ) -> ResolvedLyrics | None:
         if hint.provider == "local" and hint.local_path is not None:
-            lines = load_sidecar(hint.local_path)
+            # A sidecar read is filesystem I/O on the qasync loop that also drives the
+            # UI and the MPRIS poll. Measured with a FIFO in place of the .lrc, the
+            # call held the loop for the writer's full delay, so it goes to a thread.
+            lines = await asyncio.to_thread(load_sidecar, hint.local_path)
             return ResolvedLyrics("local", lines=tuple(lines), confidence=MatchConfidence.HIGH) if lines else None
         if hint.provider != "netease" or hint.song_id is None or "netease" not in sources:
             return None

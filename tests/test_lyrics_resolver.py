@@ -444,3 +444,36 @@ async def test_best_mode_duplicate_source_fetches_once():
     assert result is not None
     assert result.source == "netease"
     assert calls.count("network:netease") == 1
+
+
+async def test_a_local_sidecar_read_does_not_hold_the_event_loop(monkeypatch):
+    # The sidecar read is filesystem I/O on the qasync loop that also drives the UI
+    # and the MPRIS poll. Called directly it held the loop for the whole read;
+    # measured with a stand-in that blocks, the loop must keep running meanwhile.
+    import time
+
+    from kotonoha.lyrics import resolver as resolver_module
+
+    ticks: list[int] = []
+
+    async def ticker() -> None:
+        while True:
+            await asyncio.sleep(0.01)
+            ticks.append(1)
+
+    def blocking_load(audio_path: Path) -> list[LyricLine]:
+        del audio_path
+        time.sleep(0.2)
+        return [LyricLine(0, "L0", 1.0, 6.0, "hello", "")]
+
+    monkeypatch.setattr(resolver_module, "load_sidecar", blocking_load)
+    beat = asyncio.create_task(ticker())
+    try:
+        resolved = await LyricsResolver().resolve_hint(
+            SESSION, TRACK, ("netease",), LyricsHint("local", local_path=Path("/music/song.flac"))
+        )
+    finally:
+        beat.cancel()
+
+    assert resolved is not None and resolved.lines
+    assert len(ticks) > 5, f"the loop was blocked for the whole read: {len(ticks)} ticks"

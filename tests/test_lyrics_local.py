@@ -76,3 +76,10 @@ def test_sidecar_offset_tag_shifts_the_timings(tmp_path: Path):
     # Junk far outside a plausible correction is not an instruction.
     (tmp_path / "song.lrc").write_text("[offset:999999]\n[00:02.00]line\n", encoding="utf-8")
     assert [line.start for line in load_sidecar(audio)] == [2.0]
+
+
+def test_a_root_path_has_no_sidecar_and_does_not_raise():
+    # A player publishing xesam:url = "file:///" reaches the loader as Path("/"),
+    # where with_suffix raises ValueError rather than the OSError this function
+    # handles, so the exception escaped the resolver.
+    assert load_sidecar(Path("/")) == []
