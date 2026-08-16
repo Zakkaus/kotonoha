@@ -37,6 +37,11 @@ def from_player(identity: str, bus_name: str, track_id: str, url: str) -> Lyrics
         return LyricsHint("netease", song_id) if song_id else None
     if url.startswith("file://"):
         parsed = urlparse(url)
+        # RFC 8089: a file URI names a local file only when its authority is empty
+        # or "localhost". "file://remote.example/etc/song.flac" was read as the local
+        # path /etc/song.flac, so a player's metadata chose which local file to open.
+        if parsed.netloc not in ("", "localhost"):
+            return None
         if parsed.path:
             return LyricsHint("local", local_path=Path(unquote(parsed.path)))
     return None

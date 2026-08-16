@@ -219,11 +219,11 @@ class LyricsOverlay(QWidget):
         bar.addWidget(self._lock_btn)
 
         self._earlier_btn = self._make_offset_button(earlier_icon, "overlay.offset.earlier")
-        self._earlier_btn.clicked.connect(lambda: self._nudge_offset(TRACK_OFFSET_STEP_MS))
+        self._earlier_btn.clicked.connect(self._nudge_earlier)
         bar.addWidget(self._earlier_btn)
 
         self._later_btn = self._make_offset_button(later_icon, "overlay.offset.later")
-        self._later_btn.clicked.connect(lambda: self._nudge_offset(-TRACK_OFFSET_STEP_MS))
+        self._later_btn.clicked.connect(self._nudge_later)
         bar.addWidget(self._later_btn)
 
         self._settings_btn = QToolButton(self._container)
@@ -722,6 +722,19 @@ class LyricsOverlay(QWidget):
     def _refresh_input_region(self) -> None:
         if not self._passthrough:
             QTimer.singleShot(0, self._apply_input_region)
+
+    def _nudge_earlier(self) -> None:
+        """Move this track's lyrics earlier by one step.
+
+        A bound method per direction rather than a lambda closing over the step:
+        PyQt holds a bound method's receiver weakly, so the connection dies with the
+        widget instead of firing into a deleted C++ object.
+        """
+        self._nudge_offset(TRACK_OFFSET_STEP_MS)
+
+    def _nudge_later(self) -> None:
+        """Move this track's lyrics later by one step."""
+        self._nudge_offset(-TRACK_OFFSET_STEP_MS)
 
     def _nudge_offset(self, delta_ms: int) -> None:
         if not self._track_key:
