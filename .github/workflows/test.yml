@@ -88,7 +88,7 @@ jobs:
             qt6-base-private-dev \
             xvfb
       - name: Install Python dependencies
-        run: uv sync --locked --extra test
+        run: uv sync --locked --extra test --extra embedded-lyrics
       - name: Verify native bridge linkage
         run: |
           bridge=$(uv run python -c 'import sysconfig; from pathlib import Path; print(Path(sysconfig.get_path("platlib")) / "kotonoha" / "libkoto-layer.so")')

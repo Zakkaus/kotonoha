@@ -34,6 +34,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+embedded-lyrics = [
+  "mutagen",
+]
 test = [
   "pytest",
   "pytest-asyncio",
@@ -63,3 +66,9 @@ asyncio_mode = "auto"
 
 [tool.uv]
 package = true
+
+[tool.ty.rules]
+# The mutagen import needs a suppression when the optional embedded-lyrics extra
+# is absent and has none to suppress when it is installed. Whichever way a
+# checkout is set up, one of those states would otherwise fail the gate.
+unused-ignore-comment = "ignore"
