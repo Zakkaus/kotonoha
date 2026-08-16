@@ -638,6 +638,77 @@ class _Variant:
         self.value = value
 
 
+class _PlayerProperties:
+    def __init__(self, identity, status, metadata):
+        self.identity = _Variant(identity)
+        self.status = _Variant(status)
+        self.metadata = _Variant(metadata)
+
+    async def call_get(self, _interface, _property):
+        return self.identity
+
+    async def call_get_all(self, _interface):
+        return {
+            "PlaybackStatus": self.status,
+            "Metadata": self.metadata,
+        }
+
+
+class _PlayerObject:
+    def __init__(self, properties):
+        self.properties = properties
+
+    def get_interface(self, interface):
+        if interface == "org.freedesktop.DBus.Properties":
+            return self.properties
+        raise AssertionError(interface)
+
+
+class _DiscoveryBus:
+    def __init__(self, players):
+        self.players = players
+
+    def get_proxy_object(self, name, _path, _introspection):
+        return _PlayerObject(self.players[name])
+
+
+async def test_available_players_reports_track_status_and_automatic_choice(monkeypatch):
+    playing_metadata = {
+        "xesam:title": "Song",
+        "xesam:artist": ["Artist"],
+        "mpris:trackid": "/playing",
+    }
+    idle_metadata = {"mpris:trackid": "/idle"}
+    players = {
+        "org.mpris.MediaPlayer2.firefox.instance_1_298": _PlayerProperties(
+            "Mozilla firefox", "Playing", playing_metadata
+        ),
+        "org.mpris.MediaPlayer2.plasma-browser-integration": _PlayerProperties(
+            "Mozilla Firefox", "Stopped", idle_metadata
+        ),
+    }
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    assert result[0].title == "Song"
+    assert result[0].artist == "Artist"
+    assert result[0].playback_status == "Playing"
+    assert result[0].automatic is True
+    assert result[1].title == ""
+    assert result[1].playback_status == "Stopped"
+    assert result[1].automatic is False
+
+
+def _names(players):
+    return sorted(players)
+
+
 async def test_player_identity_is_unwrapped_from_its_variant():
     # The metadata unwrapper takes a dict; a single property arrives wrapped on its
     # own, and passing it there rendered every player in the picker as "{}".
@@ -769,3 +840,54 @@ async def test_a_repaired_commit_keeps_the_player_identity():
     assert resolver.hints, "the repaired commit produced no exact hint at all"
     assert resolver.hints[-1].provider == "netease"
     assert resolver.hints[-1].song_id == "12345"
+
+
+class _DetailFailingProperties(_PlayerProperties):
+    async def call_get_all(self, _interface):
+        raise RuntimeError("optional player detail unavailable")
+
+
+async def test_a_player_whose_detail_read_fails_still_appears_in_the_picker(monkeypatch):
+    # Identity and detail shared one try, so a player that answered its name but
+    # not its status vanished from the list and could not be selected at all.
+    players = {
+        "org.mpris.MediaPlayer2.vlc": _DetailFailingProperties("VLC", "Playing", {}),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    assert [p.identity for p in result] == ["VLC"]
+    assert result[0].playback_status == ""
+
+
+async def test_the_picker_marks_the_player_the_poll_would_follow(monkeypatch):
+    # The picker carried its own copy of the selection policy which ordered the last
+    # two fallbacks the other way round: a Playing player reporting no metadata beat
+    # a Paused one that reports a track, while the poll chose the opposite.
+    players = {
+        "org.mpris.MediaPlayer2.a-playing-empty": _PlayerProperties("Empty", "Playing", {}),
+        "org.mpris.MediaPlayer2.b-paused-song": _PlayerProperties(
+            "Paused", "Paused", {"xesam:title": "Song", "xesam:artist": ["Artist"]}
+        ),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    marked = [p.bus_name for p in result if p.automatic]
+    assert marked == ["org.mpris.MediaPlayer2.b-paused-song"], (
+        "the picker marked a player the poll would not follow"
+    )
