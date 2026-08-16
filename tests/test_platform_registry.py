@@ -1,9 +1,9 @@
-"""Ordered overlay-platform provider selection without a compositor."""
+"""Ordered overlay-platform provider selection and output lifecycle."""
 
 from __future__ import annotations
 
 from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
-from kotonoha.platform.overlay_contracts import DragMode, WindowPoint, WindowPolicy, WindowRectangle
+from kotonoha.platform.overlay_contracts import DragMode, Output, WindowPoint, WindowPolicy, WindowRectangle
 from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
 
@@ -41,6 +41,11 @@ class _FakeHost:
     def __init__(self) -> None:
         self.masks: list[object] = []
         self.policies: list[WindowPolicy] = []
+        self.lifecycle: list[str] = []
+        self.alive = True
+
+    def is_alive(self) -> bool:
+        return self.alive
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         self.policies.append(policy)
@@ -65,6 +70,12 @@ class _FakeHost:
 
     def bind_output(self, output: WindowRectangle) -> None:
         del output
+
+    def hide_window(self) -> None:
+        self.lifecycle.append("hide")
+
+    def destroy_surface(self) -> None:
+        self.lifecycle.append("destroy")
 
     def move_window(self, position: WindowPoint) -> None:
         del position
@@ -290,3 +301,218 @@ def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
     assert not result.succeeded
     assert result.reason == platform.capabilities.client_positioning_reason
     assert host.moves == [], "the window must not be moved when the compositor ignores it"
+
+def _output(name: str, width: int = 1920) -> Output:
+    return Output(name, WindowRectangle(0, 0, width, 1080))
+
+
+def test_layer_shell_ignores_vanishing_output_that_is_not_active() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+
+    platform.output_removed(_output("DP-1"), (), None)
+
+    assert host.lifecycle == []
+
+
+def test_layer_shell_rebuilds_on_returning_output_after_release() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform.output_removed(active, (), None)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert host.lifecycle == ["hide", "destroy"]
+    assert restored == [active]
+
+
+def test_layer_shell_configured_output_wins_when_outputs_return() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    wanted = _output("DP-2", 5120)
+    other = _output("HDMI-A-2")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform.output_removed(active, (), None)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((other, wanted), "DP-2")
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [wanted]
+
+
+def test_layer_shell_falls_back_to_output_still_connected() -> None:
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    lost = _output("DP-2")
+    live = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(lost)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform.output_removed(lost, (live,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [live]
+
+
+def test_qt_window_output_events_are_explicitly_ignored() -> None:
+    platform = QtWindowPlatform(_FakeHost())
+    platform.output_removed(_output("DP-1"), (), None)
+    platform.output_added((_output("DP-1"),), "DP-1")
+
+
+def test_the_blur_object_is_released_before_its_surface_is_destroyed() -> None:
+    # The bridge keys the compositor-side effect on the wl_surface. A rebuilt
+    # surface gets a new address, so one left behind can never be found again and
+    # leaks for the life of the process — once per output change.
+    host = _FakeHost()
+    controller = _FakeController(available=True, blur_available=True)
+    platform = LayerShellPlatform(host, controller)
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+
+    platform.output_removed(active, (), None)
+
+    cleared = [call for call in controller.calls if call[0] == "clear_blur"]
+    assert cleared, f"the surface was destroyed with its effect still registered: {controller.calls}"
+    assert host.lifecycle.index("destroy") > 0
+
+
+def test_moving_to_another_output_rebuilds_the_surface() -> None:
+    # A layer surface binds its output when it is created, so a drag released on
+    # another monitor must destroy it and build a new one there. Recording the
+    # output alone leaves the panel drawn on the output it was dragged away from.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    restored: list[Output] = []
+    platform.set_active_output(_output("HDMI-A-1"))
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+
+    target = _output("DP-1", 2560)
+    result = platform.move_to_output(target)
+
+    assert result.succeeded
+    assert host.lifecycle == ["hide", "destroy"]
+    assert restored == [target]
+
+
+def test_a_returning_output_does_not_rebuild_a_closed_overlay() -> None:
+    # The rebuild is deferred by a timer, so an output can come back after the
+    # overlay is gone. Calling the handler then reaches a deleted widget, which is
+    # how this project has produced segfaults before.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform.output_removed(active, (), None)
+    platform.output_added((active,), None)
+
+    host.alive = False  # the overlay closed while the rebuild was pending
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == []
+
+
+def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed() -> None:
+    # Two outputs going away in quick succession: the first removal schedules a
+    # rebuild on the survivor, and the survivor disappears inside the delay. The
+    # scheduled rebuild then finds nothing to build on, and without a record that
+    # one is still owed the overlay never comes back. Reported in review on #19.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    survivor = _output("DP-1")
+    restored: list[Output] = []
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+
+    platform.output_removed(active, (survivor,), None)   # schedules a rebuild on DP-1
+    platform.output_removed(survivor, (), None)          # DP-1 goes too, before the timer
+    platform._resurface_timer.timeout.emit()             # the scheduled rebuild runs
+
+    assert restored == [], "rebuilt on an output that is gone"
+
+    platform.output_added((active,), None)               # something comes back
+    platform._resurface_timer.timeout.emit()
+
+    assert restored == [active], "nothing remembered that a rebuild was owed"
+
+
+def test_a_returning_output_that_cannot_be_rebuilt_stays_owed() -> None:
+    # Activation can fail on the returning output. Retiring the pending rebuild
+    # then leaves the overlay hidden with nothing that will try again.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda output: False)  # nothing was rebuilt
+
+    platform.output_removed(active, (), None)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert platform._pending_resurface is True
+
+    rebuilt: list[Output] = []
+    platform.set_output_handler(lambda output: bool(rebuilt.append(output)) or True)
+    platform.output_added((active,), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert rebuilt == [active]
+    assert platform._pending_resurface is False
+
+
+def test_the_blur_object_is_released_even_when_blur_arrived_after_startup() -> None:
+    # The release consulted a construction-time snapshot while the capability is a
+    # live probe by contract: a compositor that gained the blur protocol after
+    # startup had its effect object destroyed with the surface it was keyed on, and
+    # a compositor that withdrew it would refuse the release for the same reason.
+    host = _FakeHost()
+    controller = _FakeController(available=True, blur_available=False)
+    platform = LayerShellPlatform(host, controller)
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+    controller.blur_available = True
+
+    platform.output_removed(active, (), None)
+
+    assert [call for call in controller.calls if call[0] == "clear_blur"], (
+        f"the effect outlived the surface it was keyed on: {controller.calls}"
+    )
+
+
+def test_a_failed_output_move_stays_owed_so_a_later_event_retries() -> None:
+    # move_to_output clears the debt and records the target before destroying the
+    # old surface. When the rebuild then failed, nothing was owed and the active
+    # output already matched, so the next output event returned early and the
+    # overlay stayed hidden for the rest of the session.
+    host = _FakeHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    active = _output("HDMI-A-1")
+    target = _output("DP-1")
+    platform.set_active_output(active)
+    platform.set_output_handler(lambda _output: False)
+
+    result = platform.move_to_output(target)
+
+    assert not result.succeeded
+    assert host.lifecycle == ["hide", "destroy"], "the old surface is already gone"
+
+    restored: list[Output] = []
+    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    platform._resurface_timer.setInterval(0)
+    platform.output_added((active, target), None)
+    platform._resurface_timer.timeout.emit()
+
+    assert restored, "a destroyed surface was never rebuilt"
