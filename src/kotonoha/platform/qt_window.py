@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 
 from .overlay_contracts import (
+    _NO_WINDOW_OPACITY,
     DragMode,
     DragStartResult,
     LayerShellBridge,
@@ -78,6 +79,7 @@ class QtWindowPlatform:
         reason: str | None = None,
         blur: LayerShellBridge | None = None,
         client_positioning: bool = True,
+        window_opacity: bool = True,
     ) -> None:
         self._host = host
         self._reason = reason
@@ -85,6 +87,9 @@ class QtWindowPlatform:
         # the client cannot detect it: Qt reports the requested position either way.
         # So the provider states it here instead of the adapter guessing afterwards.
         self._client_positioning = client_positioning
+        # Wayland has no client-side window-opacity protocol either, and the same
+        # provider knows which session this is.
+        self._window_opacity = window_opacity
         # Blur is a separate capability from Layer Shell: Mutter offers no
         # layer-shell and does speak ext-background-effect-v1, so hardcoding
         # blur=False here dropped the frosted panel on exactly the compositor the
@@ -115,6 +120,8 @@ class QtWindowPlatform:
             client_positioning_reason=None
             if self._client_positioning
             else _NO_CLIENT_POSITIONING,
+            window_opacity=self._window_opacity,
+            window_opacity_reason=None if self._window_opacity else _NO_WINDOW_OPACITY,
         )
 
     def prepare(self) -> OverlayOperationResult:

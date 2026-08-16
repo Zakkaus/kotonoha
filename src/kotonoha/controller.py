@@ -12,7 +12,6 @@ import sqlite3
 import sys
 
 from PyQt6.QtCore import QProcess
-from PyQt6.QtGui import QGuiApplication
 from PyQt6.QtWidgets import QApplication
 
 from .config import Config, save_config
@@ -166,7 +165,6 @@ class AppController:
             self._config,
             players=players,
             platform_factory=lambda host: LayerShellPlatform(host, self._layer_shell),
-            platform_name=QGuiApplication.platformName(),
         )
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)

@@ -29,9 +29,15 @@ class OverlayCapabilities:
     # stated from the protocol rather than observed.
     client_positioning: bool = True
     client_positioning_reason: str | None = None
+    # Whether setting the window's opacity does anything. Wayland has no client-side
+    # window-opacity protocol, so animating it there only logs "plugin does not
+    # support setting window opacity" once per frame. Which session this is remains a
+    # platform fact: presentation asks, the adapter answers.
+    window_opacity: bool = True
+    window_opacity_reason: str | None = None
 
     @classmethod
-    def from_controller(cls, controller: LayerShellBridge) -> OverlayCapabilities:
+    def from_controller(cls, controller: LayerShellBridge, *, window_opacity: bool = True) -> OverlayCapabilities:
         layer_shell = controller.available
         blur = controller.blur_available
         return cls(
@@ -51,7 +57,12 @@ class OverlayCapabilities:
             output_rebinding_reason=None
             if layer_shell
             else (controller.disabled_reason or "Layer Shell is unavailable."),
+            window_opacity=window_opacity,
+            window_opacity_reason=None if window_opacity else _NO_WINDOW_OPACITY,
         )
+
+
+_NO_WINDOW_OPACITY = "Wayland has no client-side window-opacity protocol."
 
 
 @dataclass(frozen=True, slots=True)

@@ -8,6 +8,7 @@ from :mod:`kotonoha.strings`.
 
 from __future__ import annotations
 
+import logging
 from dataclasses import replace
 from pathlib import Path
 from typing import cast
@@ -76,6 +77,8 @@ _FONT_FALLBACKS = (
     "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Source Han Sans SC",
     "Microsoft YaHei", "PingFang SC", "Noto Sans", "DejaVu Sans",
 )
+
+logger = logging.getLogger(__name__)
 
 
 class _FontNameDelegate(QStyledItemDelegate):
@@ -347,7 +350,6 @@ class SettingsDialog(QDialog):
         *,
         players: list[PlayerInfo] | None = None,
         platform_factory: OverlayPlatformFactory | None = None,
-        platform_name: str | None = None,
     ) -> None:
         super().__init__(parent)
         self._config = config
@@ -376,7 +378,10 @@ class SettingsDialog(QDialog):
         self._blur_reason = capabilities.blur_reason if capabilities is not None else "bridge"
         # Wayland has no client-side window-opacity protocol, so animating/setting
         # windowOpacity there does nothing but spam "plugin does not support…".
-        self._window_opacity_ok = "wayland" not in (platform_name or "").lower()
+        # Which session this is belongs to the platform layer: reading the Qt
+        # platform name here made presentation decide a compositor fact itself, and
+        # a name passed in as an argument is still that same decision.
+        self._window_opacity_ok = capabilities is None or capabilities.window_opacity
         self._frosted = self._blur_capable and config.frost_window
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -517,10 +522,18 @@ class SettingsDialog(QDialog):
         if not self._frosted or self._platform is None:
             return
         ptr = self._window_ptr()
-        if ptr is not None:
-            self._platform.set_blur_region(
-                WindowRectangle(0, 0, self.width(), self.height()), _RADIUS
-            )
+        if ptr is None:
+            return
+        result = self._platform.set_blur_region(WindowRectangle(0, 0, self.width(), self.height()), _RADIUS)
+        if result.succeeded:
+            return
+        # The window is painted translucent because a compositor blur is meant to sit
+        # behind it. Discarding this left the panel see-through over an unblurred
+        # backdrop — unreadable — while still reporting frosted glass as on.
+        logger.warning("Frosted glass unavailable, falling back to a solid panel: %s", result.reason)
+        self._frosted = False
+        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self.update()
 
     def hideEvent(self, a0: QHideEvent | None) -> None:
         if self._frosted and self._platform is not None:
