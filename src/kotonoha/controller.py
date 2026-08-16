@@ -18,8 +18,8 @@ from .config import Config, save_config
 from .i18n import resolve_translation_language
 from .overlay import LyricsOverlay
 from .platform import (
+    DefaultOverlayPlatformFactory,
     LayerShellController,
-    LayerShellPlatform,
     default_package_dir,
 )
 from .providers.gate import SourceGate
@@ -55,6 +55,7 @@ class AppController:
         platform_name = app.platformName()
         self._platform_name = platform_name
         desktop = str(app.property("xdg_current_desktop") or "")
+        self._desktop = desktop
         self._layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
         self._overlay = LyricsOverlay(self._state, config, self._layer_shell)
         self._gate = SourceGate()
@@ -164,7 +165,13 @@ class AppController:
         dialog = SettingsDialog(
             self._config,
             players=players,
-            platform_factory=lambda host: LayerShellPlatform(host, self._layer_shell),
+            # Through the registry, not a hardcoded adapter: the settings window is
+            # a window on the same session as the overlay, and pinning Layer Shell
+            # here handed an X11 session layer-shell capabilities — it reported no
+            # window opacity and dropped its own fade-in.
+            platform_factory=DefaultOverlayPlatformFactory(
+                self._layer_shell, platform_name=self._platform_name, current_desktop=self._desktop
+            ),
         )
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)

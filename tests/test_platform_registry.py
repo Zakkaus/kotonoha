@@ -535,3 +535,16 @@ def test_a_wayland_session_reports_that_window_opacity_does_nothing() -> None:
     assert layer_shell.capabilities.window_opacity_reason
     assert x11.capabilities.window_opacity is True
     assert x11.capabilities.window_opacity_reason is None
+
+
+def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None:
+    # The settings window was handed a Layer Shell adapter unconditionally, so on
+    # X11 it reported no window opacity — a Wayland fact — and dropped its own
+    # fade-in. It is a window on the same session as the overlay, and the registry
+    # is what knows which session that is.
+    controller = _FakeController(available=False)
+
+    settings = DefaultOverlayPlatformFactory(controller, platform_name="xcb")(_FakeHost())
+
+    assert isinstance(settings, QtWindowPlatform)
+    assert settings.capabilities.window_opacity is True
