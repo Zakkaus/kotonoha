@@ -840,3 +840,54 @@ async def test_a_repaired_commit_keeps_the_player_identity():
     assert resolver.hints, "the repaired commit produced no exact hint at all"
     assert resolver.hints[-1].provider == "netease"
     assert resolver.hints[-1].song_id == "12345"
+
+
+class _DetailFailingProperties(_PlayerProperties):
+    async def call_get_all(self, _interface):
+        raise RuntimeError("optional player detail unavailable")
+
+
+async def test_a_player_whose_detail_read_fails_still_appears_in_the_picker(monkeypatch):
+    # Identity and detail shared one try, so a player that answered its name but
+    # not its status vanished from the list and could not be selected at all.
+    players = {
+        "org.mpris.MediaPlayer2.vlc": _DetailFailingProperties("VLC", "Playing", {}),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    assert [p.identity for p in result] == ["VLC"]
+    assert result[0].playback_status == ""
+
+
+async def test_the_picker_marks_the_player_the_poll_would_follow(monkeypatch):
+    # The picker carried its own copy of the selection policy which ordered the last
+    # two fallbacks the other way round: a Playing player reporting no metadata beat
+    # a Paused one that reports a track, while the poll chose the opposite.
+    players = {
+        "org.mpris.MediaPlayer2.a-playing-empty": _PlayerProperties("Empty", "Playing", {}),
+        "org.mpris.MediaPlayer2.b-paused-song": _PlayerProperties(
+            "Paused", "Paused", {"xesam:title": "Song", "xesam:artist": ["Artist"]}
+        ),
+    }
+
+    async def list_discovered_players(_bus):
+        return _names(players)
+
+    monkeypatch.setattr(mpris_module, "list_players", list_discovered_players)
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    provider._bus = _DiscoveryBus(players)
+
+    result = await provider.available_players()
+
+    marked = [p.bus_name for p in result if p.automatic]
+    assert marked == ["org.mpris.MediaPlayer2.b-paused-song"], (
+        "the picker marked a player the poll would not follow"
+    )

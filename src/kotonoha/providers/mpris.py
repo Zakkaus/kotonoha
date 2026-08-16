@@ -184,17 +184,25 @@ class MprisProvider:
                 obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
                 props = obj.get_interface("org.freedesktop.DBus.Properties")
                 identity = await props.call_get("org.mpris.MediaPlayer2", "Identity")
-                player_props = await props.call_get_all(PLAYER_IFACE)
-                values = _unwrap(player_props)
+            except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
+                logger.debug("player identity read failed for %s: %s", name, exc)
+                continue
+            # A single property arrives as a Variant, not the a{sv} map _unwrap
+            # takes: passing it there yields "{}" as every player's display name.
+            identity_text = str(getattr(identity, "value", identity) or "")
+            # The status and metadata read is separate: it is what the row shows
+            # beside the name, not what makes the player exist. Sharing one try with
+            # the identity read dropped a reachable player from the picker entirely
+            # whenever this optional detail failed.
+            status, info = "", TrackInfo("", "", "", None, "")
+            try:
+                values = _unwrap(await props.call_get_all(PLAYER_IFACE))
                 status = str(values.get("PlaybackStatus") or "")
                 info = parse_metadata(_unwrap(values.get("Metadata", {})))
-                # A single property arrives as a Variant, not the a{sv} map _unwrap
-                # takes: passing it there yields "{}" as every player's display name.
-                identity_text = str(getattr(identity, "value", identity) or "")
-                records.append((None, name, status, info))
-                result.append(PlayerInfo(name, identity_text, info.title, info.artist, status))
-            except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
-                logger.debug("player details read failed for %s: %s", name, exc)
+            except Exception as exc:  # noqa: BLE001 - detail is optional for the row
+                logger.debug("player detail read failed for %s: %s", name, exc)
+            records.append((None, name, status, info))
+            result.append(PlayerInfo(name, identity_text, info.title, info.artist, status))
         automatic_name = self._automatic_name(records)
         return [
             PlayerInfo(p.bus_name, p.identity, p.title, p.artist, p.playback_status, p.bus_name == automatic_name)
@@ -331,20 +339,45 @@ class MprisProvider:
         )
 
     def _automatic_name(self, records: list[tuple[Any, str, str, TrackInfo]]) -> str | None:
-        locked = next((record for record in records if record[1] == self._player_lock), None)
-        if locked is not None and locked[2] in {"Playing", "Paused"}:
-            return locked[1]
-        playing = [record for record in records if record[2] == "Playing"]
-        playing_with_metadata = [record for record in playing if record[3].title or record[3].artist]
-        if playing_with_metadata:
-            return max(playing_with_metadata, key=self._selection_score)[1]
-        if playing:
-            return playing[0][1]
+        chosen = self._choose_record(records)
+        return chosen[1] if chosen is not None else None
+
+    def _choose_record(
+        self, records: list[tuple[Any, str, str, TrackInfo]]
+    ) -> tuple[Any, str, str, TrackInfo] | None:
+        """Pick the player to follow, or None when nothing qualifies.
+
+        One policy for both the poll and the picker. The picker used to carry its
+        own copy that ordered the last two fallbacks the other way round, so with a
+        Playing player reporting no metadata beside a Paused one that reports a
+        track, the settings row marked a player as Current that the poll would not
+        have followed.
+        """
+        eligible = [record for record in records if record[2] in {"Playing", "Paused"}]
+        locked = next((record for record in eligible if record[1] == self._player_lock), None)
+        if locked is not None:
+            return locked
+        playing_with_track = [
+            record for record in eligible if record[2] == "Playing" and (record[3].title or record[3].artist)
+        ]
+        if playing_with_track:
+            # Two players can expose the *same* track: Chrome's own MPRIS and the
+            # Plasma Browser Integration bridge both appear for YouTube Music.
+            # Chrome sorts first alphabetically and reports a title polluted with
+            # " - YouTube" plus an empty artist, so taking the first Playing source
+            # picked it every time and matching silently failed. Take the most
+            # complete metadata instead; ties keep the current/first source.
+            return max(playing_with_track, key=self._selection_score)
+        current = next((record for record in eligible if record[1] == self._current_name), None)
+        if current is not None and current[2] == "Paused" and (current[3].title or current[3].artist):
+            return current
         paused = next(
-            (record for record in records if record[2] == "Paused" and (record[3].title or record[3].artist)),
+            (record for record in eligible if record[2] == "Paused" and (record[3].title or record[3].artist)),
             None,
         )
-        return paused[1] if paused is not None else None
+        if paused is not None:
+            return paused
+        return next((record for record in eligible if record[2] == "Playing"), None)
 
     async def _active_player(self, *, now: float | None = None) -> tuple[Any, str] | None:
         observed_at = time.monotonic() if now is None else now
@@ -358,11 +391,7 @@ class MprisProvider:
             ordered.remove(self._current_name)
             ordered.insert(0, self._current_name)
 
-        current_record: tuple[Any, str, str, TrackInfo] | None = None
-        paused_fallback: tuple[Any, str, str, TrackInfo] | None = None
-        playing_candidates: list[tuple[Any, str, str, TrackInfo]] = []
-        playing_empty_fallback: tuple[Any, str, str, TrackInfo] | None = None
-        locked_record: tuple[Any, str, str, TrackInfo] | None = None
+        collected: list[tuple[Any, str, str, TrackInfo]] = []
         for name in ordered:
             player = await self._safe_iface(name)
             if player is None:
@@ -380,45 +409,11 @@ class MprisProvider:
                 continue
             if info is None:
                 info = TrackInfo("", "", "", None, "")
-            record = player, name, status, info
-            if name == self._player_lock:
-                locked_record = record
-            if name == self._current_name:
-                current_record = record
-            has_identity = bool(info.title or info.artist)
-            if status == "Playing" and has_identity:
-                playing_candidates.append(record)
-            elif status == "Paused" and has_identity and paused_fallback is None:
-                paused_fallback = record
-            elif status == "Playing" and not has_identity and playing_empty_fallback is None:
-                playing_empty_fallback = record
+            # Collected in poll order, with the current player already moved to the
+            # front, so the shared policy sees the same ordering the picker gives it.
+            collected.append((player, name, status, info))
 
-        if locked_record is not None:
-            self._current_name = locked_record[1]
-            return locked_record[0], locked_record[1]
-
-        if playing_candidates:
-            # Two players can expose the *same* track: Chrome's own MPRIS and the
-            # Plasma Browser Integration bridge both appear for YouTube Music.
-            # Chrome sorts first alphabetically and reports a title polluted with
-            # " - YouTube" plus an empty artist, so returning the first Playing
-            # source picked it every time and matching silently failed. Choose the
-            # source with the most complete metadata instead; ties keep the
-            # current/first source for stability.
-            best = max(playing_candidates, key=self._selection_score)
-            self._current_name = best[1]
-            return best[0], best[1]
-
-        selected: tuple[Any, str, str, TrackInfo] | None = None
-        if current_record is not None and current_record[2] == "Paused" and (
-            current_record[3].title or current_record[3].artist
-        ):
-            selected = current_record
-        elif paused_fallback is not None:
-            selected = paused_fallback
-        elif playing_empty_fallback is not None:
-            selected = playing_empty_fallback
-
+        selected = self._choose_record(collected)
         if selected is None:
             self._current_name = None
             return None
