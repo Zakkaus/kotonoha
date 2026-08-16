@@ -127,6 +127,26 @@ async def test_exact_netease_hint_bypasses_matching(monkeypatch):
     assert calls == ["42"]
 
 
+async def test_exact_qqmusic_hint_fetches_only_when_source_is_enabled(monkeypatch):
+    calls = []
+
+    async def exact(_session, song_id):
+        calls.append(song_id)
+        return {"lyric": "[00:01.00]exact", "trans": ""}
+
+    monkeypatch.setattr("kotonoha.lyrics.qqmusic.fetch_payload_for_song_id", exact)
+    resolver = resolver_with_fakes(calls, cache_enabled=False)
+    hint = LyricsHint("qqmusic", "003aAYrm3GE0Ac")
+
+    assert await resolver.resolve_hint(SESSION, TRACK, ["netease"], hint) is None
+    assert calls == []
+
+    result = await resolver.resolve_hint(SESSION, TRACK, ["qqmusic"], hint)
+    assert result is not None and result.source == "qqmusic"
+    assert [line.text for line in result.lines] == ["exact"]
+    assert calls == ["003aAYrm3GE0Ac"]
+
+
 async def test_local_hint_wins_without_using_sources_or_network(tmp_path: Path):
     audio = tmp_path / "song.flac"
     audio.touch()

@@ -1,6 +1,12 @@
 from typing import cast
 
-from kotonoha.config import Config, load_config, save_config
+from kotonoha.config import (
+    DEFAULT_LYRICS_SOURCES,
+    VALID_LYRICS_SOURCES,
+    Config,
+    load_config,
+    save_config,
+)
 
 
 def test_roundtrip(tmp_path):
@@ -12,6 +18,12 @@ def test_roundtrip(tmp_path):
     assert loaded.anchor_top is False
     assert loaded.font_size == 40
     assert loaded.show_translation is False
+
+
+def test_qqmusic_is_known_but_not_default():
+    assert "qqmusic" in VALID_LYRICS_SOURCES
+    assert "qqmusic" not in DEFAULT_LYRICS_SOURCES
+    assert Config.from_dict({"lyrics_sources": ["qqmusic"]}).lyrics_sources == ["qqmusic"]
 
 
 def test_screen_name_roundtrips(tmp_path):
@@ -186,3 +198,20 @@ def test_icon_name_roundtrips_and_rejects_paths(tmp_path):
     save_config(Config(icon_name="leaf-pink.svg"), path)
     assert load_config(path).icon_name == "leaf-pink.svg"
     assert Config.from_dict({"icon_name": "../outside.svg"}).icon_name == "default"
+
+
+def test_every_lyric_source_has_a_display_name_in_every_language():
+    # Adding a source without its string leaves the settings list showing the raw
+    # key, e.g. "src.qqmusic". This is the guard for that.
+    from kotonoha.strings import STRINGS
+
+    missing = []
+    for source in VALID_LYRICS_SOURCES:
+        entry = STRINGS.get(f"src.{source}")
+        if entry is None:
+            missing.append(f"src.{source} (no entry)")
+            continue
+        for language in ("en", "zh-Hans", "zh-Hant", "ja"):
+            if not entry.get(language):
+                missing.append(f"src.{source} [{language}]")
+    assert not missing, f"lyric sources without a display name: {missing}"

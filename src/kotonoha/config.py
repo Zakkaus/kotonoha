@@ -21,7 +21,7 @@ CONFIG_FILE_NAME = "config.json"
 
 # Lyric sources in priority order; first one with lyrics for the song wins.
 # "cider" = the Apple Music lyrics the Cider probe pushes over WebSocket.
-VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "cider")
+VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "qqmusic", "cider")
 DEFAULT_LYRICS_SOURCES = ["netease", "lrclib", "kugou", "cider"]
 
 # Accent presets: (key, start, end, sweep). The key is translated in the UI
