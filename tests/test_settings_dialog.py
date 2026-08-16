@@ -677,3 +677,15 @@ def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
     assert dialog._frosted is False, "the panel stayed translucent with nothing blurred behind it"
     assert "compositor refused the effect" in caplog.text
     dialog.close()
+
+
+def test_the_suite_runs_on_the_platform_its_assertions_describe(qapp) -> None:
+    # Several tests here assert what an offscreen platform does. conftest used to
+    # set QT_QPA_PLATFORM with setdefault, so a Wayland session's value won and
+    # those assertions were checked against the real compositor instead.
+    import os
+
+    from PyQt6.QtGui import QGuiApplication
+
+    assert QGuiApplication.platformName() == "offscreen"
+    assert "WAYLAND_DISPLAY" not in os.environ
