@@ -3,18 +3,69 @@
 from __future__ import annotations
 
 from .overlay_contracts import (
+    DragMode,
+    DragStartResult,
     LayerShellBridge,
     OverlayCapabilities,
+    OverlayDragStrategy,
     OverlayOperationResult,
-    OverlayPlatform,
     WindowHost,
     WindowPoint,
     WindowPolicy,
     WindowRectangle,
 )
 
+_NO_CLIENT_POSITIONING = "This compositor ignores a client-side move of an ordinary window."
 
-class QtWindowPlatform(OverlayPlatform):
+
+class OrdinaryWindowDragStrategy:
+    """Move an ordinary window from the press-relative local pointer anchor."""
+
+    def __init__(self, host: WindowHost, *, client_positioning: bool = True) -> None:
+        self._host = host
+        self._client_positioning = client_positioning
+        self._origin: WindowPoint | None = None
+        self._window_origin = WindowPoint(0, 0)
+
+    def set_position(self, position: WindowPoint) -> None:
+        self._window_origin = position
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        del global_position
+        current = self._host.window_position() or self._window_origin
+        self._window_origin = current
+        self._origin = local_position
+        return DragStartResult(DragMode.MANUAL)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        del global_position
+        if self._origin is None:
+            return OverlayOperationResult.failure("Window drag has not started")
+        # move_to already refuses here; the drag path went straight to the host and
+        # so reported every update as applied on a compositor that moves nothing.
+        # The two paths have to answer the same question the same way.
+        if not self._client_positioning:
+            return OverlayOperationResult.failure(_NO_CLIENT_POSITIONING)
+        position = WindowPoint(
+            self._window_origin.x + local_position.x - self._origin.x,
+            self._window_origin.y + local_position.y - self._origin.y,
+        )
+        try:
+            self._host.move_window(position)
+        except RuntimeError as exc:
+            return OverlayOperationResult.failure(f"Window move failed: {exc}")
+        # The window origin advances; the press point does not. The window follows
+        # the pointer, so the pointer's local position re-settles toward where the
+        # press landed — advancing that anchor too counts the settling twice and
+        # the window snaps back or stalls. Same model as the Layer Shell anchor.
+        self._window_origin = position
+        return OverlayOperationResult.success()
+
+    def end_drag(self) -> None:
+        self._origin = None
+
+
+class QtWindowPlatform:
     """Use toolkit window flags when compositor-specific overlay APIs are absent."""
 
     def __init__(
@@ -36,6 +87,9 @@ class QtWindowPlatform(OverlayPlatform):
         # blur=False here dropped the frosted panel on exactly the compositor the
         # blur work was for. When a bridge is available the answer comes from it.
         self._blur = blur
+        self._drag_strategy: OverlayDragStrategy = OrdinaryWindowDragStrategy(
+            host, client_positioning=client_positioning
+        )
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -49,7 +103,7 @@ class QtWindowPlatform(OverlayPlatform):
             blur_reason=None
             if blur
             else (
-                getattr(self._blur, "blur_disabled_reason", "protocol")
+                self._blur.blur_disabled_reason
                 if self._blur is not None
                 else "Ordinary windows have no bridge to request compositor blur."
             ),
@@ -57,7 +111,7 @@ class QtWindowPlatform(OverlayPlatform):
             client_positioning=self._client_positioning,
             client_positioning_reason=None
             if self._client_positioning
-            else "This compositor ignores a client-side move of an ordinary window.",
+            else _NO_CLIENT_POSITIONING,
         )
 
     def prepare(self) -> OverlayOperationResult:
@@ -131,3 +185,12 @@ class QtWindowPlatform(OverlayPlatform):
         return OverlayOperationResult.failure(
             self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
         )
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        return self._drag_strategy.begin_drag(local_position, global_position)
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+        return self._drag_strategy.update_drag(local_position, global_position)
+
+    def end_drag(self) -> None:
+        self._drag_strategy.end_drag()

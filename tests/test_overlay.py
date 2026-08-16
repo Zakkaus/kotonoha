@@ -757,6 +757,24 @@ def test_a_locked_overlay_is_click_through_on_the_fallback_platform(qapp):
     qapp.processEvents()
 
 
+def test_an_activated_surface_reports_a_rejected_placement(qapp, caplog):
+    # Activation succeeding says the surface is mapped, not that the saved position
+    # was applied. Dropping the placement result left the overlay at the compositor's
+    # default anchor and said nothing about why it was not where the user put it.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)
+    with patch.object(
+        overlay._platform, "move_to", lambda position: OverlayOperationResult.failure("margins rejected")
+    ), caplog.at_level("WARNING"):
+        activated = overlay.activate_layer_shell()
+
+    assert activated is True, "the surface is mapped; only its position was refused"
+    assert "margins rejected" in caplog.text
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
     # The capability is there but activation fails — a missing handle, or the bridge
     # raising. Falling through silently left an already-mapped window unpositioned
@@ -871,6 +889,55 @@ def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
         )
 
     assert committed == [], "a position the window never took was saved"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_a_drag_whose_update_failed_is_not_persisted(qapp):
+    # The strategy fails when the window handle is gone or the native call raises.
+    # Discarding that result meant the release still saved the new position while
+    # the visible surface stayed where it was.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    committed: list[object] = []
+
+    def _fail(local, glob):
+        from kotonoha.platform.overlay_contracts import OverlayOperationResult
+
+        return OverlayOperationResult.failure("no window handle")
+
+    with patch.object(overlay._platform, "update_drag", _fail), patch.object(
+        overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)
+    ), patch.object(overlay, "_target_screen", return_value=qapp.primaryScreen()):
+        overlay.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress,
+                QPointF(10, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(40, 10),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                QPointF(40, 10),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    assert committed == [], "a drag that never took effect was saved"
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

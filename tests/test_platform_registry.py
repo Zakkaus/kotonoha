@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from kotonoha.platform.layer_shell import LayerShellPlatform
-from kotonoha.platform.overlay_contracts import WindowPoint, WindowPolicy, WindowRectangle
-from kotonoha.platform.qt_window import QtWindowPlatform
+from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform
+from kotonoha.platform.overlay_contracts import DragMode, WindowPoint, WindowPolicy, WindowRectangle
+from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
 
 
@@ -71,6 +71,19 @@ class _FakeHost:
 
     def refresh(self) -> None:
         pass
+
+
+class _MovingHost(_FakeHost):
+    def __init__(self) -> None:
+        self.position = WindowPoint(100, 200)
+        self.moves: list[WindowPoint] = []
+
+    def window_position(self) -> WindowPoint:
+        return self.position
+
+    def move_window(self, position: WindowPoint) -> None:
+        self.position = position
+        self.moves.append(position)
 
 
 def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
@@ -190,3 +203,90 @@ def test_an_x11_fallback_can_place_its_own_window() -> None:
 
     assert platform.capabilities.client_positioning is True
     assert platform.move_to(WindowPoint(120, 40)).succeeded
+def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
+
+    assert isinstance(platform, LayerShellPlatform)
+    # The anchor call below is what distinguishes this strategy from the ordinary
+    # one, which moves the window instead. Asserting the concrete strategy object
+    # would only restate the selection the behaviour already proves.
+    assert platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert platform.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
+    assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
+    platform.end_drag()
+
+
+def test_ordinary_window_strategy_moves_from_local_anchor() -> None:
+    host = _MovingHost()
+    strategy = OrdinaryWindowDragStrategy(host)
+
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert strategy.update_drag(WindowPoint(25, 17), WindowPoint(125, 217)).succeeded
+    assert host.moves == [WindowPoint(115, 207)]
+    strategy.end_drag()
+
+
+def test_anchor_drag_does_not_oscillate_when_the_surface_follows_the_pointer() -> None:
+    # On a compositor that applies the move immediately, the surface follows the
+    # pointer, so the pointer's local position re-settles to where the press
+    # landed. The anchor must stay at that press point: advancing it makes the
+    # next settled report read as an equal and opposite delta, which is the
+    # jitter-then-runaway drag #7 and #9 were about.
+    controller = _FakeController(available=True)
+    strategy = LayerShellAnchorDragStrategy(_FakeHost(), controller)
+    strategy.set_position(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    for _ in range(3):                                             # surface caught up
+        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    moves = [(x, y) for name, (_ptr, x, y) in controller.calls if name == "set_anchor_position"]
+    assert moves[0] == (120, 100), "the first delta should move the surface"
+    assert all(move == (120, 100) for move in moves[1:]), f"surface oscillated: {moves}"
+
+
+def test_the_ordinary_window_drag_measures_every_delta_from_the_press_point() -> None:
+    # The window follows the pointer, so the pointer's local position re-settles
+    # toward where the press landed. Advancing that anchor counts the settling
+    # twice: after one move the window snapped back to where it started.
+    host = _RecordingHost()
+    strategy = OrdinaryWindowDragStrategy(host)
+    strategy.set_position(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    for _ in range(3):                                            # window caught up
+        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+
+    assert host.moves[0] == WindowPoint(120, 100), "the first delta should move the window"
+    assert all(move == WindowPoint(120, 100) for move in host.moves[1:]), f"window oscillated: {host.moves}"
+
+
+class _RecordingHost(_FakeHost):
+    def __init__(self, position: WindowPoint | None = None) -> None:
+        super().__init__()
+        self.moves: list[WindowPoint] = []
+        self._position = position or WindowPoint(100, 100)
+
+    def window_position(self) -> WindowPoint | None:
+        return self._position
+
+    def move_window(self, position: WindowPoint) -> None:
+        self.moves.append(position)
+
+
+def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
+    # Reported success on a compositor that ignores the move is the same defect as
+    # move_to reporting it, and the drag path had its own route to the host.
+    host = _RecordingHost()
+    platform = QtWindowPlatform(host, client_positioning=False)
+
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+    result = platform.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))
+
+    assert not result.succeeded
+    assert result.reason == platform.capabilities.client_positioning_reason
+    assert host.moves == [], "the window must not be moved when the compositor ignores it"

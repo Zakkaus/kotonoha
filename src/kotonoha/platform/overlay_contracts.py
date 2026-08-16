@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from enum import Enum
 from typing import TYPE_CHECKING, Protocol
 
 if TYPE_CHECKING:
@@ -103,6 +104,28 @@ class OverlayOperationResult:
         return cls(succeeded=False, reason=reason)
 
 
+class DragMode(Enum):
+    """Movement mechanism selected for one press gesture."""
+
+    SYSTEM = "system"
+    MANUAL = "manual"
+    UNAVAILABLE = "unavailable"
+
+
+@dataclass(frozen=True, slots=True)
+class DragStartResult:
+    """Result of starting a drag."""
+
+    mode: DragMode
+    reason: str | None = None
+
+    def __post_init__(self) -> None:
+        if self.mode is DragMode.UNAVAILABLE and not self.reason:
+            raise ValueError("Unavailable drag results must include a reason")
+        if self.mode is not DragMode.UNAVAILABLE and self.reason is not None:
+            raise ValueError("Available drag results cannot include a failure reason")
+
+
 class WindowHost(Protocol):
     """Toolkit-neutral surface used by platform adapters."""
 
@@ -125,9 +148,10 @@ class WindowHost(Protocol):
 class OverlayDragStrategy(Protocol):
     """Optional strategy boundary for platform-specific dragging."""
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult: ...
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult: ...
     def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult: ...
     def end_drag(self) -> None: ...
+    def set_position(self, position: WindowPoint) -> None: ...
 
 
 class OverlayPlatform(Protocol):
@@ -141,6 +165,9 @@ class OverlayPlatform(Protocol):
     def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> OverlayOperationResult: ...
     def move_to(self, position: WindowPoint) -> OverlayOperationResult: ...
     def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult: ...
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult: ...
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult: ...
+    def end_drag(self) -> None: ...
 
 
 class OverlayPlatformFactory(Protocol):
