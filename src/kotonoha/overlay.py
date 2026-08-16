@@ -611,7 +611,12 @@ class LyricsOverlay(QWidget):
         result = self._platform.activate()
         capabilities = self._platform.capabilities
         if capabilities.layer_shell and result.succeeded:
-            self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
+            placement = self._platform.move_to(WindowPoint(self._layer_pos.x(), self._layer_pos.y()))
+            if not placement.succeeded:
+                # Activation succeeded, so the surface is mapped and the return value
+                # stays True; only the saved position was not applied. Dropping this
+                # left the overlay at the compositor's default anchor with nothing said.
+                logger.warning("Layer Shell placement failed: %s", placement.reason or "no reason given")
             self._apply_input_region()
             self._apply_blur()
             return True

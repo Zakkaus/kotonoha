@@ -9,19 +9,21 @@ from .overlay_contracts import (
     OverlayCapabilities,
     OverlayDragStrategy,
     OverlayOperationResult,
-    OverlayPlatform,
     WindowHost,
     WindowPoint,
     WindowPolicy,
     WindowRectangle,
 )
 
+_NO_CLIENT_POSITIONING = "This compositor ignores a client-side move of an ordinary window."
+
 
 class OrdinaryWindowDragStrategy:
     """Move an ordinary window from the press-relative local pointer anchor."""
 
-    def __init__(self, host: WindowHost) -> None:
+    def __init__(self, host: WindowHost, *, client_positioning: bool = True) -> None:
         self._host = host
+        self._client_positioning = client_positioning
         self._origin: WindowPoint | None = None
         self._window_origin = WindowPoint(0, 0)
 
@@ -39,6 +41,11 @@ class OrdinaryWindowDragStrategy:
         del global_position
         if self._origin is None:
             return OverlayOperationResult.failure("Window drag has not started")
+        # move_to already refuses here; the drag path went straight to the host and
+        # so reported every update as applied on a compositor that moves nothing.
+        # The two paths have to answer the same question the same way.
+        if not self._client_positioning:
+            return OverlayOperationResult.failure(_NO_CLIENT_POSITIONING)
         position = WindowPoint(
             self._window_origin.x + local_position.x - self._origin.x,
             self._window_origin.y + local_position.y - self._origin.y,
@@ -58,7 +65,7 @@ class OrdinaryWindowDragStrategy:
         self._origin = None
 
 
-class QtWindowPlatform(OverlayPlatform):
+class QtWindowPlatform:
     """Use toolkit window flags when compositor-specific overlay APIs are absent."""
 
     def __init__(
@@ -80,7 +87,9 @@ class QtWindowPlatform(OverlayPlatform):
         # blur=False here dropped the frosted panel on exactly the compositor the
         # blur work was for. When a bridge is available the answer comes from it.
         self._blur = blur
-        self._drag_strategy: OverlayDragStrategy = OrdinaryWindowDragStrategy(host)
+        self._drag_strategy: OverlayDragStrategy = OrdinaryWindowDragStrategy(
+            host, client_positioning=client_positioning
+        )
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -94,7 +103,7 @@ class QtWindowPlatform(OverlayPlatform):
             blur_reason=None
             if blur
             else (
-                getattr(self._blur, "blur_disabled_reason", "protocol")
+                self._blur.blur_disabled_reason
                 if self._blur is not None
                 else "Ordinary windows have no bridge to request compositor blur."
             ),
@@ -102,7 +111,7 @@ class QtWindowPlatform(OverlayPlatform):
             client_positioning=self._client_positioning,
             client_positioning_reason=None
             if self._client_positioning
-            else "This compositor ignores a client-side move of an ordinary window.",
+            else _NO_CLIENT_POSITIONING,
         )
 
     def prepare(self) -> OverlayOperationResult:

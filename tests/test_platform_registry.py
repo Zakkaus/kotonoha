@@ -209,7 +209,9 @@ def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
 
     assert isinstance(platform, LayerShellPlatform)
-    assert isinstance(platform._drag_strategy, LayerShellAnchorDragStrategy)
+    # The anchor call below is what distinguishes this strategy from the ordinary
+    # one, which moves the window instead. Asserting the concrete strategy object
+    # would only restate the selection the behaviour already proves.
     assert platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
     assert platform.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
@@ -274,3 +276,17 @@ class _RecordingHost(_FakeHost):
 
     def move_window(self, position: WindowPoint) -> None:
         self.moves.append(position)
+
+
+def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
+    # Reported success on a compositor that ignores the move is the same defect as
+    # move_to reporting it, and the drag path had its own route to the host.
+    host = _RecordingHost()
+    platform = QtWindowPlatform(host, client_positioning=False)
+
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+    result = platform.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))
+
+    assert not result.succeeded
+    assert result.reason == platform.capabilities.client_positioning_reason
+    assert host.moves == [], "the window must not be moved when the compositor ignores it"

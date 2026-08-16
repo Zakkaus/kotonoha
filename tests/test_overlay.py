@@ -757,6 +757,24 @@ def test_a_locked_overlay_is_click_through_on_the_fallback_platform(qapp):
     qapp.processEvents()
 
 
+def test_an_activated_surface_reports_a_rejected_placement(qapp, caplog):
+    # Activation succeeding says the surface is mapped, not that the saved position
+    # was applied. Dropping the placement result left the overlay at the compositor's
+    # default anchor and said nothing about why it was not where the user put it.
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    layer_shell_platform(overlay)
+    with patch.object(
+        overlay._platform, "move_to", lambda position: OverlayOperationResult.failure("margins rejected")
+    ), caplog.at_level("WARNING"):
+        activated = overlay.activate_layer_shell()
+
+    assert activated is True, "the surface is mapped; only its position was refused"
+    assert "margins rejected" in caplog.text
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
     # The capability is there but activation fails — a missing handle, or the bridge
     # raising. Falling through silently left an already-mapped window unpositioned

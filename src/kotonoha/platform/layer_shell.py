@@ -9,7 +9,6 @@ from .overlay_contracts import (
     OverlayCapabilities,
     OverlayDragStrategy,
     OverlayOperationResult,
-    OverlayPlatform,
     WindowHost,
     WindowPoint,
     WindowPolicy,
@@ -58,7 +57,7 @@ class LayerShellAnchorDragStrategy:
         self._drag_local = None
 
 
-class LayerShellPlatform(OverlayPlatform):
+class LayerShellPlatform:
     """Drive layer-shell, input, blur, positioning, and output binding calls."""
 
     def __init__(
