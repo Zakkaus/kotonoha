@@ -52,6 +52,8 @@ uv pip install --python .venv/bin/python ./kotonoha-*-linux_x86_64.whl
 .venv/bin/kotonoha
 ```
 
+Python 3.13 or newer is what releases are checked against. 3.11 and 3.12 install and pass CI, but they are not guaranteed: a break that only affects them will not hold up a release.
+
 ### From source
 
 Install the system dependencies first. `uv sync` then builds Kotonoha's native Wayland bridge automatically.

@@ -25,7 +25,8 @@
 
 - **Async-first**：接收服务、状态轮询、网络 I/O 全部 `async`；只有 Qt widget 边界是同步的。
 - 用 `qasync` 把 asyncio 事件循环并入 Qt 事件循环。
-- Python 3.10+，Ruff 120 列，公共函数加类型注解，结构化数据用 `dataclass`。
+- Python 3.13+ 为开发目标；3.11 与 3.12 目前可用且过 CI，但不作保证。Ruff 120 列，
+  公共函数加类型注解，结构化数据用 `dataclass`。
 - 捕获**窄**异常并带上下文，避免裸 `except Exception`（仅日志边界例外）。
 
 ---

@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-import importlib
 import os
 import re
 import subprocess
-import sys
+import tomllib
 from pathlib import Path
 
 import pytest
-
-if sys.version_info >= (3, 11):
-    import tomllib
-else:
-    tomllib = importlib.import_module("tomli")
 
 PROJECT_ROOT = Path(__file__).parents[1]
 CMAKE_PROJECT = PROJECT_ROOT / "CMakeLists.txt"
@@ -388,3 +382,38 @@ def test_the_release_check_imports_a_module_that_exists():
     workflow = read_packaging_file(PACKAGE_WORKFLOW)
     for module in set(re.findall(r"from (kotonoha[\w.]*) import", workflow)):
         importlib.import_module(module)
+def _ci_python_matrix() -> list[str]:
+    """Return the interpreter versions the test workflow's matrix actually lists.
+
+    The block is located and its items read, rather than the whole file searched
+    for a substring: `- "3.13"` appears in a comment and in the per-version include
+    entries too, so a plain `in workflow` check passed on text that runs nothing.
+    A YAML parser would be exact, but this repository has no test-time YAML
+    dependency and one matrix key does not earn adding it.
+    """
+    workflow = read_packaging_file(TEST_WORKFLOW).splitlines()
+    start = next(i for i, line in enumerate(workflow) if line.strip() == "python-version:")
+    indent = len(workflow[start]) - len(workflow[start].lstrip())
+    versions: list[str] = []
+    for line in workflow[start + 1 :]:
+        stripped = line.strip()
+        if not stripped.startswith("- "):
+            break
+        if len(line) - len(line.lstrip()) <= indent:
+            break
+        versions.append(stripped.removeprefix("- ").strip().strip('"'))
+    return versions
+
+
+def test_the_declared_python_floor_matches_what_ci_runs() -> None:
+    # A floor the CI matrix contradicts is not a supported version, it is a claim.
+    pyproject = tomllib.loads(read_packaging_file(PROJECT_ROOT / "pyproject.toml"))
+    assert pyproject["project"]["requires-python"] == ">=3.11"
+
+    matrix = _ci_python_matrix()
+
+    assert "3.10" not in matrix, "CI still runs a version the project no longer supports"
+    assert "3.11" in matrix, "the declared floor is not covered by CI"
+    # 3.13 and up are the guaranteed range, so they must always be in the matrix.
+    for guaranteed in ("3.13", "3.14"):
+        assert guaranteed in matrix, f"{guaranteed} is promised but not run"
