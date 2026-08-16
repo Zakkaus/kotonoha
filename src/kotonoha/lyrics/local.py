@@ -8,12 +8,24 @@ from ..model import LyricLine
 from .lrc_parser import parse_lrc
 
 
-def load_sidecar(audio_path: Path) -> list[LyricLine]:
-    """Return timed lines from an adjacent LRC file, then from embedded metadata."""
+def load_local_lyrics(audio_path: Path) -> list[LyricLine]:
+    """Return timed lines for a local audio file from the first source that has them.
+
+    Two sources, tried in order: an LRC file sitting beside the audio, then the
+    lyrics embedded in the audio's own tags. The name says which job this is,
+    because a function called load_sidecar that also parses tags left every caller
+    having to know that its name described half of what it did.
+    """
+    lines = _load_sidecar(audio_path)
+    return lines if lines else _load_embedded(audio_path)
+
+
+def _load_sidecar(audio_path: Path) -> list[LyricLine]:
+    """Return timed lines from the LRC file adjacent to the audio file."""
     if not audio_path.name:
         # A player publishing xesam:url = "file:///" reaches here as Path("/"), and
         # with_suffix raises ValueError on a path with no name — outside the OSError
-        # this function otherwise handles. Nothing adjacent to a root can be a sidecar.
+        # handled below. Nothing adjacent to a root can be a sidecar.
         return []
     sidecar = audio_path.with_suffix(".lrc")
     audio_directory = audio_path.parent.resolve()
@@ -26,16 +38,16 @@ def load_sidecar(audio_path: Path) -> list[LyricLine]:
     except OSError:
         raw = None
 
-    if raw is not None:
-        for encoding in ("utf-8", "gb18030"):
-            try:
-                lines = parse_lrc(raw.decode(encoding))
-                if lines:
-                    return lines
-            except UnicodeDecodeError:
-                continue
-
-    return _load_embedded(audio_path)
+    if raw is None:
+        return []
+    for encoding in ("utf-8", "gb18030"):
+        try:
+            lines = parse_lrc(raw.decode(encoding))
+            if lines:
+                return lines
+        except UnicodeDecodeError:
+            continue
+    return []
 
 
 def _load_embedded(audio_path: Path) -> list[LyricLine]:

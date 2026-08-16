@@ -9,6 +9,14 @@ from urllib.parse import unquote, urlparse
 
 @dataclass(frozen=True)
 class LyricsHint:
+    """An exact lyric source a player already knows, so no matching is needed.
+
+    ``provider`` names which source resolves it. ``song_id`` carries the identifier
+    for a network provider such as netease or qqmusic; ``local_path`` carries the
+    audio file for the "local" provider. Only the field the provider uses is
+    populated, and the other is None.
+    """
+
     provider: str
     song_id: str | None = None
     local_path: Path | None = None
