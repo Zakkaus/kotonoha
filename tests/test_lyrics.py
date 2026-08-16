@@ -79,6 +79,29 @@ async def test_kugou_undecodable_krc_falls_back_to_lrc(monkeypatch):
     assert [line.text for line in artifact.lines] == ["fallback"]
 
 
+@pytest.mark.asyncio
+async def test_kugou_a_failed_krc_download_moves_on_instead_of_raising(monkeypatch):
+    # Fetching and parsing shared one try block, so a network error left krc unbound:
+    # the branch below it raised UnboundLocalError, which no caller catches.
+    record = kugou.Record("1", "key", "Song", "Artist", 180.0)
+
+    async def fake_search(*_args, **_kwargs):
+        return [record]
+
+    async def failing_download(*_args, **_kwargs):
+        raise aiohttp.ClientError("network down")
+
+    monkeypatch.setattr(kugou, "search", fake_search)
+    monkeypatch.setattr(kugou, "download_krc", failing_download)
+
+    assert (
+        await kugou.fetch_artifact(
+            cast(aiohttp.ClientSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
+        )
+        is None
+    )
+
+
 LRC_SAMPLE = "[00:01.30]眉目里似哭不似哭\n[00:03.44]还祈求什么说不出\n[00:10.560]陪着你轻呼着烟圈\n"
 
 

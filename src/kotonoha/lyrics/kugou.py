@@ -182,20 +182,31 @@ async def fetch_artifact(
     for attempt, (confidence, record) in enumerate(ranked):
         if attempt >= _MAX_FETCHES:
             break
+        # Fetching and parsing are separated because they fail differently: a
+        # candidate that could not be fetched has nothing left to try, while one that
+        # arrived unusable still has the LRC endpoint. Sharing one try block left krc
+        # unbound after a download error, so the branch below raised
+        # UnboundLocalError on the first candidate and silently reused the previous
+        # candidate's bytes on any later one.
         try:
             krc = await download_krc(session, record)
-            lines = tuple(parse_krc(krc))
         except (aiohttp.ClientError, ValueError):
+            continue
+        try:
+            lines = tuple(parse_krc(krc))
+        except ValueError:
             lines = ()
         if lines:
             payload = {"krc": base64.b64encode(krc).decode("ascii")}
         else:
             # A few compatible endpoints return plain LRC for a KRC request.
-            plain_lrc = krc.decode("utf-8", "replace") if krc else ""
+            plain_lrc = krc.decode("utf-8", "replace")
             lines = parse_payload({"lrc": plain_lrc})
             if lines:
                 payload = {"lrc": plain_lrc}
             elif not krc:
+                # An empty KRC means this candidate carries nothing; the next one is
+                # a better use of the fetch budget than a second request for it.
                 continue
             else:
                 try:
