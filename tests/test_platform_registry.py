@@ -471,3 +471,22 @@ def test_a_returning_output_that_cannot_be_rebuilt_stays_owed() -> None:
 
     assert rebuilt == [active]
     assert platform._pending_resurface is False
+
+
+def test_the_blur_object_is_released_even_when_blur_arrived_after_startup() -> None:
+    # The release consulted a construction-time snapshot while the capability is a
+    # live probe by contract: a compositor that gained the blur protocol after
+    # startup had its effect object destroyed with the surface it was keyed on, and
+    # a compositor that withdrew it would refuse the release for the same reason.
+    host = _FakeHost()
+    controller = _FakeController(available=True, blur_available=False)
+    platform = LayerShellPlatform(host, controller)
+    active = _output("HDMI-A-1")
+    platform.set_active_output(active)
+    controller.blur_available = True
+
+    platform.output_removed(active, (), None)
+
+    assert [call for call in controller.calls if call[0] == "clear_blur"], (
+        f"the effect outlived the surface it was keyed on: {controller.calls}"
+    )

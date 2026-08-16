@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 
 from PyQt6.QtCore import QTimer
@@ -19,6 +20,8 @@ from .overlay_contracts import (
     WindowPolicy,
     WindowRectangle,
 )
+
+logger = logging.getLogger(__name__)
 
 RESURFACE_DELAY_MS = 250
 
@@ -84,16 +87,6 @@ class LayerShellPlatform:
         self._resurface_timer.setSingleShot(True)
         self._resurface_timer.setInterval(RESURFACE_DELAY_MS)
         self._resurface_timer.timeout.connect(self._restore_pending_surface)
-        self._capabilities = OverlayCapabilities(
-            layer_shell=controller.available,
-            blur=controller.blur_available,
-            input_region=controller.available,
-            output_rebinding=controller.available,
-            layer_shell_reason=controller.disabled_reason,
-            blur_reason=None if controller.blur_available else "Compositor does not advertise a blur protocol.",
-            input_region_reason=None if controller.available else "Layer Shell input regions are unavailable.",
-            output_rebinding_reason=None if controller.available else "Layer Shell output rebinding is unavailable.",
-        )
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -206,9 +199,22 @@ class LayerShellPlatform:
 
         The bridge keys the effect on the wl_surface, and a rebuilt surface gets a
         new address, so one left behind can never be found again — it would leak
-        for the life of the process, once per output change."""
-        if self._capabilities.blur:
-            self.set_blur_region(None)
+        for the life of the process, once per output change.
+
+        No capability is consulted. The effect was created while blur was
+        advertised, and a compositor that has since withdrawn it does not un-create
+        it; the construction-time snapshot skipped the release when blur arrived
+        after startup, and the live answer would skip it in exactly the withdrawn
+        case where the object still exists. clear_blur is a no-op when the bridge
+        has no such symbol, so an unconditional release costs nothing.
+        """
+        pointer = self._pointer()
+        if pointer is None:
+            return
+        try:
+            self._controller.clear_blur(pointer)
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Blur release failed before the surface was destroyed: %s", exc)
 
     def move_to_output(self, output: Output) -> OverlayOperationResult:
         """Put the overlay on another output.

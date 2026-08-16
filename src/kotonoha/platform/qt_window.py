@@ -197,7 +197,9 @@ class QtWindowPlatform:
 
     def move_to_output(self, output: Output) -> OverlayOperationResult:
         # A normal toplevel is not bound to an output, so there is nothing to rebuild.
-        self._active_output = output
+        # It was recorded in an attribute nothing initialized and nothing read, which
+        # only made the three siblings above look like they were forgetting something.
+        del output
         return OverlayOperationResult.success()
 
     def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
