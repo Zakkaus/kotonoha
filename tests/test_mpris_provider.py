@@ -742,3 +742,30 @@ async def test_an_over_long_cider_duration_still_skips_the_lookup():
 
     assert resolver.tracks == [], "a 7201s stream was sent to the lyric providers"
     assert provider._content_owner == "none"
+
+
+async def test_a_repaired_commit_keeps_the_player_identity():
+    # A commit that arrives behind the current generation is rebuilt with a fresh
+    # one. Reconstructing it positionally dropped player_identity, so a recognised
+    # player stopped producing an exact hint and fell back to matching on the title.
+    class HintRecorder(RecordingResolver):
+        def __init__(self):
+            super().__init__()
+            self.hints = []
+
+        async def resolve_hint(self, _session, _track, _sources, _hint):
+            self.hints.append(_hint)
+            return None
+
+    resolver = HintRecorder()
+    provider = MprisProvider(LyricsState(), resolver=resolver)
+    info = TrackInfo("Song", "Artist", "", 180.0, "/track/12345")
+    provider._current_commit = TrackCommit(2, "org.mpris.MediaPlayer2.x", info, None, "ElectronNCM")
+
+    provider._schedule_load(TrackCommit(1, "org.mpris.MediaPlayer2.x", info, None, "ElectronNCM"))
+    assert provider._load_task is not None
+    await provider._load_task
+
+    assert resolver.hints, "the repaired commit produced no exact hint at all"
+    assert resolver.hints[-1].provider == "netease"
+    assert resolver.hints[-1].song_id == "12345"

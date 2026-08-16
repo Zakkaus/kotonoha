@@ -523,7 +523,13 @@ class MprisProvider:
     def _schedule_load(self, commit: TrackCommit) -> None:
         current = self._current_commit
         if current is not None and commit != current and commit.generation <= current.generation:
-            commit = TrackCommit(current.generation + 1, commit.player_name, commit.info, commit.start_position)
+            commit = TrackCommit(
+                current.generation + 1,
+                commit.player_name,
+                commit.info,
+                commit.start_position,
+                commit.player_identity,
+            )
         if self._load_task is not None and not self._load_task.done():
             self._load_task.cancel()
         # A transition carries the song's start position; adopt it as the offset so
