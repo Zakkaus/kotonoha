@@ -34,3 +34,13 @@ def test_known_hint_rules(identity, bus, track_id, url, expected):
 )
 def test_unknown_or_malformed_players_yield_no_hint(identity, bus, track_id, url):
     assert from_player(identity, bus, track_id, url) is None
+
+
+def test_a_file_uri_naming_another_host_is_not_a_local_path():
+    # RFC 8089: only an empty authority or "localhost" names a local file. The
+    # authority was dropped, so a player publishing file://remote.example/etc/song
+    # chose which local file the overlay opened.
+    assert from_player("unknown", "", "", "file://remote.example/etc/song.flac") is None
+
+    hint = from_player("unknown", "", "", "file://localhost/music/song.flac")
+    assert hint is not None and hint.local_path == Path("/music/song.flac")

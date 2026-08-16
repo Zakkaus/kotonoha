@@ -440,6 +440,49 @@ def test_click_without_motion_does_not_persist_a_new_horizontal_offset(qapp):
     qapp.processEvents()
 
 
+def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
+    from kotonoha.model import LyricLine, LyricsSnapshot
+
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    snapshot = LyricsSnapshot(
+        found=True, title="Song", artist="Artist", duration_s=180.0,
+        current=LyricLine(0, "line", 0.0, 4.0, "line", "", ()), current_time=1.0, is_playing=True,
+    )
+    overlay._on_snapshot(snapshot)
+    overlay._clock.sync(1.0, True)
+    _freeze_media_clock(overlay, 1.0)
+    overlay._render_tick()
+    before = overlay._current._media_time
+    assert before is not None
+    overlay._earlier_btn.click()
+    assert overlay._config.track_offsets[overlay._track_key] == 50
+    assert overlay._current._media_time == pytest.approx(before + 0.05)
+    assert overlay._current.text == "Sync offset: +50 ms"
+    overlay.set_passthrough(True)
+    assert overlay._earlier_btn.isHidden() is True
+    assert overlay._later_btn.isHidden() is True
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_track_without_offset_uses_global_lead(qapp):
+    from kotonoha.model import LyricLine, LyricsSnapshot
+
+    overlay = LyricsOverlay(LyricsState(), Config(lead_ms=120), UnavailableController())
+    overlay._clock.sync(1.0, True)
+    _freeze_media_clock(overlay, 1.0)
+    overlay._on_snapshot(LyricsSnapshot(
+        found=True, title="Song", artist="Artist",
+        current=LyricLine(0, "line", 0.0, 4.0, "line", "", ()), current_time=1.0, is_playing=True,
+    ))
+    overlay._render_tick()
+    assert overlay._current._media_time == pytest.approx(1.12)
+    overlay._render_timer.stop()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
     source = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
     target = FakeScreen("DP-1", 2048, 0, 1920, 1080)
@@ -575,6 +618,18 @@ def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def _freeze_media_clock(overlay, value: float) -> None:
+    """Pin the media clock so an offset assertion is not racing wall time.
+
+    MediaClock.now is a method and the value it returns comes from wall time, so
+    there is no seam to inject; replacing the attribute is the only way to freeze
+    it, and ty rejects assigning over a method. The suppression is confined here
+    rather than repeated at each call site, and it disappears if MediaClock ever
+    takes an injected time source.
+    """
+    overlay._clock.now = lambda: value  # ty: ignore[invalid-assignment]
 
 
 def _ok():

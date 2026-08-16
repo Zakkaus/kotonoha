@@ -37,6 +37,8 @@ ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 DEFAULT_ICON_NAME = "default"
+TRACK_OFFSET_CAP = 100
+TRACK_OFFSET_STEP_MS = 50
 
 
 @dataclass
@@ -72,6 +74,7 @@ class Config:
     passthrough: bool = False        # start unlocked (interactive) so first-run positioning is easy
     karaoke: bool = True             # per-word sweep when timing == "Word"
     lead_ms: int = 120               # advance the sweep by this many ms (compensate pipeline latency)
+    track_offsets: dict[str, int] = field(default_factory=dict)
     show_translation: bool = True    # bilingual
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
@@ -125,6 +128,7 @@ class Config:
             passthrough=bool(self.passthrough),
             karaoke=bool(self.karaoke),
             lead_ms=_clamp_int(self.lead_ms, -2000, 2000, 120),
+            track_offsets=_clean_track_offsets(self.track_offsets),
             show_translation=bool(self.show_translation),
             current_line_only=bool(self.current_line_only),
             translation_language=str(self.translation_language),
@@ -218,6 +222,31 @@ def _clean_icon_name(value: Any) -> str:
     if not isinstance(value, str) or not value or value == DEFAULT_ICON_NAME:
         return DEFAULT_ICON_NAME
     return value if Path(value).name == value else DEFAULT_ICON_NAME
+
+
+def _clean_track_offsets(value: Any) -> dict[str, int]:
+    if not isinstance(value, dict):
+        return {}
+    cleaned: dict[str, int] = {}
+    for key, offset in value.items():
+        if isinstance(key, str) and key:
+            cleaned[key] = _clamp_int(offset, -10_000, 10_000, 0)
+    return dict(list(cleaned.items())[-TRACK_OFFSET_CAP:])
+
+
+def track_identity_key(title: str, artist: str, duration_s: float | None = None) -> str:
+    del duration_s  # Source-specific duration reporting must not split one recording's key.
+    return "\x1f".join((title.strip().casefold(), artist.strip().casefold()))
+
+
+def set_track_offset(config: Config, key: str, offset_ms: int) -> int:
+    """Store a recent track offset and return its clamped value."""
+    offset = _clamp_int(offset_ms, -10_000, 10_000, 0)
+    config.track_offsets.pop(key, None)
+    config.track_offsets[key] = offset
+    while len(config.track_offsets) > TRACK_OFFSET_CAP:
+        config.track_offsets.pop(next(iter(config.track_offsets)))
+    return offset
 
 
 def _clamp_float(value: Any, low: float, high: float, default: float) -> float:

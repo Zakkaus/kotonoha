@@ -85,6 +85,7 @@ class AppController:
         self._overlay.passthrough_toggle_requested.connect(self._toggle_passthrough)
         self._overlay.settings_requested.connect(self._open_settings)
         self._overlay.position_changed.connect(self._on_position_changed)
+        self._overlay.track_offset_changed.connect(self._on_track_offset_changed)
 
     async def start(self) -> None:
         # Promote to a layer surface BEFORE show(): once the window is mapped as a
@@ -128,6 +129,10 @@ class AppController:
         self._config.margin_edge = margin_edge
         self._config.margin_x = margin_x
         self._config.screen_name = screen_name
+        self._persist()
+
+    def _on_track_offset_changed(self, key: str, offset_ms: int) -> None:
+        self._config.track_offsets[key] = offset_ms
         self._persist()
 
     # --- settings ---
@@ -193,6 +198,7 @@ class AppController:
 
     def _apply_config(self, config: Config) -> None:
         previous_language = resolve_translation_language(self._config.translation_language)
+        config.track_offsets = self._config.track_offsets
         self._config = config
         self._overlay.apply_config(config)
         # Push new anchor/margins/passthrough through the layer-shell bridge.
