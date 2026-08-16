@@ -152,6 +152,7 @@ class MatchEvidence:
     artist_evidence: bool
     artist_identity: bool
     album_match: bool
+    similarity_score: float
     duration_delta: float | None
 
 
@@ -261,6 +262,35 @@ def _artist_parts(artist: str) -> tuple[str, ...]:
 
 def artist_tokens(artist: str) -> frozenset[str]:
     return frozenset(token for token in (normalize(part) for part in _artist_parts(artist)) if token)
+
+
+def _similarity(left: str, right: str) -> float:
+    normalized_left = normalize(left)
+    normalized_right = normalize(right)
+    if not normalized_left or not normalized_right:
+        return 0.0
+    if len(normalized_left) < 2 or len(normalized_right) < 2:
+        return float(normalized_left == normalized_right)
+    left_bigrams = set(zip(normalized_left, normalized_left[1:], strict=False))
+    right_bigrams = set(zip(normalized_right, normalized_right[1:], strict=False))
+    return 2.0 * len(left_bigrams & right_bigrams) / (len(left_bigrams) + len(right_bigrams))
+
+
+def _weighted_similarity(
+    title_similarity: float,
+    artist_similarity: float,
+    album_similarity: float,
+    *,
+    has_artist: bool,
+    has_album: bool,
+) -> float:
+    if has_artist and has_album:
+        return title_similarity * 0.4 + artist_similarity * 0.2 + album_similarity * 0.4
+    if has_artist:
+        return title_similarity * 0.7 + artist_similarity * 0.3
+    if has_album:
+        return title_similarity * 0.8 + album_similarity * 0.2
+    return title_similarity
 
 
 def primary_artist(artist: str) -> str:
@@ -390,6 +420,7 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
             if ratio > title_ratio:
                 title_ratio = ratio
                 best_form_len = len(form)
+    title_similarity = max((_similarity(normalized_track, form) for form in candidate_forms), default=0.0)
     title_strong = title_exact or (
         min(len(normalized_track), best_form_len) >= 4 and title_ratio >= 0.88
     )
@@ -407,6 +438,15 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
     artist_evidence = bool(track_artists and candidate_artists and shared_artists)
     artist_identity = bool(track_artists and track_artists == candidate_artists)
     album_match = bool(track.album and candidate.album and normalize(track.album) == normalize(candidate.album))
+    artist_similarity = _similarity(track.artist, candidate.artist)
+    album_similarity = _similarity(track.album, candidate.album)
+    similarity_score = _weighted_similarity(
+        title_similarity,
+        artist_similarity,
+        album_similarity,
+        has_artist=bool(track_artists),
+        has_album=bool(normalize(track.album)),
+    )
     duration_delta = (
         abs(track.duration_s - candidate.duration_s)
         if track.duration_s is not None and candidate.duration_s is not None
@@ -477,26 +517,21 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
         artist_evidence=artist_evidence,
         artist_identity=artist_identity,
         album_match=album_match,
+        similarity_score=similarity_score,
         duration_delta=duration_delta,
     )
 
 
-def _evidence_sort_key(evidence: MatchEvidence) -> tuple[int, bool, bool, bool, bool, float]:
+def _evidence_sort_key(evidence: MatchEvidence) -> tuple[int, float, float]:
     confidence_rank = {
         MatchConfidence.NONE: 0,
         MatchConfidence.MEDIUM: 1,
         MatchConfidence.HIGH: 2,
     }
     duration_rank = -evidence.duration_delta if evidence.duration_delta is not None else float("-inf")
-    # Rank genuine artist evidence (exact set, then shared tokens) above the
-    # duration tie-break: artist_overlap is vacuously true when a candidate has no
-    # artist, so it must not let a metadata-less candidate tie a real artist match.
     return (
         confidence_rank[evidence.confidence],
-        evidence.title_exact,
-        evidence.artist_identity,
-        evidence.artist_evidence,
-        evidence.album_match,
+        evidence.similarity_score,
         duration_rank,
     )
 

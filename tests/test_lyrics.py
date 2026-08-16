@@ -6,12 +6,14 @@ from kotonoha.lyrics.match import (
     Candidate,
     MatchConfidence,
     TrackMetadata,
+    _weighted_similarity,
     artist_tokens,
     best_match,
     clean_title,
     evaluate_match,
     normalize,
     query_variants,
+    ranked_matches,
     recover_artist,
     split_title,
 )
@@ -469,6 +471,53 @@ def test_duration_accurate_candidate_still_outranks_the_duration_skewed_one():
     skewed = Candidate("skew", "Song", "Band", 1644.0)
     best = best_match([skewed, good], track)
     assert best is not None and best.candidate.song_id == "good"
+
+
+@pytest.mark.parametrize(
+    ("has_artist", "has_album", "expected"),
+    [
+        (True, True, 0.4 * 0.5 + 0.2 * 0.6 + 0.4 * 0.7),
+        (True, False, 0.7 * 0.5 + 0.3 * 0.6),
+        (False, True, 0.8 * 0.5 + 0.2 * 0.7),
+        (False, False, 0.5),
+    ],
+)
+def test_weighted_similarity_degrades_by_available_track_fields(has_artist, has_album, expected):
+    score = _weighted_similarity(0.5, 0.6, 0.7, has_artist=has_artist, has_album=has_album)
+    assert score == pytest.approx(expected)
+
+
+def test_similarity_ranks_real_title_album_variants_between_exact_and_missing():
+    real_case = MPRIS_TITLE_CASES[0]
+    track = TrackMetadata(real_case.clean_title, real_case.clean_artist, "安和橋北", 250.0)
+    exact = Candidate("exact", real_case.clean_title, real_case.clean_artist, 250.0, album="安和橋北")
+    edition = Candidate(
+        "edition", real_case.clean_title, real_case.clean_artist, 250.0, album="安和橋北 - Deluxe Edition"
+    )
+    missing = Candidate("missing", real_case.clean_title, real_case.clean_artist, 250.0)
+
+    ranked = ranked_matches([missing, edition, exact], track)
+
+    assert [match.candidate.song_id for match in ranked] == ["exact", "edition", "missing"]
+
+
+def test_similarity_uses_normalized_artist_and_album_text():
+    track = TrackMetadata("Song", "Beyoncé", "安和橋北")
+    candidate = Candidate("candidate", "Song", "Beyonce", None, album="安和桥北")
+
+    evidence = evaluate_match(candidate, track)
+
+    assert evidence.similarity_score == pytest.approx(1.0)
+
+
+@pytest.mark.parametrize(
+    ("left", "right", "expected"),
+    [("", "", 0.0), ("a", "a", 1.0), ("a", "b", 0.0), ("安和", "安和", 1.0)],
+)
+def test_similarity_handles_degenerate_and_cjk_strings(left, right, expected):
+    from kotonoha.lyrics.match import _similarity
+
+    assert _similarity(left, right) == expected
 
 
 def test_middle_dot_is_not_split_so_different_same_forename_artists_do_not_match():
