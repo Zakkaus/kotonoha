@@ -151,7 +151,9 @@ class LyricsResolver:
                 if hint.provider == "netease"
                 else await qqmusic.fetch_payload_for_song_id(session, hint.song_id)
             )
-        except (aiohttp.ClientError, asyncio.TimeoutError, TimeoutError, ValueError) as exc:
+        # asyncio.TimeoutError is the builtin TimeoutError from 3.11, which this
+        # project now requires, so naming both was one exception written twice.
+        except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             logger.warning("%s exact lyrics fetch failed: %s: %s", hint.provider, type(exc).__name__, exc)
             return None
         lines = provider.parse_payload(payload)
