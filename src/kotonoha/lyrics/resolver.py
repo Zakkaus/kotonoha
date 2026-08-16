@@ -136,6 +136,9 @@ class LyricsResolver:
             # A sidecar read is filesystem I/O on the qasync loop that also drives the
             # UI and the MPRIS poll. Measured with a FIFO in place of the .lrc, the
             # call held the loop for the writer's full delay, so it goes to a thread.
+            # Cancelling this task does not cancel the read: the thread finishes and
+            # its result is dropped, which is safe because it takes no lock and
+            # writes nothing, and it ends with the interpreter.
             lines = await asyncio.to_thread(load_sidecar, hint.local_path)
             return ResolvedLyrics("local", lines=tuple(lines), confidence=MatchConfidence.HIGH) if lines else None
         if hint.provider != "netease" or hint.song_id is None or "netease" not in sources:
