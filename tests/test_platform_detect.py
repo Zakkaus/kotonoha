@@ -77,3 +77,17 @@ def test_current_desktop_defaults_to_empty(monkeypatch):
 
     monkeypatch.delenv("XDG_CURRENT_DESKTOP", raising=False)
     assert current_desktop() == ""
+
+
+def test_session_desktop_reads_the_session_environment(monkeypatch):
+    from kotonoha.platform.detect import session_desktop
+
+    monkeypatch.setenv("XDG_SESSION_DESKTOP", "niri")
+    assert session_desktop() == "niri"
+
+
+def test_session_desktop_defaults_to_empty(monkeypatch):
+    from kotonoha.platform.detect import session_desktop
+
+    monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
+    assert session_desktop() == ""

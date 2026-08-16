@@ -19,6 +19,21 @@ def current_desktop() -> str:
     return os.environ.get("XDG_CURRENT_DESKTOP", "")
 
 
+def session_desktop() -> str:
+    """Return the desktop identifier published by the session manager."""
+    return os.environ.get("XDG_SESSION_DESKTOP", "")
+
+
+def niri_socket() -> str:
+    """Return niri's IPC socket path, which niri exports to every client it spawns.
+
+    niri sets XDG_CURRENT_DESKTOP=niri only when it runs as a session (src/main.rs);
+    started nested or without the session wrapper it leaves whatever the parent had,
+    so the desktop name alone misses a real niri. This variable does not.
+    """
+    return os.environ.get("NIRI_SOCKET", "")
+
+
 def should_disable_layer_shell(platform_name: str, current_desktop: str) -> bool:
     """GNOME/Mutter Wayland does not implement wlr-layer-shell -> disable it."""
     desktops = {part.strip().lower() for part in current_desktop.split(":")}
