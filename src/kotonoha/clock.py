@@ -117,8 +117,14 @@ class MediaClock:
             # Report well ahead of our estimate: a forward seek / we fell behind.
             self._anchor_media = media_time
         elif self._paused:
-            # Frozen: hold position; never roll back to a lagging report.
-            self._anchor_media = max(media_time, running)
+            # Confirmed paused: the player's own position is where playback will
+            # resume, so it is the truth. Holding max(report, estimate) kept the
+            # extrapolation made during the grace window instead — measured, a
+            # player pausing at 10.2s left the clock at 12.60s, and the lyrics ran
+            # 2.4s ahead of the audio from the resume onward. The
+            # do-not-roll-back rule this replaces is for a coarse report arriving
+            # while playing, which the branch below still handles.
+            self._anchor_media = media_time
         else:
             # Coarse/stale report that lags the estimate: keep interpolating forward.
             self._anchor_media = max(running, media_time)
