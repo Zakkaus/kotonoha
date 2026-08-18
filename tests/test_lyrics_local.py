@@ -164,3 +164,90 @@ def test_loads_embedded_lyrics_from_a_real_vorbis_comment(tmp_path: Path, monkey
     monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
 
     assert [line.text for line in load_local_lyrics(audio)] == ["embedded"]
+
+
+def test_a_pipe_where_the_sidecar_should_be_does_not_wedge_the_reader(tmp_path):
+    # The path comes from a player. Pointed at a FIFO, read_bytes blocked forever
+    # and took a thread-pool worker with it, and the resolver's cancellation could
+    # not reclaim it — every retry leaked another worker until the pool was gone.
+    import os
+    import threading
+
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    os.mkfifo(tmp_path / "song.lrc")
+
+    finished = threading.Event()
+
+    def read() -> None:
+        load_local_lyrics(audio)
+        finished.set()
+
+    # Joined rather than left running: if this regresses the thread blocks forever,
+    # and an unowned one would sit there for the rest of the session.
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "the reader is still blocked on a pipe"
+    finally:
+        reader.join(timeout=5.0)
+
+
+def test_a_sidecar_larger_than_any_lyric_file_is_refused_not_truncated(tmp_path):
+    # Reading to the bound and keeping the prefix would hand the overlay a shorter
+    # set of lines that looks like the real lyrics and simply stops early. An
+    # oversized sidecar is not a lyric file, so nothing is taken from it.
+    from kotonoha.lyrics.local import MAX_SIDECAR_BYTES
+
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_bytes(
+        b"[00:01.00]near the start\n" + b"A" * MAX_SIDECAR_BYTES + b"\n[00:03.00]past the ceiling\n"
+    )
+
+    assert load_local_lyrics(audio) == []
+
+
+def test_a_pipe_where_the_audio_file_should_be_is_not_handed_to_the_tag_reader(tmp_path):
+    # The sidecar is not the only player-supplied path: mutagen opens whatever it
+    # is given, so the audio path needs the same check. Only the sidecar had a test.
+    import os
+    import threading
+
+    audio = tmp_path / "song.flac"
+    os.mkfifo(audio)
+    finished = threading.Event()
+
+    def read() -> None:
+        load_local_lyrics(audio)
+        finished.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "the tag reader is blocked on a pipe"
+    finally:
+        reader.join(timeout=5.0)
+
+
+def test_the_tag_reader_is_given_the_handle_that_was_checked(tmp_path, monkeypatch):
+    # Checking the name and letting the tag reader reopen it leaves a window in
+    # which a regular file becomes a pipe. The reader now gets the descriptor that
+    # was judged, so there is nothing left to re-resolve.
+    pytest.importorskip("mutagen")
+    import mutagen
+
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"")
+    seen: list[object] = []
+
+    def record(filething, *_args, **_kwargs):
+        seen.append(filething)
+        return None
+
+    monkeypatch.setattr(mutagen, "File", record)
+
+    load_local_lyrics(audio)
+
+    assert seen, "the tag reader was never reached"
+    assert not isinstance(seen[0], (str, Path)), f"the reader was handed a path to reopen: {seen[0]!r}"

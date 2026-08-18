@@ -2,10 +2,50 @@
 
 from __future__ import annotations
 
+import os
+import stat
 from pathlib import Path
 
 from ..model import LyricLine
 from .lrc_parser import parse_lrc
+
+#: A sidecar is a lyric file; anything near this size is not one. The read is
+#: bounded because the path comes from a player, not from this program.
+MAX_SIDECAR_BYTES = 4 * 1024 * 1024
+
+
+def _read_regular_file(path: Path) -> bytes | None:
+    """Return the file's bytes, or None if it is not an ordinary file.
+
+    Opened non-blocking and checked through the descriptor, because the path is
+    whatever a player published: pointed at a FIFO, ``read_bytes`` blocks forever
+    and takes a thread-pool worker with it, and the resolver's cancellation cannot
+    reclaim it — every retry leaks another worker until the pool is gone. The flag
+    is a no-op for a regular file and makes the FIFO fail at open instead.
+    """
+    try:
+        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            return None
+        chunks: list[bytes] = []
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
+            if not chunk:
+                break
+            total += len(chunk)
+            if total > MAX_SIDECAR_BYTES:
+                # Refused, not truncated: a prefix of an LRC file parses into a
+                # shorter set of lines that looks like the real lyrics, so silently
+                # cutting it would hand the overlay a song that stops early.
+                return None
+            chunks.append(chunk)
+    finally:
+        os.close(descriptor)
+    return b"".join(chunks)
 
 
 def load_local_lyrics(audio_path: Path) -> list[LyricLine]:
@@ -31,10 +71,7 @@ def _load_sidecar(audio_path: Path) -> list[LyricLine]:
     audio_directory = audio_path.parent.resolve()
 
     try:
-        if sidecar.resolve().parent != audio_directory:
-            raw = None
-        else:
-            raw = sidecar.read_bytes()
+        raw = None if sidecar.resolve().parent != audio_directory else _read_regular_file(sidecar)
     except OSError:
         raw = None
 
@@ -51,6 +88,13 @@ def _load_sidecar(audio_path: Path) -> list[LyricLine]:
 
 
 def _load_embedded(audio_path: Path) -> list[LyricLine]:
+    """Return timed lines from the audio file's own tags.
+
+    The path came from a player, so the file is opened once and judged through
+    that descriptor rather than by name: checking the name and then letting the
+    tag reader reopen it leaves a window in which a regular file becomes a pipe.
+    The same handle is what the reader is given, so there is nothing to re-resolve.
+    """
     try:
         # Optional: the feature exists only where the user installed it, so the
         # type checker must not treat an absent import as an error.
@@ -59,15 +103,24 @@ def _load_embedded(audio_path: Path) -> list[LyricLine]:
         return []
 
     try:
-        audio = mutagen.File(audio_path)
-        if audio is None or audio.tags is None:
+        descriptor = os.open(audio_path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return []
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return []
-        for text in _embedded_texts(audio.tags):
-            lines = parse_lrc(text)
-            if lines:
-                return lines
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            audio = mutagen.File(handle)
+            if audio is None or audio.tags is None:
+                return []
+            for text in _embedded_texts(audio.tags):
+                lines = parse_lrc(text)
+                if lines:
+                    return lines
     except (AttributeError, KeyError, IndexError, OSError, TypeError, ValueError, mutagen.MutagenError):
         return []
+    finally:
+        os.close(descriptor)
     return []
 
 
