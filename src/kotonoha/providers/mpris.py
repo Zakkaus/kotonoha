@@ -124,6 +124,27 @@ async def _player_interface(bus: Any, name: str) -> Any:
     return obj.get_interface(PLAYER_IFACE)
 
 
+def new_lyrics_session() -> aiohttp.ClientSession:
+    """The one HTTP session every lyric provider shares.
+
+    Generous session-wide timeout only: each provider sets its own tighter
+    per-request budget (netease is fast, lrclib is routinely slow), because a
+    single short shared one killed every lrclib fetch — its backend often takes
+    7-9s to answer — leaving that whole fallback source silently dead.
+
+    No cookie jar. NetEase sets a cookie on its first search reply, and a request
+    carrying it back is answered with an unrelated popular-songs list instead of
+    the query's own results. This session lives for the process, so only the first
+    search of a run was answered honestly: measured over five identical queries
+    for a song that exists, 1/5 with the jar and 5/5 without. No provider here
+    authenticates, so nothing needs it.
+    """
+    return aiohttp.ClientSession(
+        timeout=aiohttp.ClientTimeout(total=20.0, connect=5.0),
+        cookie_jar=aiohttp.DummyCookieJar(),
+    )
+
+
 class MprisProvider:
     def __init__(
         self,
@@ -245,18 +266,7 @@ class MprisProvider:
 
     async def start(self) -> None:
         self._bus = await _connect()
-        # Generous session-wide safety net only. Each provider sets its own tighter
-        # per-request timeout (netease is fast, lrclib is routinely slow), because a
-        # single short shared budget killed every lrclib fetch — its backend often
-        # takes 7-9s to answer — leaving that whole fallback source silently dead.
-        timeout = aiohttp.ClientTimeout(total=20.0, connect=5.0)
-        # No cookie jar: NetEase sets a cookie on its first search reply, and a
-        # request carrying it back gets an unrelated popular-songs list instead of
-        # the query's own results. One session is shared for the process, so only
-        # the first search of a run was answered honestly — measured over five
-        # identical queries for a song that exists, 1/5 with the jar and 5/5
-        # without. No provider here authenticates, so nothing needs the jar.
-        self._session = aiohttp.ClientSession(timeout=timeout, cookie_jar=aiohttp.DummyCookieJar())
+        self._session = new_lyrics_session()
         self._task = asyncio.create_task(self._run())
         logger.info("MPRIS provider started")
 

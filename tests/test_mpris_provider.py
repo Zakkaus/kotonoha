@@ -919,18 +919,24 @@ async def test_a_player_that_never_answers_does_not_stop_the_poll(monkeypatch):
     assert elapsed < 1.0, f"the reads took {elapsed:.1f}s"
 
 
-async def test_the_shared_session_carries_no_cookies():
-    # NetEase sets a cookie on its first search reply, and a request carrying it
-    # back gets an unrelated popular-songs list instead of the query's results.
-    # One session is shared for the process, so only the first search of a run was
-    # answered honestly: measured over five identical queries for a song that
-    # exists, 1/5 with the default jar and 5/5 without.
+async def test_the_shared_lyrics_session_carries_no_cookies():
+    """The session every lyric provider shares must not keep cookies.
+
+    NetEase sets one on its first search reply, and a request carrying it back is
+    answered with an unrelated popular-songs list instead of the query's own
+    results. This session lives for the process, so only the first search of a run
+    was answered honestly: measured over five identical queries for a song that
+    exists, 1/5 with the default jar and 5/5 without.
+
+    Built by its own factory rather than inside start(), which also connects the
+    D-Bus session bus — a bus CI has no reason to provide.
+    """
     import aiohttp
 
-    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
-    await provider.start()
+    from kotonoha.providers.mpris import new_lyrics_session
+
+    session = new_lyrics_session()
     try:
-        assert provider._session is not None
-        assert isinstance(provider._session.cookie_jar, aiohttp.DummyCookieJar)
+        assert isinstance(session.cookie_jar, aiohttp.DummyCookieJar)
     finally:
-        await provider.stop()
+        await session.close()
