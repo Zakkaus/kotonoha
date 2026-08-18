@@ -28,3 +28,36 @@ def test_parse_krc_decodes_fixture_and_makes_word_times_absolute():
 
 def test_parse_krc_rejects_undecodable_body():
     assert parse_krc(base64.b64decode(base64.b64encode(b"not krc"))) == []
+
+
+def test_a_krc_that_expands_without_bound_is_refused():
+    # zlib.decompress allocates whatever the stream unpacks to, and the wire size
+    # does not bound that: measured, 203KB of valid compressed body expanded to
+    # 200MB and took the process's resident size with it.
+    import zlib
+
+    from kotonoha.lyrics.krc_parser import KRC_MAGIC, KRC_XOR_KEY
+    from kotonoha.lyrics.payload import MAX_DECOMPRESSED_BYTES
+
+    # A real line first, so an unbounded decoder would return it and this test can
+    # tell the two apart; the padding is what the ceiling is there to refuse.
+    payload = b"[0,1000]<0,500,0>hello\n" + b"A" * (MAX_DECOMPRESSED_BYTES + 1024)
+    bomb = zlib.compress(payload, 9)
+    body = KRC_MAGIC + bytes(v ^ KRC_XOR_KEY[i % len(KRC_XOR_KEY)] for i, v in enumerate(bomb))
+
+    assert len(body) < 64 * 1024, "the point is that the wire size is small"
+    assert parse_krc(body) == [], "an unbounded expansion was accepted"
+
+
+def test_an_ordinary_krc_still_decodes():
+    import zlib
+
+    from kotonoha.lyrics.krc_parser import KRC_MAGIC, KRC_XOR_KEY
+
+    text = b"[0,1000]<0,500,0>hello<500,500,0> world\n"
+    raw = zlib.compress(text, 9)
+    body = KRC_MAGIC + bytes(v ^ KRC_XOR_KEY[i % len(KRC_XOR_KEY)] for i, v in enumerate(raw))
+
+    lines = parse_krc(body)
+
+    assert [line.text for line in lines] == ["hello world"]

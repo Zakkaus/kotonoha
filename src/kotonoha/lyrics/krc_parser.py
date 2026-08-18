@@ -6,6 +6,7 @@ import re
 import zlib
 
 from ..model import LyricLine, LyricWord
+from .payload import decompress_capped
 
 KRC_MAGIC = b"krc1"
 # Kugou's documented KRC stream key; it is part of the file format, not a secret.
@@ -20,8 +21,8 @@ def _decode_krc(body: bytes) -> str | None:
     encrypted = body[len(KRC_MAGIC) :]
     try:
         decoded = bytes(value ^ KRC_XOR_KEY[index % len(KRC_XOR_KEY)] for index, value in enumerate(encrypted))
-        return zlib.decompress(decoded).decode("utf-8")
-    except (zlib.error, UnicodeDecodeError):
+        return decompress_capped(decoded, "KRC").decode("utf-8")
+    except (zlib.error, UnicodeDecodeError, ValueError):
         return None
 
 

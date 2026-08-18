@@ -18,6 +18,7 @@ from .match import (
     query_variants,
     ranked_matches,
 )
+from .payload import read_json_capped
 from .yrc_parser import parse_yrc
 
 logger = logging.getLogger(__name__)
@@ -34,7 +35,7 @@ async def search(session: aiohttp.ClientSession, query: str, limit: int = 10) ->
     params = {"s": query, "type": "1", "limit": str(limit)}
     async with session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "NetEase")
     if not isinstance(data, dict):
         raise ValueError("Netease search response is not an object")
     result = data.get("result")
@@ -92,7 +93,7 @@ async def fetch_payload(session: aiohttp.ClientSession, song_id: str) -> dict[st
     params = {"id": song_id, "lv": "1", "kv": "0", "tv": "1", "yv": "1"}
     async with session.get(LYRIC_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "NetEase")
     if not isinstance(data, dict):
         raise ValueError("Netease lyric response is not an object")
     return {

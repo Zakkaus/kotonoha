@@ -20,6 +20,7 @@ from .match import (
     noisy_title_queries,
     primary_artist,
 )
+from .payload import read_json_capped
 
 logger = logging.getLogger(__name__)
 
@@ -71,7 +72,7 @@ async def get_exact(session: aiohttp.ClientSession, track: TrackMetadata) -> Rec
         if response.status == 404:
             return None
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "LRCLIB")
     if not isinstance(data, dict):
         raise ValueError("LRCLIB exact response is not an object")
     return _record(data)
@@ -83,7 +84,7 @@ async def _search(session: aiohttp.ClientSession, track_name: str, artist_name: 
         params["artist_name"] = artist_name
     async with session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "LRCLIB")
     if not isinstance(data, list):
         raise ValueError("LRCLIB search response is not a list")
     return [record for item in data if (record := _record(item)) is not None]

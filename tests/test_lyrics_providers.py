@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import cast
 
 import aiohttp
@@ -16,10 +17,27 @@ def async_return(value):
     return result
 
 
+class _Content:
+    """The streaming half of a response, which is what the providers read.
+
+    They cap how much of a body they will buffer, so they go through
+    content.read(limit) rather than json(); a fake offering only the convenience
+    method would leave the cap untested.
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+
+    async def read(self, limit: int) -> bytes:
+        return self._payload[:limit]
+
+
 class _Resp:
     def __init__(self, data):
         self._data = data
         self.status = 200
+        self.content = _Content(json.dumps(data).encode() if not isinstance(data, (bytes, str)) else
+                                (data.encode() if isinstance(data, str) else data))
 
     async def __aenter__(self):
         return self
@@ -388,3 +406,33 @@ def test_kugou_parses_the_payload_shape_it_caches():
     assert lines, "the cached KRC payload produced no lines"
     assert lines[0].words, "word timing was lost on the way through the cache"
     assert kugou.parse_payload({"krc": "not base64 %%%"}) == ()
+
+
+async def test_every_provider_refuses_an_unbounded_response():
+    # A timeout bounds how long a response may take, not how large it may become.
+    # Only QQ Music had a ceiling; the other three buffered whatever arrived.
+    from kotonoha.lyrics.payload import MAX_RESPONSE_BYTES
+
+    oversized = b'{"padding":"' + b"x" * (MAX_RESPONSE_BYTES + 64) + b'"}'
+
+    class _OversizedSession:
+        def get(self, _url, **_kwargs):
+            return _Resp(oversized)
+
+        def post(self, _url, **_kwargs):
+            return _Resp(oversized)
+
+    session = cast(aiohttp.ClientSession, _OversizedSession())
+    track = TrackMetadata("Song", "Artist", "", 180.0)
+
+    for name, call in (
+        ("netease", netease.fetch_artifact(session, track)),
+        ("kugou", kugou.fetch_artifact(session, track)),
+        ("lrclib", lrclib.fetch_artifact(session, track)),
+    ):
+        try:
+            await call
+        except ValueError as exc:
+            assert "exceeded" in str(exc), f"{name}: {exc}"
+        else:
+            raise AssertionError(f"{name} buffered a body past the limit")
