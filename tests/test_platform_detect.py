@@ -91,3 +91,20 @@ def test_session_desktop_defaults_to_empty(monkeypatch):
 
     monkeypatch.delenv("XDG_SESSION_DESKTOP", raising=False)
     assert session_desktop() == ""
+
+
+def test_a_pipe_named_like_the_bridge_is_not_offered_to_dlopen(tmp_path):
+    # The ABI-suffixed candidates already require a regular file; the exact name was
+    # accepted for merely existing, and ctypes.CDLL blocks in dlopen on a FIFO with
+    # nothing for startup to fall back to while it waits.
+    import os
+
+    os.mkfifo(tmp_path / "libkoto-layer.so")
+
+    assert find_layer_shell_library(tmp_path) is None
+
+
+def test_an_ordinary_bridge_is_still_found(tmp_path):
+    (tmp_path / "libkoto-layer.so").write_bytes(b"")
+
+    assert find_layer_shell_library(tmp_path) is not None

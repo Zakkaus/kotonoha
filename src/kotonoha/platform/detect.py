@@ -54,7 +54,10 @@ def find_layer_shell_library(package_dir: str | Path) -> str | None:
     """Find libkoto-layer.so in the package dir, tolerating ABI-suffixed names."""
     package_path = Path(package_dir)
     exact_path = package_path / LAYER_SHELL_LIBRARY_NAME
-    if exact_path.exists():
+    # is_file, not exists: the ABI-suffixed candidates below already require it, and
+    # a FIFO or device node at the exact name was handed to ctypes.CDLL, where dlopen
+    # blocks on the open. Startup has nothing to fall back to while that waits.
+    if exact_path.is_file():
         return str(exact_path)
 
     candidates = sorted(

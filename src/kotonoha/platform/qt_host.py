@@ -51,8 +51,20 @@ class QtWindowHost:
         )
 
     def native_window_pointer(self) -> int | None:
-        self._widget.winId()
-        handle = self._widget.windowHandle()
+        """Return the window's native handle, or None when there is not one.
+
+        None also covers a widget Qt has already deleted. The contract is
+        ``int | None``, and every platform operation keyed on this pointer reports
+        an unavailable handle as a failed OverlayOperationResult; letting the
+        deleted-widget RuntimeError escape from here turned that into an exception
+        the callers do not catch, on a path — a deferred lifecycle callback
+        arriving after teardown — that exists precisely to happen late.
+        """
+        try:
+            self._widget.winId()
+            handle = self._widget.windowHandle()
+        except RuntimeError:
+            return None
         if handle is None:
             return None
         try:

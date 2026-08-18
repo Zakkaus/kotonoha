@@ -646,3 +646,23 @@ def test_an_empty_drag_provider_tuple_is_not_a_missing_one() -> None:
 
     assert isinstance(platform, LayerShellPlatform)
     _assert_measures_local_pointer(platform, controller)
+
+
+def test_a_deleted_widget_reports_no_handle_rather_than_raising() -> None:
+    # Every platform operation keyed on this pointer reports an unavailable handle
+    # as a failed result. Letting the deleted-widget RuntimeError escape turned that
+    # into an exception the callers do not catch, on a path — a deferred lifecycle
+    # callback arriving after teardown — that exists precisely to happen late.
+    from PyQt6 import sip
+    from PyQt6.QtWidgets import QApplication, QWidget
+
+    from kotonoha.platform.qt_host import QtWindowHost
+
+    assert QApplication.instance() is not None
+    widget = QWidget()
+    host = QtWindowHost(widget)
+    assert isinstance(host.native_window_pointer(), int)
+
+    sip.delete(widget)
+
+    assert host.native_window_pointer() is None
