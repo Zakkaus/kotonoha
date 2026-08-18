@@ -62,7 +62,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import leaf_icon
-from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
+from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, LEAD_MS_LIMIT, VALID_LYRICS_SOURCES, Config
 from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, WindowRectangle
 from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
@@ -768,7 +768,14 @@ class SettingsDialog(QDialog):
         matched = False
         for key, start, end, sweep in ACCENT_PRESETS:
             self._accent.addItem(t(f"accent.{key}"), (start, end, sweep))
-            if start.lower() == c.accent_start.lower():
+            # All three, not just the start: a custom gradient that happens to share
+            # a preset's first colour was selected as that preset, so applying the
+            # dialog replaced the end and sweep the user had actually chosen.
+            if (start.lower(), end.lower(), sweep.lower()) == (
+                c.accent_start.lower(),
+                c.accent_end.lower(),
+                c.accent_sweep.lower(),
+            ):
                 self._accent.setCurrentIndex(self._accent.count() - 1)
                 matched = True
         if not matched:  # a saved custom colour -> one labelled slot
@@ -856,7 +863,9 @@ class SettingsDialog(QDialog):
         self._karaoke.setChecked(c.karaoke)
         form.addRow(self._karaoke)
 
-        self._lead = self._spin(-1000, 1000, c.lead_ms, " ms")
+        # The same bounds Config clamps to. A narrower control silently truncated a
+        # valid saved value the moment the window was opened and applied.
+        self._lead = self._spin(-LEAD_MS_LIMIT, LEAD_MS_LIMIT, c.lead_ms, " ms")
         self._lead.setSingleStep(20)
         self._lead.setToolTip(t("set.lead.tip"))
         form.addRow(t("set.lead"), self._lead)

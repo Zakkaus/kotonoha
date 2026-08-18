@@ -127,7 +127,7 @@ class Config:
             window_icon_name=_clean_icon_name(self.window_icon_name),
             passthrough=bool(self.passthrough),
             karaoke=bool(self.karaoke),
-            lead_ms=_clamp_int(self.lead_ms, -2000, 2000, 120),
+            lead_ms=_clamp_int(self.lead_ms, -LEAD_MS_LIMIT, LEAD_MS_LIMIT, 120),
             track_offsets=_clean_track_offsets(self.track_offsets),
             show_translation=bool(self.show_translation),
             current_line_only=bool(self.current_line_only),
@@ -197,6 +197,11 @@ def save_config(config: Config, path: Path | None = None) -> None:
     target = path or config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text(json.dumps(config.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+
+
+#: Bound on the global sync offset, shared with the control that edits it so the
+#: settings window cannot narrow what the configuration accepts.
+LEAD_MS_LIMIT = 2000
 
 
 def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
