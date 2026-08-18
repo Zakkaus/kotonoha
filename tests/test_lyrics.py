@@ -844,3 +844,35 @@ def test_a_yrc_timestamp_too_large_for_a_float_skips_its_line():
     lines = parse_yrc(huge + real)
 
     assert [line.text for line in lines] == ["眉目"]
+
+
+def test_translation_merging_stays_cheap_as_a_provider_sends_more_lines():
+    # Both tracks come from a provider and their lengths are its choice. Scanning
+    # the whole translation for every base line was quadratic: measured, 500 lines
+    # took 8 ms, 2000 took 112 ms and 8000 took 985 ms — a second of synchronous
+    # work on the loop that also drives the UI, for a response well inside the size
+    # the providers already allow.
+    import time
+
+    from kotonoha.model import LyricLine
+
+    def pair(count: int) -> tuple[list[LyricLine], list[LyricLine]]:
+        base = "".join(f"[{i // 60:02d}:{i % 60:02d}.{i % 100:02d}]line {i}\n" for i in range(count))
+        trans = "".join(f"[{i // 60:02d}:{i % 60:02d}.{i % 100:02d}]trans {i}\n" for i in range(count))
+        return parse_lrc(base), parse_lrc(trans)
+
+    small_base, small_trans = pair(500)
+    large_base, large_trans = pair(4000)
+    assert small_base and large_base, "the sample did not parse; the timing would mean nothing"
+
+    start = time.perf_counter()
+    merge_translation(small_base, small_trans)
+    small = time.perf_counter() - start
+
+    start = time.perf_counter()
+    merged = merge_translation(large_base, large_trans)
+    large = time.perf_counter() - start
+
+    # Eight times the lines must not cost anything like sixty-four times the work.
+    assert large < small * 20 + 0.05, f"merging grew faster than the input: {small:.3f}s -> {large:.3f}s"
+    assert merged[0].translation == "trans 0", "the nearest translation is still attached"
