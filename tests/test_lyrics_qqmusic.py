@@ -39,9 +39,18 @@ class _Content:
 
     def __init__(self, body: bytes) -> None:
         self._body = body
+        self._cursor = 0
 
     async def read(self, limit: int) -> bytes:
-        return self._body[:limit]
+        """Hand back at most `limit` bytes, as a real socket does.
+
+        A fake that returned the whole body in one call could not catch a reader
+        that stops after its first read — which is what the first version of the
+        cap did, truncating a 307KB response to 114KB.
+        """
+        chunk = self._body[self._cursor : self._cursor + min(limit, 8192)]
+        self._cursor += len(chunk)
+        return chunk
 
 
 class _Response:

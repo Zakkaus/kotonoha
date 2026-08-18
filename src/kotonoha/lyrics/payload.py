@@ -22,12 +22,31 @@ MAX_RESPONSE_BYTES = 2 * 1024 * 1024
 MAX_DECOMPRESSED_BYTES = 4 * 1024 * 1024
 
 
+#: How much is taken from the stream per read. Only a buffer size; the ceiling is
+#: MAX_RESPONSE_BYTES and is enforced across the whole body.
+_CHUNK_BYTES = 64 * 1024
+
+
 async def read_capped(response: aiohttp.ClientResponse, source: str) -> bytes:
-    """Return the body, refusing one larger than :data:`MAX_RESPONSE_BYTES`."""
-    body = await response.content.read(MAX_RESPONSE_BYTES + 1)
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise ValueError(f"{source} response exceeded {MAX_RESPONSE_BYTES} bytes")
-    return body
+    """Return the whole body, refusing one larger than :data:`MAX_RESPONSE_BYTES`.
+
+    Read in a loop to end of stream. A single ``content.read(n)`` returns only what
+    has arrived so far, not ``n`` bytes: measured against a server streaming 307KB
+    in 8KB writes, one call returned 114KB, and the truncated body then failed to
+    parse — so a lyric or search result larger than one buffer would have been lost
+    rather than capped.
+    """
+    chunks: list[bytes] = []
+    total = 0
+    while True:
+        chunk = await response.content.read(_CHUNK_BYTES)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_RESPONSE_BYTES:
+            raise ValueError(f"{source} response exceeded {MAX_RESPONSE_BYTES} bytes")
+        chunks.append(chunk)
+    return b"".join(chunks)
 
 
 async def read_json_capped(response: aiohttp.ClientResponse, source: str) -> Any:

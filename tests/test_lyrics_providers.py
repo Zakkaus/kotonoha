@@ -27,9 +27,18 @@ class _Content:
 
     def __init__(self, payload: bytes) -> None:
         self._payload = payload
+        self._cursor = 0
 
     async def read(self, limit: int) -> bytes:
-        return self._payload[:limit]
+        """Hand back at most `limit` bytes, as a real socket does.
+
+        A fake that returned the whole body in one call could not catch a reader
+        that stops after its first read — which is exactly what the first version
+        of the cap did, truncating a 307KB response to 114KB.
+        """
+        chunk = self._payload[self._cursor : self._cursor + min(limit, 8192)]
+        self._cursor += len(chunk)
+        return chunk
 
 
 class _Resp:
@@ -436,3 +445,18 @@ async def test_every_provider_refuses_an_unbounded_response():
             assert "exceeded" in str(exc), f"{name}: {exc}"
         else:
             raise AssertionError(f"{name} buffered a body past the limit")
+
+
+async def test_a_body_larger_than_one_read_arrives_whole():
+    # content.read(n) returns what has arrived, not n bytes. Reading once truncated
+    # a 307KB response to 114KB against a real server, and the fragment then failed
+    # to parse — a long lyric or a large search result would have been lost rather
+    # than capped.
+    from kotonoha.lyrics.payload import MAX_RESPONSE_BYTES, read_capped
+
+    body = b'{"padding":"' + b"x" * (300 * 1024) + b'"}'
+    assert len(body) < MAX_RESPONSE_BYTES, "this body is legitimate, not oversized"
+
+    got = await read_capped(cast(aiohttp.ClientResponse, _Resp(body)), "test")
+
+    assert got == body
