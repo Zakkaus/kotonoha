@@ -61,3 +61,18 @@ def test_an_ordinary_krc_still_decodes():
     lines = parse_krc(body)
 
     assert [line.text for line in lines] == ["hello world"]
+
+
+def test_a_timestamp_too_large_for_a_float_skips_its_line():
+    # The digits are captured from provider bytes and divided by 1000.0; an
+    # unbounded run reaches that division as an int too large to convert, and the
+    # OverflowError left the parser and the resolver.
+    from kotonoha.lyrics.krc_parser import KRC_MAGIC
+
+    body = ("[" + "9" * 400 + ",1000]<0,500,0>hi\n[1000,2000]<0,500,0>real\n").encode()
+    raw = zlib.compress(body)
+    payload = KRC_MAGIC + bytes(v ^ KRC_XOR_KEY[i % len(KRC_XOR_KEY)] for i, v in enumerate(raw))
+
+    lines = parse_krc(payload)
+
+    assert [line.text for line in lines] == ["real"], "an absurd timestamp must skip only its own line"

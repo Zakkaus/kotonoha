@@ -16,8 +16,13 @@ import re
 
 from ..model import LyricLine, LyricWord
 
-_LINE_HEAD = re.compile(r"^\[(\d+),(\d+)\]")
-_WORD = re.compile(r"\((\d+),(\d+),\d+\)([^(]*)")
+# Milliseconds within one song: eight digits is over a day, and an unbounded run
+# reaches the division below as an int too large to convert to a float, which
+# raises OverflowError out of the parser. Bounded here, at the boundary, so an
+# absurd timestamp simply fails to match and its line is skipped like any other
+# malformed one.
+_LINE_HEAD = re.compile(r"^\[(\d{1,8}),(\d{1,8})\]")
+_WORD = re.compile(r"\((\d{1,8}),(\d{1,8}),\d+\)([^(]*)")
 
 
 def parse_yrc(text: str) -> list[LyricLine]:

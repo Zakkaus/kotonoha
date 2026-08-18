@@ -11,8 +11,13 @@ from .payload import decompress_capped
 KRC_MAGIC = b"krc1"
 # Kugou's documented KRC stream key; it is part of the file format, not a secret.
 KRC_XOR_KEY = bytes((64, 71, 97, 119, 94, 50, 116, 71, 81, 54, 49, 45, 206, 210, 110, 105))
-_LINE_HEAD = re.compile(r"^\[(\d+),(\d+)\]")
-_WORD = re.compile(r"<(\d+),(\d+),\d+>([^<]*)")
+# Milliseconds within one song: eight digits is over a day, and an unbounded run
+# reaches the division below as an int too large to convert to a float, which
+# raises OverflowError out of the parser. Bounded here, at the boundary, so an
+# absurd timestamp simply fails to match and its line is skipped like any other
+# malformed one.
+_LINE_HEAD = re.compile(r"^\[(\d{1,8}),(\d{1,8})\]")
+_WORD = re.compile(r"<(\d{1,8}),(\d{1,8}),\d+>([^<]*)")
 
 
 def _decode_krc(body: bytes) -> str | None:
