@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import cast
 
 from kotonoha.config import (
@@ -234,3 +235,91 @@ def test_track_offsets_roundtrip_and_evict_oldest(tmp_path):
 def test_track_without_offset_keeps_global_lead_only():
     cfg = Config(lead_ms=120)
     assert cfg.track_offsets.get("missing", 0) == 0
+
+
+def test_a_failed_save_leaves_the_previous_configuration_intact(tmp_path, monkeypatch):
+    # The point of writing to a sibling and renaming: the target is only ever
+    # replaced by a file that is already complete. Written in place, a save that
+    # died partway — a logout, a full disk — left truncated JSON behind.
+    path = tmp_path / "config.json"
+    save_config(Config(lead_ms=250), path)
+
+    def no_space(*_args, **_kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "replace", no_space)
+    try:
+        save_config(Config(lead_ms=999), path)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("the save reported success without replacing the file")
+
+    assert load_config(path).lead_ms == 250, "the previous configuration was destroyed"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json"], "a temporary was left behind"
+
+
+def test_an_unreadable_config_is_kept_rather_than_overwritten(tmp_path):
+    # Defaults let the app start, but the next save — a drag release is enough —
+    # used to write them over the damaged file, turning one interrupted write into
+    # permanent loss of every setting the user had chosen.
+    path = tmp_path / "config.json"
+    save_config(Config(margin_x=-1100, lead_ms=250), path)
+    whole = path.read_text(encoding="utf-8")
+    path.write_text(whole[: len(whole) // 2], encoding="utf-8")
+
+    recovered = load_config(path)
+
+    assert recovered.lead_ms == Config().lead_ms, "a damaged file must not be trusted"
+    salvaged = tmp_path / "config.json.corrupt"
+    assert salvaged.exists(), "the unreadable file was destroyed instead of set aside"
+    assert "margin_x" in salvaged.read_text(encoding="utf-8")
+
+    save_config(recovered, path)
+    assert salvaged.exists(), "the salvaged copy must survive the next save"
+
+
+def test_a_config_that_is_not_utf8_does_not_end_startup(tmp_path):
+    # load_config runs before there is any window to report a problem in, so an
+    # escaping UnicodeDecodeError took the whole application down rather than
+    # costing the settings in the file.
+    path = tmp_path / "config.json"
+    path.write_bytes(b'{"lead_ms": 1' + bytes([0xFF, 0xFE]) + b"}")
+
+    assert load_config(path).lead_ms == Config().lead_ms
+    assert (tmp_path / "config.json.corrupt").exists(), "the unreadable file was not kept"
+
+
+def test_a_pipe_at_the_config_path_does_not_block_startup(tmp_path):
+    import os
+    import threading
+
+    path = tmp_path / "config.json"
+    os.mkfifo(path)
+    finished = threading.Event()
+
+    def read() -> None:
+        load_config(path)
+        finished.set()
+
+    # Joined rather than left running: if this regresses the thread blocks forever,
+    # and an unowned one would keep the interpreter's thread state alive for the
+    # rest of the session with nothing to report it.
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "startup is blocked on a pipe left at the config path"
+    finally:
+        reader.join(timeout=5.0)
+
+
+def test_a_number_too_large_for_an_int_falls_back_to_the_default(tmp_path):
+    # JSON accepts 1e400 and int() raises OverflowError on it. Unhandled on the
+    # startup path, that meant the application did not start at all.
+    path = tmp_path / "config.json"
+    path.write_text('{"lead_ms": 1e400, "panel_width": 900}', encoding="utf-8")
+
+    loaded = load_config(path)
+
+    assert loaded.lead_ms == Config().lead_ms
+    assert loaded.panel_width == 900, "the rest of the file must still be read"
