@@ -218,6 +218,13 @@ def _read_config_bytes(target: Path) -> bytes | None:
 
 
 def load_config(path: Path | None = None) -> Config:
+    """Return the stored configuration, or defaults when there is none to trust.
+
+    Never raises: this runs before there is any window to report a problem in, so
+    a missing, unreadable, non-regular or unparseable file yields defaults instead
+    of ending startup. A file that exists but cannot be understood is moved to
+    ``<name>.corrupt`` first, so the values in it survive the next save.
+    """
     target = path or config_path()
     data = _read_config_bytes(target)
     if data is None:
