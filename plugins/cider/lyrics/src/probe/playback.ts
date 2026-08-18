@@ -1,4 +1,4 @@
-import type { PlaybackProbe } from "./types";
+import type { NowPlayingItem, PlaybackProbe } from "./types";
 
 type CiderGlobals = {
   CiderApp?: any;
@@ -78,13 +78,45 @@ export function probePlaybackTime(globals: any): {
   };
 }
 
+/** Read the three identity fields out of whatever Cider exposes.
+ *
+ * Cider's item is an external object of its own choosing: it may be cyclic, and
+ * forwarding it whole made JSON.stringify throw, which silently dropped the frame
+ * rather than sending a track with missing fields. The names match what the
+ * receiver already reads, in both the nested and the flat shape.
+ */
+function projectNowPlaying(item: unknown): NowPlayingItem | null {
+  if (item === null || typeof item !== "object") {
+    return null;
+  }
+  const record = item as Record<string, unknown>;
+  const attributes =
+    typeof record.attributes === "object" && record.attributes !== null
+      ? (record.attributes as Record<string, unknown>)
+      : {};
+  const pick = (...names: string[]): string | null => {
+    for (const name of names) {
+      const value = attributes[name] ?? record[name];
+      if (typeof value === "string" && value.length > 0) {
+        return value;
+      }
+    }
+    return null;
+  };
+  return {
+    title: pick("name", "title"),
+    artistName: pick("artistName"),
+    albumName: pick("albumName"),
+  };
+}
+
 export function probePlayback(globals: CiderGlobals): PlaybackProbe {
   const player = playbackPlayer(globals);
   const instance = musicKit(globals);
   const audio = audioElement(globals, player);
 
   return {
-    nowPlayingItem: player?.nowPlayingItem ?? instance?.nowPlayingItem ?? null,
+    nowPlayingItem: projectNowPlaying(player?.nowPlayingItem ?? instance?.nowPlayingItem ?? null),
     isPlaying:
       booleanOrUndefined(player?.isPlaying) ??
       booleanOrUndefined(instance?.isPlaying),

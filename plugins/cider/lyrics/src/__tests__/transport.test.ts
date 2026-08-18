@@ -49,10 +49,13 @@ class FakeWebSocket {
   send(data: string) {
     this.sent.push(data);
   }
+  bufferedAmount = 0;
   close() {
     this.closed = true;
   }
 }
+
+const OPEN_TIMEOUT_MS = 10_000;
 
 function makeSocket(overrides: Partial<ConstructorParameters<typeof ReconnectingLyricsSocket>[0]> = {}) {
   FakeWebSocket.instances = [];
@@ -63,6 +66,7 @@ function makeSocket(overrides: Partial<ConstructorParameters<typeof Reconnecting
     onOpen,
     minBackoffMs: 500,
     maxBackoffMs: 5000,
+    openTimeoutMs: OPEN_TIMEOUT_MS,
     socketFactory: (url) => new FakeWebSocket(url) as unknown as WebSocket,
     setTimeoutFn: (handler, delay) => {
       timers.push({ handler, delay });
@@ -71,7 +75,19 @@ function makeSocket(overrides: Partial<ConstructorParameters<typeof Reconnecting
     clearTimeoutFn: () => {},
     ...overrides,
   });
-  return { socket, timers, onOpen, latest: () => FakeWebSocket.instances.at(-1)! };
+  // Two kinds of timer are scheduled now — the reconnect backoff and the deadline
+  // on one connection attempt — so they are told apart by intent rather than by the
+  // order they happen to be created in.
+  const reconnects = () => timers.filter((timer) => timer.delay !== OPEN_TIMEOUT_MS);
+  const openDeadlines = () => timers.filter((timer) => timer.delay === OPEN_TIMEOUT_MS);
+  return {
+    socket,
+    timers,
+    reconnects,
+    openDeadlines,
+    onOpen,
+    latest: () => FakeWebSocket.instances.at(-1)!,
+  };
 }
 
 describe("ReconnectingLyricsSocket", () => {
@@ -84,33 +100,33 @@ describe("ReconnectingLyricsSocket", () => {
   });
 
   it("queues a reconnect with exponential backoff on close", () => {
-    const { socket, timers, latest } = makeSocket();
+    const { socket, reconnects, latest } = makeSocket();
     socket.connect();
     latest().onopen?.();
 
     latest().onclose?.();
-    expect(timers).toHaveLength(1);
-    expect(timers[0].delay).toBe(500);
+    expect(reconnects()).toHaveLength(1);
+    expect(reconnects()[0].delay).toBe(500);
 
     // Fire the scheduled reconnect, then close again -> backoff doubles.
-    timers[0].handler();
+    reconnects()[0].handler();
     latest().onclose?.();
-    expect(timers[1].delay).toBe(1000);
+    expect(reconnects()[1].delay).toBe(1000);
   });
 
   it("resets backoff after a successful reopen", () => {
-    const { socket, timers, latest } = makeSocket();
+    const { socket, reconnects, latest } = makeSocket();
     socket.connect();
     latest().onclose?.();
-    expect(timers[0].delay).toBe(500);
-    timers[0].handler();
+    expect(reconnects()[0].delay).toBe(500);
+    reconnects()[0].handler();
     latest().onclose?.();
-    expect(timers[1].delay).toBe(1000);
+    expect(reconnects()[1].delay).toBe(1000);
 
-    timers[1].handler();
+    reconnects()[1].handler();
     latest().onopen?.(); // success resets backoff
     latest().onclose?.();
-    expect(timers[2].delay).toBe(500);
+    expect(reconnects()[2].delay).toBe(500);
   });
 
   it("send returns false when not open and true when open", () => {
@@ -133,12 +149,47 @@ describe("ReconnectingLyricsSocket", () => {
   });
 
   it("stops reconnecting after close()", () => {
-    const { socket, timers, latest } = makeSocket();
+    const { socket, reconnects, latest } = makeSocket();
     socket.connect();
     const ws = latest();
     socket.close();
     ws.onclose?.();
-    expect(timers).toHaveLength(0);
+    expect(reconnects()).toHaveLength(0);
     expect(ws.closed).toBe(true);
+  });
+
+  it("retries an attempt that never leaves CONNECTING", () => {
+    // A constructor that returns is not a connection: a socket can sit in
+    // CONNECTING for as long as the peer leaves it there, and neither onclose nor
+    // onerror ever fires. Reconnects were scheduled only from those two, so such
+    // an attempt was the last one the plugin ever made.
+    const { socket, reconnects, openDeadlines, latest } = makeSocket();
+    socket.connect();
+    const stuck = latest();
+
+    expect(openDeadlines()).toHaveLength(1);
+    expect(reconnects()).toHaveLength(0);
+
+    openDeadlines()[0].handler();
+
+    expect(stuck.closed).toBe(true);
+    expect(reconnects()).toHaveLength(1);
+  });
+
+  it("drops a frame rather than queueing it behind a stalled receiver", () => {
+    // A receiver that stops reading does not close the connection: the browser
+    // keeps accepting frames into its own buffer, so send() reporting success
+    // meant only that nothing threw while the buffer grew.
+    const { socket, latest } = makeSocket({ maxBufferedBytes: 100 } as never);
+    socket.connect();
+    const ws = latest();
+    ws.onopen?.();
+
+    expect(socket.send("small")).toBe(true);
+    (ws as unknown as { bufferedAmount: number }).bufferedAmount = 5000;
+
+    expect(socket.writable).toBe(false);
+    expect(socket.send("another")).toBe(false);
+    expect(ws.sent).toHaveLength(1);
   });
 });

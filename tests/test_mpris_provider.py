@@ -917,3 +917,20 @@ async def test_a_player_that_never_answers_does_not_stop_the_poll(monkeypatch):
     assert status == ""
     assert info is None
     assert elapsed < 1.0, f"the reads took {elapsed:.1f}s"
+
+
+async def test_the_shared_session_carries_no_cookies():
+    # NetEase sets a cookie on its first search reply, and a request carrying it
+    # back gets an unrelated popular-songs list instead of the query's results.
+    # One session is shared for the process, so only the first search of a run was
+    # answered honestly: measured over five identical queries for a song that
+    # exists, 1/5 with the default jar and 5/5 without.
+    import aiohttp
+
+    provider = MprisProvider(LyricsState(), resolver=RecordingResolver())
+    await provider.start()
+    try:
+        assert provider._session is not None
+        assert isinstance(provider._session.cookie_jar, aiohttp.DummyCookieJar)
+    finally:
+        await provider.stop()
