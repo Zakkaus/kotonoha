@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import json
 import logging
+import math
 from urllib.parse import urlparse
 
 from aiohttp import WSMsgType, web
@@ -56,7 +57,11 @@ def _coerce_float(value: object) -> float | None:
     if isinstance(value, bool):
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        # The tick path does not go through the model's parsing, so it needs the
+        # same finiteness check: JSON carries NaN and infinity, and a clock
+        # calibrated with either never advances again.
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     return None
 
 

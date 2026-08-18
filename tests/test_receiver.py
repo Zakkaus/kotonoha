@@ -1,4 +1,5 @@
 import json
+import math
 from typing import cast
 
 import pytest
@@ -230,3 +231,18 @@ async def test_a_number_json_allows_but_arithmetic_does_not_is_dropped():
         response = await client.post(WS_PATH, data='{"lyrics":{"currentLine":{"index":1e1000}}}')
 
         assert response.status in (204, 400), "an unrepresentable number reached the handler"
+
+
+async def test_a_tick_carrying_nan_does_not_stop_the_clock():
+    # The lightweight tick path skips the model's parsing, so it needed the same
+    # finiteness check: a clock calibrated with NaN never advances again.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        seen: list[float | None] = []
+        receiver._state.time_ticked.connect(lambda t, _p: seen.append(t))
+
+        response = await client.post(WS_PATH, data='{"reason":"tick","currentTime":NaN,"isPlaying":true}')
+
+        assert response.status == 204
+        assert seen, "the tick never reached the clock at all"
+        assert all(value is None or math.isfinite(value) for value in seen), f"the clock took {seen}"
