@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 import logging
 import sqlite3
 from pathlib import Path
@@ -497,3 +498,50 @@ async def test_a_local_lyric_read_does_not_hold_the_event_loop(monkeypatch):
 
     assert resolved is not None and resolved.lines
     assert len(ticks) > 5, f"the loop was blocked for the whole read: {len(ticks)} ticks"
+
+
+async def test_one_caller_leaving_does_not_cancel_the_other():
+    # Identical requests share one task. Awaiting it directly made a cancelled
+    # caller cancel it for everyone: the second request raised CancelledError
+    # without ever having asked to be cancelled.
+    resolver = LyricsResolver()
+    started = asyncio.Event()
+
+    async def slow(*_args, **_kwargs):
+        started.set()
+        await asyncio.sleep(0.2)
+        return None
+
+    resolver._resolve_once = slow
+    first = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
+    await started.wait()
+    second = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
+    await asyncio.sleep(0)
+
+    first.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await first
+
+    assert await asyncio.wait_for(second, timeout=2) is None
+
+
+async def test_the_resolver_can_stop_the_work_it_started():
+    # The shared task outlives any one caller by design, so its creator needs a
+    # cancellation path of its own.
+    resolver = LyricsResolver()
+    started = asyncio.Event()
+
+    async def never(*_args, **_kwargs):
+        started.set()
+        await asyncio.Event().wait()
+
+    resolver._resolve_once = never
+    caller = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
+    await started.wait()
+
+    await resolver.cancel_inflight()
+
+    assert resolver._inflight == {}
+    caller.cancel()
+    with contextlib.suppress(asyncio.CancelledError):
+        await caller

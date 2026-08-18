@@ -125,10 +125,31 @@ class LyricsResolver:
             task = asyncio.create_task(self._resolve_once(session, track, ordered_sources))
             self._inflight[key] = task
         try:
-            return await task
+            # Shielded: the task is shared, and awaiting it directly made one
+            # caller's cancellation cancel it for everyone — a second request for
+            # the same track raised CancelledError without ever having asked. The
+            # work continues for whoever is still waiting, and its result still
+            # reaches the cache; cancel_inflight is the owner's path to stop it.
+            return await asyncio.shield(task)
         finally:
             if task.done() and self._inflight.get(key) is task:
                 self._inflight.pop(key, None)
+
+    async def cancel_inflight(self) -> None:
+        """Cancel and await every shared lookup this resolver started.
+
+        The owner's cancellation path for the tasks created above, which outlive
+        any single caller by design.
+        """
+        tasks = list(self._inflight.values())
+        self._inflight.clear()
+        for task in tasks:
+            task.cancel()
+        for task in tasks:
+            try:
+                await task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001 - teardown
+                pass
 
     async def resolve_hint(
         self, session: aiohttp.ClientSession, track: TrackMetadata, sources: Sequence[str], hint: LyricsHint
