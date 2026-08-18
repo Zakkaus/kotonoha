@@ -10,7 +10,7 @@ import aiohttp
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.hint import LyricsHint
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
-from kotonoha.lyrics.resolver import LyricsResolver, NetworkProvider
+from kotonoha.lyrics.resolver import LyricsResolver, NetworkProvider, ResolvedLyrics
 from kotonoha.model import LyricLine, LyricsSnapshot
 from kotonoha.providers.gate import CiderMatch
 
@@ -504,18 +504,20 @@ async def test_one_caller_leaving_does_not_cancel_the_other():
     # Identical requests share one task. Awaiting it directly made a cancelled
     # caller cancel it for everyone: the second request raised CancelledError
     # without ever having asked to be cancelled.
-    resolver = LyricsResolver()
     started = asyncio.Event()
 
-    async def slow(
-        session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
-    ) -> ResolvedLyrics | None:
-        del session, track, sources
-        started.set()
-        await asyncio.sleep(0.2)
-        return None
+    class SlowResolver(LyricsResolver):
+        """Stands in for a lookup that is still running when a caller leaves."""
 
-    resolver._resolve_once = slow
+        async def _resolve_once(
+            self, session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
+        ) -> ResolvedLyrics | None:
+            del session, track, sources
+            started.set()
+            await asyncio.sleep(0.2)
+            return None
+
+    resolver = SlowResolver()
     first = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
     second = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
@@ -531,18 +533,20 @@ async def test_one_caller_leaving_does_not_cancel_the_other():
 async def test_the_resolver_can_stop_the_work_it_started():
     # The shared task outlives any one caller by design, so its creator needs a
     # cancellation path of its own.
-    resolver = LyricsResolver()
     started = asyncio.Event()
 
-    async def never(
-        session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
-    ) -> ResolvedLyrics | None:
-        del session, track, sources
-        started.set()
-        await asyncio.Event().wait()
-        return None
+    class NeverResolver(LyricsResolver):
+        """Stands in for a lookup that never finishes on its own."""
 
-    resolver._resolve_once = never
+        async def _resolve_once(
+            self, session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
+        ) -> ResolvedLyrics | None:
+            del session, track, sources
+            started.set()
+            await asyncio.Event().wait()
+            return None
+
+    resolver = NeverResolver()
     caller = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
 
