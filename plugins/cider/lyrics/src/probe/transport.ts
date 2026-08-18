@@ -32,6 +32,10 @@ export type ReconnectingSocketOptions = {
   log?: (message: string, error?: unknown) => void;
   /** Backoff bounds in milliseconds. */
   minBackoffMs?: number;
+  /** How long one connection attempt may sit in CONNECTING before it is retried. */
+  openTimeoutMs?: number;
+  /** How many bytes may sit unsent before frames are dropped rather than queued. */
+  maxBufferedBytes?: number;
   maxBackoffMs?: number;
   /** Injectable for tests; defaults to the global WebSocket. */
   socketFactory?: (url: string) => WebSocket;
@@ -56,6 +60,11 @@ export class ReconnectingLyricsSocket {
   private readonly onMessage: (data: string) => void;
   private readonly log: (message: string, error?: unknown) => void;
   private readonly minBackoffMs: number;
+  private readonly openTimeoutMs: number;
+  private readonly maxBufferedBytes: number;
+  private openTimer: number | null = null;
+  /** Rises per attempt so a stale callback from an abandoned socket is ignored. */
+  private generation = 0;
   private readonly maxBackoffMs: number;
   private readonly socketFactory: (url: string) => WebSocket;
   private readonly setTimeoutFn: (handler: () => void, timeout: number) => number;
@@ -67,6 +76,8 @@ export class ReconnectingLyricsSocket {
     this.onMessage = options.onMessage ?? (() => {});
     this.log = options.log ?? (() => {});
     this.minBackoffMs = options.minBackoffMs ?? 500;
+    this.openTimeoutMs = options.openTimeoutMs ?? 10_000;
+    this.maxBufferedBytes = options.maxBufferedBytes ?? 1 << 20;
     this.maxBackoffMs = options.maxBackoffMs ?? 5000;
     this.socketFactory = options.socketFactory ?? ((url) => new WebSocket(url));
     this.setTimeoutFn = options.setTimeoutFn ?? ((h, t) => window.setTimeout(h, t));
@@ -98,18 +109,46 @@ export class ReconnectingLyricsSocket {
       return;
     }
     this.ws = socket;
+    const attempt = ++this.generation;
+
+    // A constructor that returns does not mean a connection: a socket can sit in
+    // CONNECTING for as long as the peer leaves it there, and neither onclose nor
+    // onerror ever fires. Reconnects were scheduled only from those two, so such
+    // an attempt was the last one the plugin ever made.
+    this.clearOpenTimer();
+    this.openTimer = this.setTimeoutFn(() => {
+      this.openTimer = null;
+      if (attempt !== this.generation || this.closedByUser) {
+        return;
+      }
+      this.log("connection attempt timed out");
+      try {
+        socket.close();
+      } catch (error) {
+        this.log("closing a timed-out attempt failed", error);
+      }
+      this.scheduleReconnect();
+    }, this.openTimeoutMs);
 
     socket.onopen = () => {
+      if (attempt !== this.generation) {
+        return;
+      }
+      this.clearOpenTimer();
       this.backoff = this.minBackoffMs;
       this.log("connected");
       this.onOpen();
     };
     socket.onmessage = (event: MessageEvent) => {
-      if (typeof event.data === "string") {
+      if (attempt === this.generation && typeof event.data === "string") {
         this.onMessage(event.data);
       }
     };
     socket.onclose = () => {
+      if (attempt !== this.generation) {
+        return;
+      }
+      this.clearOpenTimer();
       this.log("disconnected");
       this.scheduleReconnect();
     };
@@ -132,9 +171,34 @@ export class ReconnectingLyricsSocket {
     }, delay);
   }
 
-  /** Send a text frame if connected; returns whether it was sent. */
+  private clearOpenTimer(): void {
+    if (this.openTimer !== null) {
+      this.clearTimeoutFn(this.openTimer);
+      this.openTimer = null;
+    }
+  }
+
+  /** Whether the socket has room for another frame.
+   *
+   * A receiver that stops reading does not close the connection: the browser keeps
+   * accepting frames into its own buffer, so send() reporting success meant only
+   * that nothing threw. Ticks kept arriving and the buffer kept growing.
+   */
+  get writable(): boolean {
+    return this.isOpen && this.ws !== null && this.ws.bufferedAmount <= this.maxBufferedBytes;
+  }
+
+  /** Queue a text frame if the socket is open and not already backed up.
+   *
+   * Named for what it does: the browser owns delivery from here, so a true return
+   * means the frame was handed over, not that the receiver has seen it.
+   */
   send(data: string): boolean {
     if (!this.isOpen || this.ws === null) {
+      return false;
+    }
+    if (this.ws.bufferedAmount > this.maxBufferedBytes) {
+      this.log(`dropping a frame: ${this.ws.bufferedAmount} bytes already queued`);
       return false;
     }
     try {
@@ -148,6 +212,8 @@ export class ReconnectingLyricsSocket {
 
   close(): void {
     this.closedByUser = true;
+    this.generation += 1;
+    this.clearOpenTimer();
     if (this.reconnectTimer !== null) {
       this.clearTimeoutFn(this.reconnectTimer);
       this.reconnectTimer = null;

@@ -192,4 +192,29 @@ describe("probeAppleMusicLyrics", () => {
     expect(result.previousLine?.id).toBe("L1");
     expect(result.nextLine?.id).toBe("L3");
   });
+
+  it("does not ask again for a song that has no lyrics", async () => {
+    // Every miss cleared the cache, so the next probe — a second later — asked
+    // Apple Music for the same song again, for as long as it played.
+    const mkfetch = vi.fn().mockResolvedValue({ data: { data: [{}] } });
+    const globals = {
+      CiderApp: { mkfetch, musicKitStore: { player: { nowPlayingId: "song-quiet" } } },
+      MusicKit: {
+        getInstance: () => ({
+          currentPlaybackTime: 0,
+          nowPlayingItem: { id: "song-quiet", attributes: { durationInMillis: 6000 } },
+        }),
+      },
+    };
+
+    const first = await probeAppleMusicLyrics(globals);
+    const calls = mkfetch.mock.calls.length;
+    const second = await probeAppleMusicLyrics(globals);
+    const third = await probeAppleMusicLyrics(globals);
+
+    expect(first.found).toBe(false);
+    expect(second.found).toBe(false);
+    expect(third.found).toBe(false);
+    expect(mkfetch.mock.calls.length).toBe(calls);
+  });
 });

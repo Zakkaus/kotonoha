@@ -21,7 +21,8 @@ describe("probePlayback", () => {
     };
 
     expect(probePlayback(globals)).toEqual({
-      nowPlayingItem: { title: "Song" },
+      // Projected, not forwarded: only the three fields the receiver reads.
+      nowPlayingItem: { title: "Song", artistName: null, albumName: null },
       isPlaying: true,
       currentPlaybackTime: 42,
       audioCurrentTime: 42.5,
@@ -69,7 +70,8 @@ describe("probePlayback", () => {
     };
 
     expect(probePlayback(globals)).toMatchObject({
-      nowPlayingItem,
+      // The nested attributes shape is read and flattened to what the receiver takes.
+      nowPlayingItem: { title: "Current Song", artistName: null, albumName: null },
       isPlaying: true,
       currentPlaybackTime: 41,
       currentPlaybackDuration: 180,
@@ -98,5 +100,17 @@ describe("probePlayback", () => {
       currentTime: 42.5,
       isPlaying: true,
     });
+  });
+
+  it("survives an item Cider made cyclic", () => {
+    // The raw object was forwarded whole and the frame is JSON.stringify'd, so a
+    // cycle threw and no frame was delivered at all — with logging off, silently.
+    const cyclic: Record<string, unknown> = { attributes: { name: "Looped", artistName: "A" } };
+    cyclic.self = cyclic;
+
+    const probe = probePlayback({ MusicKit: { getInstance: () => ({ nowPlayingItem: cyclic }) } });
+
+    expect(probe.nowPlayingItem).toEqual({ title: "Looped", artistName: "A", albumName: null });
+    expect(() => JSON.stringify(probe)).not.toThrow();
   });
 });

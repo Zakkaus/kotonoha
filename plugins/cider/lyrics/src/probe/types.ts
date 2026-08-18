@@ -43,8 +43,19 @@ export type LyricsProbe = {
   error?: string;
 };
 
+/** The track identity the receiver reads, projected out of Cider's own object.
+ *
+ * Only these three fields are consumed; the raw object was forwarded whole, and a
+ * cyclic one makes JSON.stringify throw, which drops the entire frame.
+ */
+export type NowPlayingItem = {
+  title: string | null;
+  artistName: string | null;
+  albumName: string | null;
+};
+
 export type PlaybackProbe = {
-  nowPlayingItem: unknown;
+  nowPlayingItem: NowPlayingItem | null;
   isPlaying?: boolean;
   currentPlaybackTime?: number;
   currentPlaybackDuration?: number;

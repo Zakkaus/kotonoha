@@ -126,18 +126,51 @@ function startTickLoop() {
   }, Math.max(30, config.tickMs));
 }
 
+/** How long one payload build may take before probing gives up on it. */
+const BUILD_TIMEOUT_MS = 15_000;
+/** Rises per replacement build so a late one cannot overwrite a newer frame. */
+let buildGeneration = 0;
+
+/** Build a payload, refusing to wait for one that never settles.
+ *
+ * `building` is held for the whole build, and a request that neither resolves nor
+ * rejects left it held for ever: every later probe returned at the guard and the
+ * overlay stopped receiving frames for the rest of the session, with nothing said.
+ */
+async function buildPayload(): Promise<Awaited<ReturnType<typeof createProbePayload>> | null> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<null>((resolve) => {
+    timer = setTimeout(() => resolve(null), BUILD_TIMEOUT_MS);
+  });
+  try {
+    const payload = await Promise.race([
+      createProbePayload({ globals: window, version: PluginConfig.version }),
+      deadline,
+    ]);
+    if (payload === null) {
+      log(`payload build exceeded ${BUILD_TIMEOUT_MS}ms; dropping this probe`);
+    }
+    return payload;
+  } finally {
+    if (timer !== undefined) {
+      clearTimeout(timer);
+    }
+  }
+}
+
 /** Sample Cider state; send only when the situation changed or a heartbeat is due. */
 async function tick() {
   if (building || socket === undefined || !socket.isOpen) {
     return;
   }
   building = true;
+  const generation = ++buildGeneration;
   try {
     const config = currentConfig();
-    const payload = await createProbePayload({
-      globals: window,
-      version: PluginConfig.version,
-    });
+    const payload = await buildPayload();
+    if (payload === null || generation !== buildGeneration) {
+      return;
+    }
     const signature = frameSignature(payload);
     const now = Date.now();
 
@@ -159,11 +192,14 @@ async function pushFrame(reason: FrameReason) {
   if (socket === undefined) {
     return;
   }
+  const generation = ++buildGeneration;
   try {
-    const payload = await createProbePayload({
-      globals: window,
-      version: PluginConfig.version,
-    });
+    const payload = await buildPayload();
+    if (payload === null || generation !== buildGeneration) {
+      // A newer build started while this one was in flight; sending now would put
+      // the older track back on the overlay.
+      return;
+    }
     sendBuiltPayload(payload, reason, frameSignature(payload), Date.now());
   } catch (error) {
     log("pushFrame failed", error);

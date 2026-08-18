@@ -125,6 +125,22 @@ async function fetchLyrics(globals: CiderGlobals, songId: string): Promise<Lyric
   };
 }
 
+/** How long a song that produced no lyrics is left alone before trying again. */
+const RETRY_AFTER_MS = 60_000;
+/** Songs whose lookup failed, and when. Bounded so it cannot grow with a queue. */
+const failedSongs = new Map<string, number>();
+const MAX_REMEMBERED_FAILURES = 64;
+
+function rememberFailure(songId: string): void {
+  if (failedSongs.size >= MAX_REMEMBERED_FAILURES) {
+    const oldest = failedSongs.keys().next();
+    if (!oldest.done) {
+      failedSongs.delete(oldest.value);
+    }
+  }
+  failedSongs.set(songId, Date.now());
+}
+
 export async function probeAppleMusicLyrics(globals: CiderGlobals): Promise<LyricsProbe> {
   const songId = currentSongId(globals);
   const playbackTime = currentPlaybackTime(globals);
@@ -137,11 +153,21 @@ export async function probeAppleMusicLyrics(globals: CiderGlobals): Promise<Lyri
     return withCurrentLine(currentLyrics, playbackTime);
   }
 
+  const failedAt = failedSongs.get(songId);
+  if (failedAt !== undefined && Date.now() - failedAt < RETRY_AFTER_MS) {
+    // Every miss used to clear the cache, so the next probe — a second later —
+    // asked Apple Music for the same song again, for as long as it played. A song
+    // with no lyrics at all was retried continuously.
+    return emptyLyricsProbe(songId, playbackTime, "No lyrics for this song");
+  }
+
   try {
     currentLyrics = await fetchLyrics(globals, songId);
+    failedSongs.delete(songId);
     return withCurrentLine(currentLyrics, playbackTime);
   } catch (error) {
     currentLyrics = null;
+    rememberFailure(songId);
     return emptyLyricsProbe(songId, playbackTime, error instanceof Error ? error.message : String(error));
   }
 }
