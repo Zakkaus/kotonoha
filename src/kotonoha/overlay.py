@@ -585,7 +585,10 @@ class LyricsOverlay(QWidget):
         next_line = self._convert_line(snapshot.next)
         self._set_context_text(self._prev_label, previous.text if previous else "")
         self._set_context_text(self._next_label, next_line.text if next_line else "")
-        self._current.set_line(current, snapshot.word_karaoke)
+        # The snapshot says the timing exists; the setting says whether to use it.
+        # Only the snapshot was consulted, so "Word-by-word highlight" had no
+        # effect at all — it saved, it translated, and it changed nothing.
+        self._current.set_line(current, snapshot.word_karaoke and self._config.karaoke)
 
         if self._config.show_translation and current.translation:
             # Reuse the current line's time range so the translation sweeps in sync.

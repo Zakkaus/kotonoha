@@ -860,3 +860,28 @@ def test_a_returning_output_is_matched_by_name_not_by_its_old_mode(qapp):
     overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_turning_off_word_highlight_stops_the_word_sweep(qapp):
+    # Only the snapshot's own timing flag was consulted, so the settings checkbox
+    # saved, translated into four languages, and changed nothing.
+    from kotonoha.model import LyricLine, LyricsSnapshot, LyricWord
+
+    words = (LyricWord(0.0, 0.5, "你"), LyricWord(0.5, 1.0, "好"))
+    line = LyricLine(0, "L0", 0.0, 4.0, "你好", "", words)
+    snapshot = LyricsSnapshot(
+        found=True, timing="Word", title="Song", artist="Artist", duration_s=100.0,
+        current=line, current_time=0.2, is_playing=True,
+    )
+
+    on = LyricsOverlay(LyricsState(), Config(karaoke=True), UnavailableController())
+    off = LyricsOverlay(LyricsState(), Config(karaoke=False), UnavailableController())
+    on._on_snapshot(snapshot)
+    off._on_snapshot(snapshot)
+
+    assert on._current._word_mode is True
+    assert off._current._word_mode is False, "the word-highlight setting did nothing"
+    for overlay in (on, off):
+        overlay._render_timer.stop()
+        overlay.deleteLater()
+    qapp.processEvents()
