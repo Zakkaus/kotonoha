@@ -507,7 +507,10 @@ async def test_one_caller_leaving_does_not_cancel_the_other():
     resolver = LyricsResolver()
     started = asyncio.Event()
 
-    async def slow(*_args, **_kwargs):
+    async def slow(
+        session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
+    ) -> ResolvedLyrics | None:
+        del session, track, sources
         started.set()
         await asyncio.sleep(0.2)
         return None
@@ -531,9 +534,13 @@ async def test_the_resolver_can_stop_the_work_it_started():
     resolver = LyricsResolver()
     started = asyncio.Event()
 
-    async def never(*_args, **_kwargs):
+    async def never(
+        session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
+    ) -> ResolvedLyrics | None:
+        del session, track, sources
         started.set()
         await asyncio.Event().wait()
+        return None
 
     resolver._resolve_once = never
     caller = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
