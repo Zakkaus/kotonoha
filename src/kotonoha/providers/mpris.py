@@ -6,8 +6,9 @@ import asyncio
 import contextlib
 import logging
 import time
+from collections.abc import Awaitable
 from dataclasses import replace
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeVar
 
 import aiohttp
 
@@ -33,6 +34,12 @@ from .mpris_track import (
 )
 
 logger = logging.getLogger(__name__)
+
+#: How long one D-Bus reply may take. A local method call answers in milliseconds;
+#: this is a deadline for a player that never answers at all.
+DBUS_CALL_TIMEOUT = 2.0
+
+_T = TypeVar("_T")
 
 MPRIS_PREFIX = "org.mpris.MediaPlayer2."
 MPRIS_PATH = "/org/mpris/MediaPlayer2"
@@ -296,29 +303,44 @@ class MprisProvider:
             return None
 
     @staticmethod
-    async def _safe_status(player: Any) -> str:
+    async def _ask(what: str, call: Awaitable[Any], default: _T) -> Any | _T:
+        """Await one D-Bus reply, giving up rather than waiting for ever.
+
+        Catching exceptions is not enough on this boundary: a player that owns its
+        bus name and simply never answers is not an error, it is silence, and this
+        provider has exactly one poll task. Without a deadline that task waits
+        inside the call and every other player stops being looked at too.
+        """
         try:
-            return await player.get_playback_status()
+            return await asyncio.wait_for(call, timeout=DBUS_CALL_TIMEOUT)
+        except TimeoutError:
+            logger.debug("%s did not answer within %.1fs", what, DBUS_CALL_TIMEOUT)
+            return default
         except Exception as exc:  # noqa: BLE001 - D-Bus boundary
-            logger.debug("status read failed: %s", exc)
-            return ""
+            logger.debug("%s failed: %s", what, exc)
+            return default
+
+    @staticmethod
+    async def _safe_status(player: Any) -> str:
+        return await MprisProvider._ask("status read", player.get_playback_status(), "")
 
     async def _safe_identity(self) -> str:
-        try:
-            if self._props_iface is None:
-                return ""
-            identity = await self._props_iface.call_get("org.mpris.MediaPlayer2", "Identity")
-            return str(getattr(identity, "value", identity))
-        except Exception as exc:  # noqa: BLE001 - D-Bus boundary
-            logger.debug("identity read failed: %s", exc)
+        if self._props_iface is None:
             return ""
+        identity = await self._ask(
+            "identity read", self._props_iface.call_get("org.mpris.MediaPlayer2", "Identity"), None
+        )
+        return "" if identity is None else str(getattr(identity, "value", identity))
 
     @staticmethod
     async def _safe_info(player: Any) -> TrackInfo | None:
+        metadata = await MprisProvider._ask("metadata read", player.get_metadata(), None)
+        if metadata is None:
+            return None
         try:
-            return parse_metadata(_unwrap(await player.get_metadata()))
+            return parse_metadata(_unwrap(metadata))
         except Exception as exc:  # noqa: BLE001 - D-Bus boundary
-            logger.debug("metadata read failed while selecting player: %s", exc)
+            logger.debug("metadata parse failed while selecting player: %s", exc)
             return None
 
     def _selection_score(self, record: tuple[Any, str, str, TrackInfo]) -> tuple[int, int, int, int]:

@@ -891,3 +891,29 @@ async def test_the_picker_marks_the_player_the_poll_would_follow(monkeypatch):
     assert marked == ["org.mpris.MediaPlayer2.b-paused-song"], (
         "the picker marked a player the poll would not follow"
     )
+
+
+async def test_a_player_that_never_answers_does_not_stop_the_poll(monkeypatch):
+    # Catching exceptions is not enough on this boundary: a player that owns its
+    # bus name and simply never replies is silence, not an error, and this provider
+    # has one poll task. Without a deadline that task waits inside the call and
+    # every other player stops being looked at too.
+    class Silent:
+        async def get_playback_status(self) -> str:
+            await asyncio.Event().wait()
+            return ""
+
+        async def get_metadata(self) -> dict[str, object]:
+            await asyncio.Event().wait()
+            return {}
+
+    # A short deadline for the test: the point is that one exists, not its value.
+    monkeypatch.setattr(mpris_module, "DBUS_CALL_TIMEOUT", 0.05)
+    started = asyncio.get_running_loop().time()
+    status = await MprisProvider._safe_status(Silent())
+    info = await MprisProvider._safe_info(Silent())
+    elapsed = asyncio.get_running_loop().time() - started
+
+    assert status == ""
+    assert info is None
+    assert elapsed < 1.0, f"the reads took {elapsed:.1f}s"
