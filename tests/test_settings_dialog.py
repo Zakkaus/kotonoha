@@ -754,7 +754,9 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
 
     dialog = SettingsDialog(Config())
     for index in range(dialog._sources_list.count()):
-        dialog._sources_list.item(index).setCheckState(Qt.CheckState.Unchecked)
+        row = dialog._sources_list.item(index)
+        assert row is not None
+        row.setCheckState(Qt.CheckState.Unchecked)
 
     shown = dialog._selected_sources()
 
