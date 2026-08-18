@@ -19,6 +19,7 @@ import os
 from pathlib import Path
 
 import pytest
+from conftest import LIVE_SESSION
 
 import kotonoha
 from kotonoha.platform import native
@@ -197,11 +198,11 @@ def test_a_non_wayland_session_is_not_reported_as_a_broken_bridge(stub_load):
     assert ctl.blur_disabled_reason == "session"
 
 
-# conftest pins QT_QPA_PLATFORM to offscreen unless the caller set it, so this runs
-# only when someone points it at a real session: QT_QPA_PLATFORM=wayland uv run pytest
+# conftest forces the offscreen platform unless the caller opts in by name, so this
+# runs only when asked for: KOTONOHA_TEST_LIVE_SESSION=1 uv run pytest
 @pytest.mark.skipif(
-    not os.environ.get("WAYLAND_DISPLAY") or os.environ.get("QT_QPA_PLATFORM") != "wayland",
-    reason="needs a live Wayland session (QT_QPA_PLATFORM=wayland); CI runs offscreen",
+    not LIVE_SESSION or not os.environ.get("WAYLAND_DISPLAY"),
+    reason="needs a live Wayland session (KOTONOHA_TEST_LIVE_SESSION=1); CI runs offscreen",
 )
 def test_blur_objects_do_not_accumulate_across_surface_rebuilds():
     """Live lifecycle check against whatever compositor is running.

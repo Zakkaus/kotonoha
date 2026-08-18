@@ -11,17 +11,29 @@ from __future__ import annotations
 
 import os
 
-# Assignment, not setdefault: these tests assert what an offscreen platform does —
-# that it is not Wayland, that it has no blur protocol, that it can set window
-# opacity. A session that already exported QT_QPA_PLATFORM used to win, so running
-# the suite from a Wayland desktop failed four settings-dialog tests against the
-# real compositor while CI, whose environment is bare, saw nothing. WAYLAND_DISPLAY
-# goes with it: the blur bridge reads the session, not the Qt platform name.
-os.environ["QT_QPA_PLATFORM"] = "offscreen"
-os.environ.pop("WAYLAND_DISPLAY", None)
+#: Set to "1" to run against the session that is actually there, for the tests that
+#: need a live compositor. Anything else — including simply running from a Wayland
+#: desktop — gets the offscreen platform.
+LIVE_SESSION = os.environ.get("KOTONOHA_TEST_LIVE_SESSION") == "1"
 
-import pytest
-from PyQt6.QtWidgets import QApplication
+# These tests assert what an offscreen platform does: that it is not Wayland, that it
+# has no blur protocol, that it can set window opacity. An inherited QT_QPA_PLATFORM
+# used to win, so running the suite from a Wayland desktop checked four
+# settings-dialog assertions against the real compositor while CI, whose environment
+# is bare, saw nothing. Overriding unconditionally fixed that and took the live
+# lifecycle test with it — it could no longer be asked for at all. So the session is
+# forced away unless the caller opts in by name, which an ambient desktop cannot do
+# by accident. WAYLAND_DISPLAY goes with the platform name: the blur bridge reads the
+# session, not what Qt was told.
+if not LIVE_SESSION:
+    os.environ["QT_QPA_PLATFORM"] = "offscreen"
+    os.environ.pop("WAYLAND_DISPLAY", None)
+
+# E402: the platform has to be chosen before PyQt6 is imported, because Qt reads
+# QT_QPA_PLATFORM when the module initialises. Moving these up would make the
+# block above run too late to have any effect.
+import pytest  # noqa: E402
+from PyQt6.QtWidgets import QApplication  # noqa: E402
 
 
 @pytest.fixture(scope="session", autouse=True)
