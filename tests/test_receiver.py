@@ -1,8 +1,9 @@
 import json
+import math
 from typing import cast
 
 import pytest
-from aiohttp import web
+from aiohttp import WSServerHandshakeError, web
 
 pytest.importorskip("PyQt6.QtCore")
 pytest.importorskip("aiohttp")
@@ -180,3 +181,68 @@ def test_closed_gate_retains_tick_without_publishing_cider_content():
     timing = gate.current_timing(TrackMetadata("Song", "X"))
     assert timing is not None
     assert timing.current_time == 3.0
+
+
+async def test_a_web_page_cannot_drive_the_overlay():
+    # Binding to loopback keeps other machines out; it does not keep out a page the
+    # user happens to be visiting, which can post to 127.0.0.1 like any other URL.
+    # Measured before this check, such a POST was accepted and replaced what the
+    # overlay was showing.
+    state = LyricsState()
+    receiver = LyricsReceiver(state)
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        frame = json.dumps({"lyrics": {"lines": [{"text": "injected", "start": 0}]}, "track": {"title": "X"}})
+
+        blocked = await client.post(WS_PATH, data=frame, headers={"Origin": "https://evil.example"})
+        assert blocked.status == 403
+        # The status alone proves nothing about what the overlay is showing.
+        assert state.snapshot.title != "X", "a refused frame still reached the overlay"
+
+        # The handshake is the route a browser actually takes: WebSockets honour no
+        # same-origin rule, so this is the only place a page can be turned away.
+        with pytest.raises(WSServerHandshakeError) as refused:
+            await client.ws_connect(WS_PATH, headers={"Origin": "https://evil.example"})
+        assert refused.value.status == 403
+
+        async with client.ws_connect(WS_PATH, headers={"Origin": "http://localhost:9000"}) as socket:
+            await socket.close()
+
+        # A native client sends no Origin, or a loopback one; neither is refused.
+        for headers in ({}, {"Origin": "http://localhost:9000"}):
+            allowed = await client.post(WS_PATH, data=frame, headers=headers)
+            assert allowed.status == 204, headers
+
+
+async def test_a_frame_that_is_not_text_is_rejected_not_a_server_error():
+    # Only a JSON parse error was converted; bytes that are not text at all escaped
+    # the handler as a 500 with a traceback.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(WS_PATH, data=b"\xff\xfe")
+
+        assert response.status == 400
+
+
+async def test_a_number_json_allows_but_arithmetic_does_not_is_dropped():
+    # JSON accepts 1e1000 and NaN. int() raised OverflowError from inside the
+    # model, and a clock calibrated with a NaN never advances again.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(WS_PATH, data='{"lyrics":{"currentLine":{"index":1e1000}}}')
+
+        assert response.status in (204, 400), "an unrepresentable number reached the handler"
+
+
+async def test_a_tick_carrying_nan_does_not_stop_the_clock():
+    # The lightweight tick path skips the model's parsing, so it needed the same
+    # finiteness check: a clock calibrated with NaN never advances again.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        seen: list[float | None] = []
+        receiver._state.time_ticked.connect(lambda t, _p: seen.append(t))
+
+        response = await client.post(WS_PATH, data='{"reason":"tick","currentTime":NaN,"isPlaying":true}')
+
+        assert response.status == 204
+        assert seen, "the tick never reached the clock at all"
+        assert all(value is None or math.isfinite(value) for value in seen), f"the clock took {seen}"
