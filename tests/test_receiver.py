@@ -2,7 +2,7 @@ import json
 from typing import cast
 
 import pytest
-from aiohttp import web
+from aiohttp import WSServerHandshakeError, web
 
 pytest.importorskip("PyQt6.QtCore")
 pytest.importorskip("aiohttp")
@@ -194,6 +194,17 @@ async def test_a_web_page_cannot_drive_the_overlay():
 
         blocked = await client.post(WS_PATH, data=frame, headers={"Origin": "https://evil.example"})
         assert blocked.status == 403
+        # The status alone proves nothing about what the overlay is showing.
+        assert state.snapshot.title != "X", "a refused frame still reached the overlay"
+
+        # The handshake is the route a browser actually takes: WebSockets honour no
+        # same-origin rule, so this is the only place a page can be turned away.
+        with pytest.raises(WSServerHandshakeError) as refused:
+            await client.ws_connect(WS_PATH, headers={"Origin": "https://evil.example"})
+        assert refused.value.status == 403
+
+        async with client.ws_connect(WS_PATH, headers={"Origin": "http://localhost:9000"}) as socket:
+            await socket.close()
 
         # A native client sends no Origin, or a loopback one; neither is refused.
         for headers in ({}, {"Origin": "http://localhost:9000"}):
