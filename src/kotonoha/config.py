@@ -291,7 +291,10 @@ def save_config(config: Config, path: Path | None = None) -> None:
 def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
     try:
         n = int(value)
-    except (TypeError, ValueError):
+    except (OverflowError, TypeError, ValueError):
+        # OverflowError too: JSON accepts 1e400, int() refuses it, and this runs on
+        # the startup path — an unhandled one meant the application did not start
+        # rather than falling back to the default for that field.
         return default
     return max(low, min(high, n))
 

@@ -311,3 +311,15 @@ def test_a_pipe_at_the_config_path_does_not_block_startup(tmp_path):
         assert finished.wait(5.0), "startup is blocked on a pipe left at the config path"
     finally:
         reader.join(timeout=5.0)
+
+
+def test_a_number_too_large_for_an_int_falls_back_to_the_default(tmp_path):
+    # JSON accepts 1e400 and int() raises OverflowError on it. Unhandled on the
+    # startup path, that meant the application did not start at all.
+    path = tmp_path / "config.json"
+    path.write_text('{"lead_ms": 1e400, "panel_width": 900}', encoding="utf-8")
+
+    loaded = load_config(path)
+
+    assert loaded.lead_ms == Config().lead_ms
+    assert loaded.panel_width == 900, "the rest of the file must still be read"
