@@ -253,3 +253,44 @@ def test_blur_objects_do_not_accumulate_across_surface_rebuilds():
         widget.close()
         widget.deleteLater()
         app.processEvents()
+
+
+def test_the_live_session_opt_in_actually_reaches_the_session(tmp_path):
+    """The opt-in must select the real platform, and its absence must not.
+
+    Run as a subprocess because conftest decides the platform once per process,
+    which is the behaviour under test. Forcing the platform unconditionally is
+    what made the live lifecycle test unreachable; nothing failed when it did,
+    so this asserts both directions.
+    """
+    import subprocess
+    import sys
+    import textwrap
+
+    probe = tmp_path / "probe.py"
+    probe.write_text(
+        textwrap.dedent(
+            """
+            import os, sys
+            sys.path.insert(0, os.environ["CONFTEST_DIR"])
+            import conftest
+            print(conftest.LIVE_SESSION, os.environ.get("QT_QPA_PLATFORM"))
+            """
+        ),
+        encoding="utf-8",
+    )
+    environment = dict(os.environ, CONFTEST_DIR=str(Path(__file__).parent), QT_QPA_PLATFORM="wayland")
+
+    without = subprocess.run(
+        [sys.executable, str(probe)],
+        capture_output=True, text=True, check=True,
+        env={**environment, "KOTONOHA_TEST_LIVE_SESSION": "0"},
+    ).stdout.split()
+    with_optin = subprocess.run(
+        [sys.executable, str(probe)],
+        capture_output=True, text=True, check=True,
+        env={**environment, "KOTONOHA_TEST_LIVE_SESSION": "1"},
+    ).stdout.split()
+
+    assert without == ["False", "offscreen"], "an ambient Wayland session decided the platform"
+    assert with_optin == ["True", "wayland"], "the opt-in did not reach the session"
