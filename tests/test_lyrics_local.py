@@ -183,16 +183,53 @@ def test_a_pipe_where_the_sidecar_should_be_does_not_wedge_the_reader(tmp_path):
         load_local_lyrics(audio)
         finished.set()
 
-    threading.Thread(target=read, daemon=True).start()
+    # Joined rather than left running: if this regresses the thread blocks forever,
+    # and an unowned one would sit there for the rest of the session.
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "the reader is still blocked on a pipe"
+    finally:
+        reader.join(timeout=5.0)
 
-    assert finished.wait(5.0), "the reader is still blocked on a pipe"
 
-
-def test_a_sidecar_larger_than_any_lyric_file_is_not_read_whole(tmp_path):
+def test_a_sidecar_larger_than_any_lyric_file_is_read_only_to_the_bound(tmp_path):
+    # `is not None` was always true whether or not the read was capped. What the
+    # bound actually does is observable at the end of the file: a lyric line past
+    # the ceiling is not returned, while the ones before it are.
     from kotonoha.lyrics.local import MAX_SIDECAR_BYTES
 
     audio = tmp_path / "song.flac"
     audio.touch()
-    (tmp_path / "song.lrc").write_bytes(b"[00:01.00]x\n" + b"A" * (MAX_SIDECAR_BYTES + 4096))
+    (tmp_path / "song.lrc").write_bytes(
+        b"[00:01.00]near the start\n"
+        + b"[00:02.00]" + b"A" * MAX_SIDECAR_BYTES + b"\n"
+        + b"[00:03.00]past the ceiling\n"
+    )
 
-    assert load_local_lyrics(audio) is not None  # it must not raise or hang
+    texts = [line.text for line in load_local_lyrics(audio)]
+
+    assert "near the start" in texts
+    assert "past the ceiling" not in texts, "the whole file was read despite the bound"
+
+
+def test_a_pipe_where_the_audio_file_should_be_is_not_handed_to_the_tag_reader(tmp_path):
+    # The sidecar is not the only player-supplied path: mutagen opens whatever it
+    # is given, so the audio path needs the same check. Only the sidecar had a test.
+    import os
+    import threading
+
+    audio = tmp_path / "song.flac"
+    os.mkfifo(audio)
+    finished = threading.Event()
+
+    def read() -> None:
+        load_local_lyrics(audio)
+        finished.set()
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "the tag reader is blocked on a pipe"
+    finally:
+        reader.join(timeout=5.0)
