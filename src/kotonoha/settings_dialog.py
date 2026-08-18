@@ -62,7 +62,7 @@ from PyQt6.QtWidgets import (
 )
 
 from . import leaf_icon
-from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, VALID_LYRICS_SOURCES, Config
+from .config import ACCENT_PRESETS, DEFAULT_ICON_NAME, LEAD_MS_LIMIT, VALID_LYRICS_SOURCES, Config
 from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, WindowRectangle
 from .players import PlayerInfo
 from .strings import UI_LANGUAGES, t
@@ -702,7 +702,12 @@ class SettingsDialog(QDialog):
         self._font_family.setEditable(False)
         self._font_family.setIconSize(QSize(0, 0))
         self._font_family.setItemDelegate(_FontNameDelegate(self._font_family))
-        self._font_family.setCurrentFont(QFont(self._resolve_font_family(c.font_family)))
+        # What the picker shows for the configured chain. A combo box can only show
+        # one family, so this is remembered to tell "the user picked this" apart
+        # from "the picker is displaying the chain's first installed member".
+        self._font_family_shown = self._resolve_font_family(c.font_family)
+        self._font_family_configured = c.font_family
+        self._font_family.setCurrentFont(QFont(self._font_family_shown))
         form.addRow(t("set.font_family"), self._font_family)
 
         # KDE-style style picker (Regular / Bold / Light / Italic / Condensed …) fed
@@ -768,7 +773,14 @@ class SettingsDialog(QDialog):
         matched = False
         for key, start, end, sweep in ACCENT_PRESETS:
             self._accent.addItem(t(f"accent.{key}"), (start, end, sweep))
-            if start.lower() == c.accent_start.lower():
+            # All three, not just the start: a custom gradient that happens to share
+            # a preset's first colour was selected as that preset, so applying the
+            # dialog replaced the end and sweep the user had actually chosen.
+            if (start.lower(), end.lower(), sweep.lower()) == (
+                c.accent_start.lower(),
+                c.accent_end.lower(),
+                c.accent_sweep.lower(),
+            ):
                 self._accent.setCurrentIndex(self._accent.count() - 1)
                 matched = True
         if not matched:  # a saved custom colour -> one labelled slot
@@ -856,7 +868,9 @@ class SettingsDialog(QDialog):
         self._karaoke.setChecked(c.karaoke)
         form.addRow(self._karaoke)
 
-        self._lead = self._spin(-1000, 1000, c.lead_ms, " ms")
+        # The same bounds Config clamps to. A narrower control silently truncated a
+        # valid saved value the moment the window was opened and applied.
+        self._lead = self._spin(-LEAD_MS_LIMIT, LEAD_MS_LIMIT, c.lead_ms, " ms")
         self._lead.setSingleStep(20)
         self._lead.setToolTip(t("set.lead.tip"))
         form.addRow(t("set.lead"), self._lead)
@@ -950,6 +964,10 @@ class SettingsDialog(QDialog):
             item.setFlags(item.flags() | Qt.ItemFlag.ItemIsUserCheckable)
             item.setCheckState(Qt.CheckState.Checked if source in enabled else Qt.CheckState.Unchecked)
             self._sources_list.addItem(item)
+        # Unchecking every source was accepted here and then quietly undone on
+        # apply, because Config.clamped replaces an empty list with the defaults.
+        self._sources_list.itemChanged.connect(self._keep_one_source_checked)
+        self._keep_one_source_checked()
         layout.addWidget(self._sources_list)
 
         self._prefer_best = QCheckBox(t("set.prefer_best"))
@@ -970,6 +988,34 @@ class SettingsDialog(QDialog):
         self._clear_cache.clicked.connect(lambda _checked=False: self.clear_cache_requested.emit())
         layout.addWidget(self._clear_cache)
         return page
+
+    def _keep_one_source_checked(self, _item: QListWidgetItem | None = None) -> None:
+        """Put the last enabled lyric source back when it is unchecked.
+
+        A configuration with no source at all is not storable — Config.clamped
+        replaces an empty list with the defaults — so unchecking everything was
+        accepted here and quietly undone on apply. Restoring it keeps the panel
+        showing what will actually be saved.
+
+        Signals are blocked while restoring because setCheckState emits
+        itemChanged, which is this handler: without that it recurses until the
+        interpreter dies, which is how the first version of this was found.
+
+        Bound method, not a lambda: PyQt holds a bound method's receiver weakly, so
+        the connection dies with the dialog.
+        """
+        rows = [self._sources_list.item(i) for i in range(self._sources_list.count())]
+        if any(row is not None and row.checkState() == Qt.CheckState.Checked for row in rows):
+            return
+        first = next((row for row in rows if row is not None), None)
+        if first is None:
+            return
+        blocked = self._sources_list.signalsBlocked()
+        self._sources_list.blockSignals(True)
+        try:
+            first.setCheckState(Qt.CheckState.Checked)
+        finally:
+            self._sources_list.blockSignals(blocked)
 
     def _selected_sources(self) -> list[str]:
         sources: list[str] = []
@@ -1108,6 +1154,20 @@ class SettingsDialog(QDialog):
             spin.setSuffix(suffix)
         return spin
 
+    def _chosen_font_family(self) -> str:
+        """The font setting to store, preserving a fallback chain nobody edited.
+
+        The configured value may be a list — "DejaVu Sans, Noto Sans, sans-serif" —
+        which exists so a family without CJK glyphs still renders the lyrics this
+        program is mostly used for. The picker can only show one of them, and
+        writing that one back turned the chain into its first member on any apply,
+        including one where the user never touched the control.
+        """
+        selected = self._font_family.currentFont().family()
+        if selected == self._font_family_shown:
+            return self._font_family_configured
+        return selected
+
     def current_config(self) -> Config:
         accent_data = self._accent.currentData()
         if accent_data is None:  # the picker entry left selected — keep the current accent
@@ -1123,7 +1183,7 @@ class SettingsDialog(QDialog):
             lyrics_script=str(self._lyrics_script.currentData()),
             icon_name=self._picked_icon(self._tray_icon_list),
             window_icon_name=self._picked_icon(self._window_icon_list),
-            font_family=self._font_family.currentFont().family(),
+            font_family=self._chosen_font_family(),
             font_style=self._font_style.currentText(),
             font_size=self._font_size.value(),
             context_font_size=self._context_font_size.value(),

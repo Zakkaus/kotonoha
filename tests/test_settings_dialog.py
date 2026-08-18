@@ -704,3 +704,62 @@ def test_the_suite_runs_on_the_platform_its_assertions_describe(qapp) -> None:
 
     assert QGuiApplication.platformName() == "offscreen"
     assert "WAYLAND_DISPLAY" not in os.environ
+
+
+def test_opening_settings_does_not_narrow_a_saved_sync_offset(qapp) -> None:
+    # The spin box spanned half of what Config accepts, so a valid saved offset was
+    # truncated the moment the window was opened and applied — without the user
+    # touching the control.
+    from kotonoha.config import LEAD_MS_LIMIT
+
+    for value in (LEAD_MS_LIMIT, -LEAD_MS_LIMIT):
+        dialog = SettingsDialog(Config(lead_ms=value))
+        assert dialog.current_config().lead_ms == value
+        dialog.close()
+
+
+def test_a_custom_accent_sharing_a_preset_start_keeps_its_own_colours(qapp) -> None:
+    # Recognition compared only the first colour, so a custom gradient beginning on
+    # a preset's start was applied as that preset and lost its end and sweep.
+    from kotonoha.config import ACCENT_PRESETS
+
+    _key, start, end, sweep = ACCENT_PRESETS[0]
+    custom = Config(accent_start=start, accent_end="#010203", accent_sweep="#040506")
+
+    applied = SettingsDialog(custom).current_config()
+
+    assert (applied.accent_end, applied.accent_sweep) == ("#010203", "#040506")
+
+    preset = SettingsDialog(Config(accent_start=start, accent_end=end, accent_sweep=sweep)).current_config()
+    assert (preset.accent_start, preset.accent_end, preset.accent_sweep) == (start, end, sweep)
+
+
+def test_an_unedited_font_fallback_chain_survives_apply(qapp) -> None:
+    # The configured value may be a list, which exists so a family without CJK
+    # glyphs still renders the lyrics this program is mostly used for. The picker
+    # shows one family, and writing that one back turned the chain into its first
+    # member on any apply — including one where nobody touched the control.
+    chain = "DejaVu Sans, Noto Sans, sans-serif"
+
+    dialog = SettingsDialog(Config(font_family=chain))
+
+    assert dialog.current_config().font_family == chain
+    dialog.close()
+
+
+def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
+    # Unchecking every source was accepted and then quietly undone on apply,
+    # because a configuration with no source at all is not storable.
+    from PyQt6.QtCore import Qt
+
+    dialog = SettingsDialog(Config())
+    for index in range(dialog._sources_list.count()):
+        row = dialog._sources_list.item(index)
+        assert row is not None
+        row.setCheckState(Qt.CheckState.Unchecked)
+
+    shown = dialog._selected_sources()
+
+    assert shown, "the panel offered a state that cannot be stored"
+    assert shown == dialog.current_config().lyrics_sources
+    dialog.close()
