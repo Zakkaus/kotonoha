@@ -302,6 +302,12 @@ def test_a_pipe_at_the_config_path_does_not_block_startup(tmp_path):
         load_config(path)
         finished.set()
 
-    threading.Thread(target=read, daemon=True).start()
-
-    assert finished.wait(5.0), "startup is blocked on a pipe left at the config path"
+    # Joined rather than left running: if this regresses the thread blocks forever,
+    # and an unowned one would keep the interpreter's thread state alive for the
+    # rest of the session with nothing to report it.
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        assert finished.wait(5.0), "startup is blocked on a pipe left at the config path"
+    finally:
+        reader.join(timeout=5.0)
