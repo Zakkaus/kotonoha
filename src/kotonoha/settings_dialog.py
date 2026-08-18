@@ -245,6 +245,11 @@ QPushButton {
 }
 QPushButton:hover { background: %BTN_HOVER%; }
 QPushButton:pressed { background: %BTN_PRESSED%; }
+/* The lists already suppress Qt's dotted focus rectangle; the buttons did not, so
+   the dialog's default button wore one from the moment it opened. Suppressed here
+   too, and replaced with the accent border — removing the indicator outright would
+   leave keyboard focus invisible. */
+QPushButton:focus { outline: none; border: 1px solid %ACCENT%; }
 """
 
 # Colour tokens per theme. String values fill %TOKEN% in the QSS; the window_* RGBA
