@@ -876,3 +876,20 @@ def test_translation_merging_stays_cheap_as_a_provider_sends_more_lines():
     # Eight times the lines must not cost anything like sixty-four times the work.
     assert large < small * 20 + 0.05, f"merging grew faster than the input: {small:.3f}s -> {large:.3f}s"
     assert merged[0].translation == "trans 0", "the nearest translation is still attached"
+
+
+def test_a_response_full_of_valid_tags_does_not_become_unbounded_lines():
+    # The byte budget upstream still allows tens of thousands of valid tags, and
+    # each becomes an object the overlay holds and the cache stores. Measured
+    # before the cap: 2 MB of tags produced 174,762 lines in 400 ms on the loop.
+    from kotonoha.lyrics.lrc_parser import MAX_LINES
+
+    tag = "[00:01.00]x\n"
+    body = tag * (2 * 1024 * 1024 // len(tag))
+
+    lines = parse_lrc(body)
+
+    assert len(lines) == MAX_LINES
+
+    ordinary = "".join(f"[{i // 60:02d}:{i % 60:02d}.00]line {i}\n" for i in range(120))
+    assert len(parse_lrc(ordinary)) == 120, "an ordinary lyric sheet must be untouched"

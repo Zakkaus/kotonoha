@@ -125,3 +125,26 @@ def test_controller_persists_track_offset(qapp, monkeypatch):
     controller._overlay._render_timer.stop()
     controller._overlay.deleteLater()
     qapp.processEvents()
+
+
+def test_a_restart_that_cannot_start_the_replacement_stays_up(qapp, monkeypatch):
+    # The result was discarded and this instance quit regardless, so a replacement
+    # that could not be spawned looked exactly like a successful restart — and left
+    # the user with nothing running.
+    from PyQt6.QtCore import QProcess
+
+    from kotonoha import controller as controller_module
+
+    monkeypatch.setattr(QProcess, "startDetached", staticmethod(lambda *_a, **_k: (False, 0)))
+    quits: list[bool] = []
+
+    class Stub:
+        def quit(self) -> None:
+            quits.append(True)
+
+    instance = object.__new__(controller_module.AppController)
+    instance._app = Stub()
+
+    instance._restart()
+
+    assert quits == [], "the running instance quit although nothing replaced it"
