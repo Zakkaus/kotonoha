@@ -732,3 +732,32 @@ def test_a_custom_accent_sharing_a_preset_start_keeps_its_own_colours(qapp) -> N
 
     preset = SettingsDialog(Config(accent_start=start, accent_end=end, accent_sweep=sweep)).current_config()
     assert (preset.accent_start, preset.accent_end, preset.accent_sweep) == (start, end, sweep)
+
+
+def test_an_unedited_font_fallback_chain_survives_apply(qapp) -> None:
+    # The configured value may be a list, which exists so a family without CJK
+    # glyphs still renders the lyrics this program is mostly used for. The picker
+    # shows one family, and writing that one back turned the chain into its first
+    # member on any apply — including one where nobody touched the control.
+    chain = "DejaVu Sans, Noto Sans, sans-serif"
+
+    dialog = SettingsDialog(Config(font_family=chain))
+
+    assert dialog.current_config().font_family == chain
+    dialog.close()
+
+
+def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
+    # Unchecking every source was accepted and then quietly undone on apply,
+    # because a configuration with no source at all is not storable.
+    from PyQt6.QtCore import Qt
+
+    dialog = SettingsDialog(Config())
+    for index in range(dialog._sources_list.count()):
+        dialog._sources_list.item(index).setCheckState(Qt.CheckState.Unchecked)
+
+    shown = dialog._selected_sources()
+
+    assert shown, "the panel offered a state that cannot be stored"
+    assert shown == dialog.current_config().lyrics_sources
+    dialog.close()
