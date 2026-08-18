@@ -6,7 +6,7 @@ Version:        0.1.0
 Release:        1%{?dist}
 Summary:        Desktop lyrics overlay for Linux
 
-License:        MIT AND BSD-2-Clause
+License:        MIT AND LGPL-2.1-or-later
 URL:            https://github.com/locez/kotonoha
 Source0:        %{name}-%{version}.tar.gz
 Source1:        qasync-0.28.0-py3-none-any.whl

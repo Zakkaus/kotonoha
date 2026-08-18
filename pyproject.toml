@@ -23,8 +23,13 @@ readme = "README.md"
 authors = [
   { name = "Locez", email = "locez@locez.com" }
 ]
-license = "MIT"
-license-files = ["LICENSE"]
+# The default build compiles src/kotonoha/protocols/blur.xml into
+# libkoto-layer.so, and that protocol is LGPL-2.1-or-later. The wheel carries
+# the resulting object, so the expression has to cover it.
+license = "MIT AND LGPL-2.1-or-later"
+# The MIT text covers this project; the LGPL text accompanies the KDE blur
+# protocol compiled into libkoto-layer.so, which the expression above names.
+license-files = ["LICENSE", "LICENSES/*.txt"]
 # 3.13 and newer are what development targets and what a release is checked
 # against. 3.11 and 3.12 install and pass CI today, but they are not a
 # guarantee: a change that only they would break is not a release blocker.

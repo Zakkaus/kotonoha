@@ -211,7 +211,7 @@ def test_fedora_spec_declares_metadata_and_dependencies() -> None:
             "%global debug_package %{nil}",
             "Version:        0.1.0",
             "Release:        1%{?dist}",
-            "License:        MIT AND BSD-2-Clause",
+            "License:        MIT AND LGPL-2.1-or-later",
             "URL:            https://github.com/locez/kotonoha",
             "Source0:        %{name}-%{version}.tar.gz",
             "Source1:        qasync-0.28.0-py3-none-any.whl",
@@ -417,3 +417,28 @@ def test_the_declared_python_floor_matches_what_ci_runs() -> None:
     # 3.13 and up are the guaranteed range, so they must always be in the matrix.
     for guaranteed in ("3.13", "3.14"):
         assert guaranteed in matrix, f"{guaranteed} is promised but not run"
+
+
+def test_every_declared_licence_has_its_text_packaged() -> None:
+    """A licence the artefact declares must travel with it.
+
+    The built .so links the KDE blur protocol, which is LGPL-2.1-or-later, so the
+    expression names it — and naming it obliges the distribution to carry the
+    text. Only the MIT text was packaged before.
+    """
+    pyproject = tomllib.loads(read_packaging_file(PROJECT_ROOT / "pyproject.toml"))
+    project = pyproject["project"]
+    declared = {part.strip() for part in project["license"].split(" AND ")}
+    patterns = project["license-files"]
+
+    packaged = {
+        path.name
+        for pattern in patterns
+        for path in PROJECT_ROOT.glob(pattern)
+    }
+
+    assert "MIT" in declared and "LICENSE" in packaged
+    for licence in declared - {"MIT"}:
+        assert any(licence in name for name in packaged), (
+            f"{licence} is declared but its text is not packaged: {sorted(packaged)}"
+        )
