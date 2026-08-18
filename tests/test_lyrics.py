@@ -810,3 +810,26 @@ def test_a_parenthesised_letter_stays_part_of_the_performer_name():
 
     track = TrackMetadata("Song", "(G)I-DLE")
     assert evaluate_match(Candidate("c", "Song", "(G)I-DLE", None), track).confidence is MatchConfidence.HIGH
+
+
+def test_a_marker_inside_the_name_is_not_a_version_qualifier():
+    # Scanning the whole base title tagged the name itself: "Live and Learn" came
+    # out tagged `live`, agreed with "Live and Learn (Live)", and the live
+    # recording outranked the studio one the user was actually playing.
+    track = TrackMetadata("Live and Learn", "Crush 40", duration_s=200.0)
+    live = Candidate("live", "Live and Learn (Live)", "Crush 40", 200.0)
+    studio = Candidate("studio", "Live and Learn", "Crush 40", 200.0)
+
+    ranked = ranked_matches([live, studio], track)
+
+    assert [match.candidate.song_id for match in ranked] == ["studio"]
+
+
+def test_a_marker_the_name_ends_on_is_still_a_version_qualifier():
+    # The other half: a track that really is a live version must not take the
+    # plain studio candidate's lyrics.
+    evidence = evaluate_match(
+        Candidate("plain", "Song", "Artist", None), TrackMetadata("Song Live版", "Artist")
+    )
+
+    assert evidence.confidence is MatchConfidence.NONE
