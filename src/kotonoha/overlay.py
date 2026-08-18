@@ -289,7 +289,7 @@ class LyricsOverlay(QWidget):
     def apply_config(self, config: Config) -> None:
         self._config = config
         self._passthrough = config.passthrough
-        self._active_screen = self._configured_screen() or self._active_screen or self.screen()
+        self._set_active_screen(self._configured_screen() or self._active_screen or self.screen())
         self._update_lock_icon()
         self._settings_btn.setIcon(settings_icon(self._control_icon_color()))
         # Configure the pill width for the fit/fixed mode; `avail` is the inner width
@@ -399,6 +399,18 @@ class LyricsOverlay(QWidget):
             None,
         )
 
+    def _set_active_screen(self, screen) -> None:
+        """Record the output the overlay is on, and tell the platform.
+
+        One entry point for all of them: apply_config set the attribute directly
+        and ran before _target_screen ever did, so the early return there meant the
+        adapter was never told at startup. Its _active_output stayed None, and the
+        output lifecycle keyed on it — recognising the active monitor going away,
+        choosing where to rebuild — could not fire for the whole session.
+        """
+        self._active_screen = screen
+        self._platform.set_active_output(self._output(screen))
+
     def _target_screen(self):
         screens = QGuiApplication.screens()
         active = self._active_screen
@@ -410,8 +422,7 @@ class LyricsOverlay(QWidget):
             or self._usable_screen(QApplication.primaryScreen())
             or next((candidate for candidate in screens if self._usable_screen(candidate)), None)
         )
-        self._active_screen = screen
-        self._platform.set_active_output(self._output(screen))
+        self._set_active_screen(screen)
         return screen
 
     @staticmethod
@@ -459,7 +470,7 @@ class LyricsOverlay(QWidget):
         )
         if screen is None:
             return False
-        self._active_screen = screen
+        self._set_active_screen(screen)
         self._bind_widget_screen(screen)
         self._apply_window_geometry()  # the returning output may have a new mode
         self._preserve_layer_pos_on_show = True  # showEvent must keep what we just computed
@@ -931,8 +942,7 @@ class LyricsOverlay(QWidget):
         # grab has ended. This keeps the live drag independent of output origins.
         target_geo = target_screen.geometry()
         global_pos = surface_top_left
-        self._active_screen = target_screen
-        self._platform.set_active_output(self._output(target_screen))
+        self._set_active_screen(target_screen)
         width, height = self._window_size()
         self._layer_pos = self._clamp_to_screen(
             QPoint(global_pos.x() - target_geo.x(), global_pos.y() - target_geo.y()),

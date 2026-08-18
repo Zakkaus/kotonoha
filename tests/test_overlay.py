@@ -884,4 +884,26 @@ def test_turning_off_word_highlight_stops_the_word_sweep(qapp):
     for overlay in (on, off):
         overlay._render_timer.stop()
         overlay.deleteLater()
+
+
+def test_the_platform_learns_which_output_the_overlay_is_on(qapp):
+    # apply_config set the attribute directly and ran before _target_screen ever
+    # did, so the early return there meant the adapter was never told. Its
+    # _active_output stayed None for the session, and the output lifecycle keyed
+    # on it — noticing the active monitor go away, choosing where to rebuild —
+    # could not fire at all.
+    from kotonoha.platform.overlay_contracts import Output
+
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    told: list[Output | None] = []
+
+    def record(output: Output | None) -> None:
+        told.append(output)
+
+    with patch.object(overlay._platform, "set_active_output", record):
+        overlay.apply_config(Config())
+
+    assert told, "the platform was never told which output the overlay is on"
+    overlay._render_timer.stop()
+    overlay.deleteLater()
     qapp.processEvents()
