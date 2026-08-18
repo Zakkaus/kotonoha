@@ -1,4 +1,6 @@
-from kotonoha.clock import MediaClock, estimate_media_time
+import pytest
+
+from kotonoha.clock import STALL_GRACE, MediaClock, estimate_media_time
 
 
 def test_estimate_advances_while_playing():
@@ -157,3 +159,25 @@ def test_sync_without_media_time_is_noop():
     clock.sync(media_time=None, playing=False)  # no time -> ignored, keeps going
     fake.t += 1.0
     assert clock.now() == 12.0
+
+
+def test_a_pause_lands_where_the_player_says_it_stopped():
+    # The pause is only confirmed after the stall grace, and the clock keeps
+    # extrapolating until then. Holding the larger of the estimate and the report
+    # meant the extrapolation won: measured, a player pausing at 10.2s left the
+    # clock at 12.60s, so the lyrics ran 2.4s ahead of the audio from the resume
+    # onward.
+    fake = FakeMonotonic()
+    clock = MediaClock(monotonic=fake)
+    clock.sync(media_time=10.0, playing=True)
+    fake.t += 1.0
+
+    clock.sync(media_time=10.2, playing=False)
+    fake.t += STALL_GRACE + 0.1
+    clock.sync(media_time=10.2, playing=False)
+
+    assert clock.playing is False
+    assert clock.now() == pytest.approx(10.2, abs=0.01), "the clock is not where the player stopped"
+
+    clock.sync(media_time=10.2, playing=True)
+    assert clock.now() == pytest.approx(10.2, abs=0.01), "playback resumes here, so the sweep must too"
