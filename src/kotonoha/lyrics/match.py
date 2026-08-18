@@ -229,12 +229,17 @@ def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
         if suffix_tags:
             tags.update(suffix_tags)
             base = base[: suffix.start()].strip()
-    tags.update(_extract_version_tags(base))
+    # Only a marker the name ends on qualifies it. Scanning the whole base title
+    # tagged the name itself: "Live and Learn" came out tagged `live`, agreed with
+    # "Live and Learn (Live)", and the live recording outranked the studio one the
+    # user was playing. A trailing "Song Live版" is still a qualifier and still
+    # conflicts with a plain candidate, which is what this loop already located.
     for pattern in _VERSION_SUFFIX_PATTERNS:
         suffix_match = pattern.search(base)
         if suffix_match is not None and not base[suffix_match.end() :].strip():
             prefix = base[: suffix_match.start()].rstrip()
             if prefix:
+                tags.update(_extract_version_tags(base[suffix_match.start() :]))
                 base = prefix
                 break
     return base, frozenset(tags)
