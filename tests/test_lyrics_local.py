@@ -164,3 +164,35 @@ def test_loads_embedded_lyrics_from_a_real_vorbis_comment(tmp_path: Path, monkey
     monkeypatch.setattr(mutagen, "File", lambda _: type("Audio", (), {"tags": tags})())
 
     assert [line.text for line in load_local_lyrics(audio)] == ["embedded"]
+
+
+def test_a_pipe_where_the_sidecar_should_be_does_not_wedge_the_reader(tmp_path):
+    # The path comes from a player. Pointed at a FIFO, read_bytes blocked forever
+    # and took a thread-pool worker with it, and the resolver's cancellation could
+    # not reclaim it — every retry leaked another worker until the pool was gone.
+    import os
+    import threading
+
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    os.mkfifo(tmp_path / "song.lrc")
+
+    finished = threading.Event()
+
+    def read() -> None:
+        load_local_lyrics(audio)
+        finished.set()
+
+    threading.Thread(target=read, daemon=True).start()
+
+    assert finished.wait(5.0), "the reader is still blocked on a pipe"
+
+
+def test_a_sidecar_larger_than_any_lyric_file_is_not_read_whole(tmp_path):
+    from kotonoha.lyrics.local import MAX_SIDECAR_BYTES
+
+    audio = tmp_path / "song.flac"
+    audio.touch()
+    (tmp_path / "song.lrc").write_bytes(b"[00:01.00]x\n" + b"A" * (MAX_SIDECAR_BYTES + 4096))
+
+    assert load_local_lyrics(audio) is not None  # it must not raise or hang
