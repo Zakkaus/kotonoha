@@ -192,7 +192,13 @@ class AppController:
         # Relaunch via `python -m kotonoha` so it works whether we were started as
         # the `kotonoha` console script or with `-m`, preserving the CLI args, then
         # quit this instance so its shutdown runs cleanly and the port is released.
-        QProcess.startDetached(sys.executable, ["-m", "kotonoha", *sys.argv[1:]])
+        started, _pid = QProcess.startDetached(sys.executable, ["-m", "kotonoha", *sys.argv[1:]])
+        if not started:
+            # Quitting here would leave the user with nothing running: the result
+            # was discarded and this instance exited regardless, so a replacement
+            # that could not be spawned looked exactly like a successful restart.
+            logger.error("Could not start the replacement process; staying up")
+            return
         logger.info("Restarting to apply settings")
         self._app.quit()
 

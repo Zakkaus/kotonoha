@@ -31,10 +31,19 @@ def _offset_seconds(text: str) -> float:
     return seconds if abs(seconds) <= _MAX_OFFSET_S else 0.0
 
 
+#: More timed lines than any song has. The byte budget upstream still allows a
+#: response of tens of thousands of valid tags, and each one becomes an object the
+#: overlay holds and the cache stores; a lyric sheet runs to a few hundred.
+MAX_LINES = 5000
+
+
 def parse_lrc(text: str) -> list[LyricLine]:
+    """Return timed lines from an LRC body, ignoring anything past MAX_LINES."""
     offset = _offset_seconds(text)
     entries: list[tuple[float, str]] = []
     for raw in text.splitlines():
+        if len(entries) >= MAX_LINES:
+            break
         tags = list(_TIME.finditer(raw))
         if not tags:
             continue
