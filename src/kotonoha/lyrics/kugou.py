@@ -29,6 +29,7 @@ from .match import (
     noisy_title_queries,
     ranked_matches,
 )
+from .payload import read_json_capped
 
 logger = logging.getLogger(__name__)
 
@@ -81,7 +82,7 @@ async def search(session: aiohttp.ClientSession, keyword: str) -> list[Record]:
     params = {"ver": "1", "man": "yes", "client": "pc", "keyword": keyword}
     async with session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "Kugou")
     return _records(data)
 
 
@@ -96,7 +97,7 @@ async def _download_content(session: aiohttp.ClientSession, record: Record, fmt:
     }
     async with session.get(DOWNLOAD_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        data = await response.json(content_type=None)
+        data = await read_json_capped(response, "Kugou")
     if not isinstance(data, dict):
         raise ValueError("Kugou download response is not an object")
     content = data.get("content")

@@ -4,7 +4,7 @@ from typing import cast
 
 import aiohttp
 
-from kotonoha.lyrics import qqmusic
+from kotonoha.lyrics import payload, qqmusic
 
 
 def _b64(text: str) -> str:
@@ -39,9 +39,18 @@ class _Content:
 
     def __init__(self, body: bytes) -> None:
         self._body = body
+        self._cursor = 0
 
     async def read(self, limit: int) -> bytes:
-        return self._body[:limit]
+        """Hand back at most `limit` bytes, as a real socket does.
+
+        A fake that returned the whole body in one call could not catch a reader
+        that stops after its first read — which is what the first version of the
+        cap did, truncating a 307KB response to 114KB.
+        """
+        chunk = self._body[self._cursor : self._cursor + min(limit, 8192)]
+        self._cursor += len(chunk)
+        return chunk
 
 
 class _Response:
@@ -106,11 +115,11 @@ async def test_an_oversized_response_is_refused_rather_than_buffered():
     # A timeout bounds how long a response may take, not how large it may be: a
     # server that streams steadily holds the connection under the limit while the
     # buffered body grows without end.
-    session = _Session("x" * (qqmusic.MAX_RESPONSE_BYTES + 10))
+    session = _Session("x" * (payload.MAX_RESPONSE_BYTES + 10))
 
     try:
         await qqmusic.fetch_payload(cast(aiohttp.ClientSession, session), "mid")
     except ValueError as exc:
-        assert "size limit" in str(exc)
+        assert "exceeded" in str(exc)
     else:
         raise AssertionError("an unbounded body was buffered")

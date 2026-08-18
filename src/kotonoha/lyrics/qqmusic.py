@@ -15,23 +15,12 @@ from ..model import LyricLine
 from .artifact import LyricsArtifact
 from .lrc_parser import merge_translation, parse_lrc
 from .match import TrackMetadata
+from .payload import read_capped
 
 LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
 DETAIL_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
 HEADERS = {"Referer": "https://y.qq.com"}
 TIMEOUT = aiohttp.ClientTimeout(total=6.0, connect=3.0)
-# A timeout bounds how long a response may take, not how large it may be: a server
-# that streams steadily can hold the connection under the limit while the buffered
-# body grows without end. Lyrics for one song are a few kilobytes.
-MAX_RESPONSE_BYTES = 2 * 1024 * 1024
-
-
-async def _read_capped(response: aiohttp.ClientResponse) -> bytes:
-    """Return the body, refusing one larger than MAX_RESPONSE_BYTES."""
-    body = await response.content.read(MAX_RESPONSE_BYTES + 1)
-    if len(body) > MAX_RESPONSE_BYTES:
-        raise ValueError("QQ Music response exceeded the size limit")
-    return body
 
 
 def _decode_lyric(value: object) -> str:
@@ -82,7 +71,7 @@ async def fetch_payload(session: aiohttp.ClientSession, song_mid: str) -> dict[s
     }
     async with session.get(LYRIC_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        body = await _read_capped(response)
+        body = await read_capped(response, "QQ Music")
     return parse_response(body.decode("utf-8", "replace"))
 
 
@@ -111,7 +100,7 @@ async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | 
     }
     async with session.post(DETAIL_URL, json=payload, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
-        raw = await _read_capped(response)
+        raw = await read_capped(response, "QQ Music")
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as exc:

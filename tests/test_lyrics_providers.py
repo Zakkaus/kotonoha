@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import cast
 
 import aiohttp
@@ -16,10 +17,36 @@ def async_return(value):
     return result
 
 
+class _Content:
+    """The streaming half of a response, which is what the providers read.
+
+    They cap how much of a body they will buffer, so they go through
+    content.read(limit) rather than json(); a fake offering only the convenience
+    method would leave the cap untested.
+    """
+
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+        self._cursor = 0
+
+    async def read(self, limit: int) -> bytes:
+        """Hand back at most `limit` bytes, as a real socket does.
+
+        A fake that returned the whole body in one call could not catch a reader
+        that stops after its first read — which is exactly what the first version
+        of the cap did, truncating a 307KB response to 114KB.
+        """
+        chunk = self._payload[self._cursor : self._cursor + min(limit, 8192)]
+        self._cursor += len(chunk)
+        return chunk
+
+
 class _Resp:
     def __init__(self, data):
         self._data = data
         self.status = 200
+        self.content = _Content(json.dumps(data).encode() if not isinstance(data, (bytes, str)) else
+                                (data.encode() if isinstance(data, str) else data))
 
     async def __aenter__(self):
         return self
@@ -388,3 +415,48 @@ def test_kugou_parses_the_payload_shape_it_caches():
     assert lines, "the cached KRC payload produced no lines"
     assert lines[0].words, "word timing was lost on the way through the cache"
     assert kugou.parse_payload({"krc": "not base64 %%%"}) == ()
+
+
+async def test_every_provider_refuses_an_unbounded_response():
+    # A timeout bounds how long a response may take, not how large it may become.
+    # Only QQ Music had a ceiling; the other three buffered whatever arrived.
+    from kotonoha.lyrics.payload import MAX_RESPONSE_BYTES
+
+    oversized = b'{"padding":"' + b"x" * (MAX_RESPONSE_BYTES + 64) + b'"}'
+
+    class _OversizedSession:
+        def get(self, _url, **_kwargs):
+            return _Resp(oversized)
+
+        def post(self, _url, **_kwargs):
+            return _Resp(oversized)
+
+    session = cast(aiohttp.ClientSession, _OversizedSession())
+    track = TrackMetadata("Song", "Artist", "", 180.0)
+
+    for name, call in (
+        ("netease", netease.fetch_artifact(session, track)),
+        ("kugou", kugou.fetch_artifact(session, track)),
+        ("lrclib", lrclib.fetch_artifact(session, track)),
+    ):
+        try:
+            await call
+        except ValueError as exc:
+            assert "exceeded" in str(exc), f"{name}: {exc}"
+        else:
+            raise AssertionError(f"{name} buffered a body past the limit")
+
+
+async def test_a_body_larger_than_one_read_arrives_whole():
+    # content.read(n) returns what has arrived, not n bytes. Reading once truncated
+    # a 307KB response to 114KB against a real server, and the fragment then failed
+    # to parse — a long lyric or a large search result would have been lost rather
+    # than capped.
+    from kotonoha.lyrics.payload import MAX_RESPONSE_BYTES, read_capped
+
+    body = b'{"padding":"' + b"x" * (300 * 1024) + b'"}'
+    assert len(body) < MAX_RESPONSE_BYTES, "this body is legitimate, not oversized"
+
+    got = await read_capped(cast(aiohttp.ClientResponse, _Resp(body)), "test")
+
+    assert got == body
