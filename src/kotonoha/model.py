@@ -71,7 +71,11 @@ def _as_float(value: Any) -> float | None:
     if isinstance(value, bool):  # bool is an int subclass; reject it explicitly
         return None
     if isinstance(value, (int, float)):
-        return float(value)
+        # JSON accepts 1e1000 and NaN, which float() takes and arithmetic does not.
+        # _as_positive_float already refused them; the others let them through and
+        # a clock calibrated with a NaN never advances again.
+        parsed = float(value)
+        return parsed if math.isfinite(parsed) else None
     return None
 
 
@@ -87,10 +91,15 @@ def _as_str(value: Any, default: str = "") -> str:
 def _as_int(value: Any, default: int = 0) -> int:
     if isinstance(value, bool):
         return default
-    if isinstance(value, int):
-        return value
-    if isinstance(value, float):
-        return int(value)
+    if isinstance(value, (int, float)):
+        # An out-of-range float raises OverflowError from int(), which reached the
+        # receiver's handler as a 500 rather than a rejected frame.
+        if isinstance(value, float) and not math.isfinite(value):
+            return default
+        try:
+            return int(value)
+        except (OverflowError, ValueError):
+            return default
     return default
 
 

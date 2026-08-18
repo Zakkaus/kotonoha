@@ -20,6 +20,7 @@ import asyncio
 import contextlib
 import json
 import logging
+from urllib.parse import urlparse
 
 from aiohttp import WSMsgType, web
 
@@ -33,6 +34,22 @@ DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 28745
 WS_PATH = "/kotonoha/cider/lyrics"
 CONFIG_FRAME_TYPE = "kotonoha/config"
+
+
+def _is_local_origin(request: web.Request) -> bool:
+    """Whether this request may drive the overlay.
+
+    Binding to loopback keeps other machines out; it does not keep out a page the
+    user happens to be visiting, which can post to 127.0.0.1 like any other URL and
+    did — measured, a cross-origin POST was accepted and replaced what the overlay
+    was showing. A native client such as the Cider plugin either sends no Origin or
+    sends a loopback one, so requiring that costs it nothing.
+    """
+    origin = request.headers.get("Origin")
+    if not origin:
+        return True
+    host = urlparse(origin).hostname
+    return host in {"localhost", "127.0.0.1", "::1"}
 
 
 def _coerce_float(value: object) -> float | None:
@@ -145,6 +162,10 @@ class LyricsReceiver:
         return True
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
+        if not _is_local_origin(request):
+            # A browser sends Origin on the handshake and honours no same-origin
+            # rule for WebSockets, so this is the only place to refuse a page.
+            raise web.HTTPForbidden
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         client_id = id(ws)
@@ -167,6 +188,14 @@ class LyricsReceiver:
         return ws
 
     async def _handle_post(self, request: web.Request) -> web.Response:
-        body = await request.text()
+        if not _is_local_origin(request):
+            return web.Response(status=403)
+        try:
+            body = await request.text()
+        except UnicodeDecodeError:
+            # Only a JSON parse error was converted; bytes that are not text at all
+            # escaped as a 500 with a traceback instead of a rejected frame.
+            logger.debug("Dropped a frame that is not UTF-8")
+            return web.Response(status=400)
         ok = self._ingest(body)
         return web.Response(status=204 if ok else 400)

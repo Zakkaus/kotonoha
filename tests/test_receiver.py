@@ -180,3 +180,42 @@ def test_closed_gate_retains_tick_without_publishing_cider_content():
     timing = gate.current_timing(TrackMetadata("Song", "X"))
     assert timing is not None
     assert timing.current_time == 3.0
+
+
+async def test_a_web_page_cannot_drive_the_overlay():
+    # Binding to loopback keeps other machines out; it does not keep out a page the
+    # user happens to be visiting, which can post to 127.0.0.1 like any other URL.
+    # Measured before this check, such a POST was accepted and replaced what the
+    # overlay was showing.
+    state = LyricsState()
+    receiver = LyricsReceiver(state)
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        frame = json.dumps({"lyrics": {"lines": [{"text": "injected", "start": 0}]}, "track": {"title": "X"}})
+
+        blocked = await client.post(WS_PATH, data=frame, headers={"Origin": "https://evil.example"})
+        assert blocked.status == 403
+
+        # A native client sends no Origin, or a loopback one; neither is refused.
+        for headers in ({}, {"Origin": "http://localhost:9000"}):
+            allowed = await client.post(WS_PATH, data=frame, headers=headers)
+            assert allowed.status == 204, headers
+
+
+async def test_a_frame_that_is_not_text_is_rejected_not_a_server_error():
+    # Only a JSON parse error was converted; bytes that are not text at all escaped
+    # the handler as a 500 with a traceback.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(WS_PATH, data=b"\xff\xfe")
+
+        assert response.status == 400
+
+
+async def test_a_number_json_allows_but_arithmetic_does_not_is_dropped():
+    # JSON accepts 1e1000 and NaN. int() raised OverflowError from inside the
+    # model, and a clock calibrated with a NaN never advances again.
+    receiver = LyricsReceiver(LyricsState())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(WS_PATH, data='{"lyrics":{"currentLine":{"index":1e1000}}}')
+
+        assert response.status in (204, 400), "an unrepresentable number reached the handler"
