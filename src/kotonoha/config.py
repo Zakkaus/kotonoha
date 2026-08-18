@@ -189,14 +189,45 @@ def load_config(path: Path | None = None) -> Config:
     try:
         return Config.from_dict(json.loads(raw))
     except (json.JSONDecodeError, ValueError):
-        logger.warning("Config %s is not valid JSON; using defaults", target)
+        # Defaults are returned so the app still starts, but the unreadable file is
+        # moved aside first. It used to be left in place, and the next save — a drag
+        # release is enough — wrote the defaults over it, so a single interrupted
+        # write turned into permanent loss of every setting the user had chosen.
+        salvaged = target.with_suffix(target.suffix + ".corrupt")
+        try:
+            target.replace(salvaged)
+        except OSError as exc:
+            logger.warning("Config %s is unreadable and could not be set aside: %s", target, exc)
+        else:
+            logger.warning("Config %s is not valid JSON; kept as %s and using defaults", target, salvaged)
         return Config()
 
 
 def save_config(config: Config, path: Path | None = None) -> None:
+    """Persist the configuration, leaving no half-written file behind.
+
+    Written to a sibling temporary file and renamed over the target, because a
+    rename within one directory is atomic: a reader either sees the whole previous
+    file or the whole new one. Writing in place meant a logout, an OOM kill or a
+    full disk during any of the writes this makes — one per settings apply and one
+    per drag release — could leave truncated JSON that the loader then discarded.
+    """
     target = path or config_path()
     target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(config.to_dict(), indent=2, ensure_ascii=False), encoding="utf-8")
+    payload = json.dumps(config.to_dict(), indent=2, ensure_ascii=False)
+    temporary = target.with_name(f".{target.name}.new")
+    try:
+        with temporary.open("w", encoding="utf-8") as handle:
+            handle.write(payload)
+            handle.flush()
+            # The rename is atomic, but only orders against data the filesystem has
+            # actually taken: without this the metadata can land first and leave an
+            # empty file after a crash.
+            os.fsync(handle.fileno())
+        temporary.replace(target)
+    except OSError:
+        temporary.unlink(missing_ok=True)
+        raise
 
 
 def _clamp_int(value: Any, low: int, high: int, default: int) -> int:

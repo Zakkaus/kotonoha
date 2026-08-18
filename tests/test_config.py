@@ -1,3 +1,4 @@
+from pathlib import Path
 from typing import cast
 
 from kotonoha.config import (
@@ -234,3 +235,45 @@ def test_track_offsets_roundtrip_and_evict_oldest(tmp_path):
 def test_track_without_offset_keeps_global_lead_only():
     cfg = Config(lead_ms=120)
     assert cfg.track_offsets.get("missing", 0) == 0
+
+
+def test_a_failed_save_leaves_the_previous_configuration_intact(tmp_path, monkeypatch):
+    # The point of writing to a sibling and renaming: the target is only ever
+    # replaced by a file that is already complete. Written in place, a save that
+    # died partway — a logout, a full disk — left truncated JSON behind.
+    path = tmp_path / "config.json"
+    save_config(Config(lead_ms=250), path)
+
+    def no_space(*_args, **_kwargs):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(Path, "replace", no_space)
+    try:
+        save_config(Config(lead_ms=999), path)
+    except OSError:
+        pass
+    else:
+        raise AssertionError("the save reported success without replacing the file")
+
+    assert load_config(path).lead_ms == 250, "the previous configuration was destroyed"
+    assert sorted(p.name for p in tmp_path.iterdir()) == ["config.json"], "a temporary was left behind"
+
+
+def test_an_unreadable_config_is_kept_rather_than_overwritten(tmp_path):
+    # Defaults let the app start, but the next save — a drag release is enough —
+    # used to write them over the damaged file, turning one interrupted write into
+    # permanent loss of every setting the user had chosen.
+    path = tmp_path / "config.json"
+    save_config(Config(margin_x=-1100, lead_ms=250), path)
+    whole = path.read_text(encoding="utf-8")
+    path.write_text(whole[: len(whole) // 2], encoding="utf-8")
+
+    recovered = load_config(path)
+
+    assert recovered.lead_ms == Config().lead_ms, "a damaged file must not be trusted"
+    salvaged = tmp_path / "config.json.corrupt"
+    assert salvaged.exists(), "the unreadable file was destroyed instead of set aside"
+    assert "margin_x" in salvaged.read_text(encoding="utf-8")
+
+    save_config(recovered, path)
+    assert salvaged.exists(), "the salvaged copy must survive the next save"
