@@ -193,24 +193,19 @@ def test_a_pipe_where_the_sidecar_should_be_does_not_wedge_the_reader(tmp_path):
         reader.join(timeout=5.0)
 
 
-def test_a_sidecar_larger_than_any_lyric_file_is_read_only_to_the_bound(tmp_path):
-    # `is not None` was always true whether or not the read was capped. What the
-    # bound actually does is observable at the end of the file: a lyric line past
-    # the ceiling is not returned, while the ones before it are.
+def test_a_sidecar_larger_than_any_lyric_file_is_refused_not_truncated(tmp_path):
+    # Reading to the bound and keeping the prefix would hand the overlay a shorter
+    # set of lines that looks like the real lyrics and simply stops early. An
+    # oversized sidecar is not a lyric file, so nothing is taken from it.
     from kotonoha.lyrics.local import MAX_SIDECAR_BYTES
 
     audio = tmp_path / "song.flac"
     audio.touch()
     (tmp_path / "song.lrc").write_bytes(
-        b"[00:01.00]near the start\n"
-        + b"[00:02.00]" + b"A" * MAX_SIDECAR_BYTES + b"\n"
-        + b"[00:03.00]past the ceiling\n"
+        b"[00:01.00]near the start\n" + b"A" * MAX_SIDECAR_BYTES + b"\n[00:03.00]past the ceiling\n"
     )
 
-    texts = [line.text for line in load_local_lyrics(audio)]
-
-    assert "near the start" in texts
-    assert "past the ceiling" not in texts, "the whole file was read despite the bound"
+    assert load_local_lyrics(audio) == []
 
 
 def test_a_pipe_where_the_audio_file_should_be_is_not_handed_to_the_tag_reader(tmp_path):
@@ -233,3 +228,26 @@ def test_a_pipe_where_the_audio_file_should_be_is_not_handed_to_the_tag_reader(t
         assert finished.wait(5.0), "the tag reader is blocked on a pipe"
     finally:
         reader.join(timeout=5.0)
+
+
+def test_the_tag_reader_is_given_the_handle_that_was_checked(tmp_path, monkeypatch):
+    # Checking the name and letting the tag reader reopen it leaves a window in
+    # which a regular file becomes a pipe. The reader now gets the descriptor that
+    # was judged, so there is nothing left to re-resolve.
+    pytest.importorskip("mutagen")
+    import mutagen
+
+    audio = tmp_path / "song.flac"
+    audio.write_bytes(b"")
+    seen: list[object] = []
+
+    def record(filething, *_args, **_kwargs):
+        seen.append(filething)
+        return None
+
+    monkeypatch.setattr(mutagen, "File", record)
+
+    load_local_lyrics(audio)
+
+    assert seen, "the tag reader was never reached"
+    assert not isinstance(seen[0], (str, Path)), f"the reader was handed a path to reopen: {seen[0]!r}"

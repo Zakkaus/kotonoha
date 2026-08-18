@@ -31,13 +31,18 @@ def _read_regular_file(path: Path) -> bytes | None:
         if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return None
         chunks: list[bytes] = []
-        remaining = MAX_SIDECAR_BYTES
-        while remaining > 0:
-            chunk = os.read(descriptor, min(remaining, 1 << 16))
+        total = 0
+        while True:
+            chunk = os.read(descriptor, 1 << 16)
             if not chunk:
                 break
+            total += len(chunk)
+            if total > MAX_SIDECAR_BYTES:
+                # Refused, not truncated: a prefix of an LRC file parses into a
+                # shorter set of lines that looks like the real lyrics, so silently
+                # cutting it would hand the overlay a song that stops early.
+                return None
             chunks.append(chunk)
-            remaining -= len(chunk)
     finally:
         os.close(descriptor)
     return b"".join(chunks)
@@ -83,13 +88,13 @@ def _load_sidecar(audio_path: Path) -> list[LyricLine]:
 
 
 def _load_embedded(audio_path: Path) -> list[LyricLine]:
-    # Same reasoning as the sidecar: mutagen opens whatever it is given, and this
-    # path came from a player. A tag reader has no business on a pipe or a device.
-    try:
-        if not stat.S_ISREG(os.stat(audio_path).st_mode):
-            return []
-    except OSError:
-        return []
+    """Return timed lines from the audio file's own tags.
+
+    The path came from a player, so the file is opened once and judged through
+    that descriptor rather than by name: checking the name and then letting the
+    tag reader reopen it leaves a window in which a regular file becomes a pipe.
+    The same handle is what the reader is given, so there is nothing to re-resolve.
+    """
     try:
         # Optional: the feature exists only where the user installed it, so the
         # type checker must not treat an absent import as an error.
@@ -98,15 +103,24 @@ def _load_embedded(audio_path: Path) -> list[LyricLine]:
         return []
 
     try:
-        audio = mutagen.File(audio_path)
-        if audio is None or audio.tags is None:
+        descriptor = os.open(audio_path, os.O_RDONLY | os.O_NONBLOCK)
+    except OSError:
+        return []
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
             return []
-        for text in _embedded_texts(audio.tags):
-            lines = parse_lrc(text)
-            if lines:
-                return lines
+        with os.fdopen(descriptor, "rb", closefd=False) as handle:
+            audio = mutagen.File(handle)
+            if audio is None or audio.tags is None:
+                return []
+            for text in _embedded_texts(audio.tags):
+                lines = parse_lrc(text)
+                if lines:
+                    return lines
     except (AttributeError, KeyError, IndexError, OSError, TypeError, ValueError, mutagen.MutagenError):
         return []
+    finally:
+        os.close(descriptor)
     return []
 
 
