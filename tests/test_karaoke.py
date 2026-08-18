@@ -57,3 +57,20 @@ def test_line_progress_prefers_word_timing():
 def test_line_progress_falls_back_to_line_span():
     line = LyricLine(index=0, id="L", start=0.0, end=10.0, text="abc", translation="", words=())
     assert line_progress(line, 5.0) == 0.5
+
+
+def test_the_sweep_follows_a_line_with_no_separators(_session_qapp):
+    # KRC and YRC build the line by concatenating word texts, and the sweep assumed
+    # one space between every pair: nine characters ran 24px past a 108px line.
+    from kotonoha.karaoke_label import KaraokeLabel
+    from kotonoha.model import LyricLine, LyricWord
+
+    text = "我曾经跨过山和大海"
+    words = tuple(LyricWord(i * 0.5, (i + 1) * 0.5, ch) for i, ch in enumerate(text))
+    label = KaraokeLabel(None)
+    label.set_line(LyricLine(0, "L0", 0.0, 4.5, text, "", words), True)
+
+    rendered = label.fontMetrics().horizontalAdvance(text)
+    end_of_last_word = label._word_offsets[-1] + label._word_widths[-1]
+
+    assert end_of_last_word == rendered, "the sweep geometry is wider than the text it sweeps"

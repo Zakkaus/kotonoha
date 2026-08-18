@@ -93,7 +93,7 @@ class KaraokeLabel(QWidget):
         # frame) so the 60fps sweep paint stays cheap.
         self._fm = QFontMetrics(self._font)
         self._word_widths: list[float] = []
-        self._space_w = 0.0
+        self._word_offsets: list[float] = []
         self._total_w = 0.0
         self._max_width = 0  # 0 = unlimited; else cap the width and scroll long lines
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -147,10 +147,35 @@ class KaraokeLabel(QWidget):
     def _rebuild_layout(self) -> None:
         text = self.text
         self._total_w = self._fm.horizontalAdvance(text) if text else 0.0
-        self._space_w = self._fm.horizontalAdvance(" ")
         self._word_widths = (
             [self._fm.horizontalAdvance(w.text) for w in self._line.words] if self._line else []
         )
+        self._word_offsets = self._measure_word_offsets(text)
+
+    def _measure_word_offsets(self, text: str) -> list[float]:
+        """Return each word's x offset, measured from the text as it is drawn.
+
+        The sweep used to assume one space between every pair of words. The KRC and
+        YRC parsers build the line by concatenating word texts with no separator, so
+        on a CJK line the sweep gained a space width per word and ran ahead of the
+        characters: nine characters drifted 24px past a 108px line. Locating each
+        word in the rendered string instead is right for a separator of any width,
+        including none.
+        """
+        if self._line is None or not self._line.words:
+            return []
+        offsets: list[float] = []
+        cursor = 0
+        for word in self._line.words:
+            found = text.find(word.text, cursor) if word.text else cursor
+            if found < 0:
+                # The words and the drawn text disagree — a converted script, say.
+                # Fall back to laying them out end to end, which is what the parsers
+                # produce and is closer than assuming separators that are not there.
+                found = cursor
+            offsets.append(self._fm.horizontalAdvance(text[:found]))
+            cursor = found + len(word.text)
+        return offsets
 
     def set_media_time(self, media_time: float | None) -> None:
         self._media_time = media_time
@@ -231,10 +256,9 @@ class KaraokeLabel(QWidget):
         if not self._word_mode:
             return text_left + total_width * line_progress(line, t), None
 
-        cursor = text_left
-        space = self._space_w
         sung = text_left
         for i, word in enumerate(line.words):
+            cursor = text_left + (self._word_offsets[i] if i < len(self._word_offsets) else 0.0)
             w = self._word_widths[i] if i < len(self._word_widths) else 0.0
             if word.start is not None and word.end is not None:
                 frac = word_fill_fraction(word, t)
@@ -245,12 +269,12 @@ class KaraokeLabel(QWidget):
                     return sung, None  # a timed word not yet reached -> stop here
             # A fully-sung timed word, or an untimed word (transparent to the
             # sweep, e.g. punctuation), extends the sung run so an untimed word
-            # mid-line does not freeze the sweep for the rest of the line.
+            # mid-line does not freeze the sweep for the rest of the line. The run
+            # reaches the next word's own offset, so whatever sits between them —
+            # a space, or nothing at all — is covered exactly once.
             sung = cursor + w
-            cursor += w
-            if i < len(line.words) - 1:
-                cursor += space
-                sung = cursor  # extend through the trailing space
+            if i + 1 < len(self._word_offsets):
+                sung = text_left + self._word_offsets[i + 1]
         return sung, None
 
     def _is_title(self) -> bool:
