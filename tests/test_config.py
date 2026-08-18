@@ -277,3 +277,31 @@ def test_an_unreadable_config_is_kept_rather_than_overwritten(tmp_path):
 
     save_config(recovered, path)
     assert salvaged.exists(), "the salvaged copy must survive the next save"
+
+
+def test_a_config_that_is_not_utf8_does_not_end_startup(tmp_path):
+    # load_config runs before there is any window to report a problem in, so an
+    # escaping UnicodeDecodeError took the whole application down rather than
+    # costing the settings in the file.
+    path = tmp_path / "config.json"
+    path.write_bytes(b'{"lead_ms": 1' + bytes([0xFF, 0xFE]) + b"}")
+
+    assert load_config(path).lead_ms == Config().lead_ms
+    assert (tmp_path / "config.json.corrupt").exists(), "the unreadable file was not kept"
+
+
+def test_a_pipe_at_the_config_path_does_not_block_startup(tmp_path):
+    import os
+    import threading
+
+    path = tmp_path / "config.json"
+    os.mkfifo(path)
+    finished = threading.Event()
+
+    def read() -> None:
+        load_config(path)
+        finished.set()
+
+    threading.Thread(target=read, daemon=True).start()
+
+    assert finished.wait(5.0), "startup is blocked on a pipe left at the config path"

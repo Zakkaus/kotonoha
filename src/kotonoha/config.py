@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import stat
 from dataclasses import asdict, dataclass, field, fields
 from pathlib import Path
 from typing import Any
@@ -177,15 +178,57 @@ def config_path() -> Path:
     return config_dir() / CONFIG_FILE_NAME
 
 
-def load_config(path: Path | None = None) -> Config:
-    target = path or config_path()
+#: A settings file is a few kilobytes. The read is bounded because this path is
+#: reachable by anything with write access to the user's config directory.
+MAX_CONFIG_BYTES = 4 * 1024 * 1024
+
+
+def _read_config_bytes(target: Path) -> bytes | None:
+    """Return the file's bytes, or None when there is nothing usable to read.
+
+    Opened non-blocking and checked through the descriptor: this runs on the
+    startup path, and a FIFO left at the config path blocked it forever while a
+    non-regular file would have been followed wherever it led.
+    """
     try:
-        raw = target.read_text(encoding="utf-8")
+        descriptor = os.open(target, os.O_RDONLY | os.O_NONBLOCK)
     except FileNotFoundError:
-        return Config()
+        return None
     except OSError as exc:
         logger.warning("Could not read config %s: %s", target, exc)
+        return None
+    try:
+        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
+            logger.warning("Config %s is not an ordinary file; using defaults", target)
+            return None
+        chunks: list[bytes] = []
+        remaining = MAX_CONFIG_BYTES
+        while remaining > 0:
+            chunk = os.read(descriptor, min(remaining, 1 << 16))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            remaining -= len(chunk)
+    except OSError as exc:
+        logger.warning("Could not read config %s: %s", target, exc)
+        return None
+    finally:
+        os.close(descriptor)
+    return b"".join(chunks)
+
+
+def load_config(path: Path | None = None) -> Config:
+    target = path or config_path()
+    data = _read_config_bytes(target)
+    if data is None:
         return Config()
+    try:
+        raw = data.decode("utf-8")
+    except UnicodeDecodeError:
+        # Left to escape, this ended startup: the file is read before there is any
+        # window to report it in, so a config that is not UTF-8 took the whole
+        # application down rather than costing the settings in it.
+        raw = ""
     try:
         return Config.from_dict(json.loads(raw))
     except (json.JSONDecodeError, ValueError):
