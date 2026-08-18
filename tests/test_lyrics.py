@@ -833,3 +833,14 @@ def test_a_marker_the_name_ends_on_is_still_a_version_qualifier():
     )
 
     assert evidence.confidence is MatchConfidence.NONE
+
+
+def test_a_yrc_timestamp_too_large_for_a_float_skips_its_line():
+    # Same conversion, same provider-controlled digits: an unbounded run divided by
+    # 1000.0 raised OverflowError out of parsing and out of the resolver with it.
+    huge = "[" + "9" * 400 + ",1950](1300,243,0)x\n"
+    real = "[1300,1950](1300,243,0)眉(1543,243,0)目\n"
+
+    lines = parse_yrc(huge + real)
+
+    assert [line.text for line in lines] == ["眉目"]
