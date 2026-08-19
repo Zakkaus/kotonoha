@@ -19,7 +19,8 @@ from .artifact import LyricsArtifact
 from .cache import LyricsCache
 from .hint import LyricsHint
 from .local import load_local_lyrics
-from .match import MatchConfidence, TrackMetadata, artist_tokens, normalize, split_title
+from .match import MatchConfidence, TrackMetadata
+from .titles import artist_tokens, normalize, split_title
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +43,9 @@ class ResolvedLyrics:
     live_snapshot: LyricsSnapshot | None = None
     cider_client_id: int | None = None
     confidence: MatchConfidence = MatchConfidence.NONE
+    #: How long the catalogue says this recording is. The player's own figure can be
+    #: a running total across a queue; this one is about the song itself.
+    duration_s: float | None = None
 
 
 @dataclass(frozen=True)
@@ -110,7 +114,17 @@ class LyricsResolver:
         self._fuzzy = fuzzy
         self._negative_ttl = negative_ttl
         self._negative_until: dict[tuple[str, TrackKey], float] = {}
+        #: Sources whose request failed during the last resolve, as opposed to
+        #: answering that they do not have the song. Read straight after a resolve
+        #: returns nothing: "no lyrics" and "nobody could be reached" look identical
+        #: from the outside and call for opposite responses.
+        self._last_failures: set[str] = set()
         self._inflight: dict[RequestKey, asyncio.Task[ResolvedLyrics | None]] = {}
+
+    @property
+    def last_failures(self) -> frozenset[str]:
+        """The sources that could not be reached during the last resolve."""
+        return frozenset(self._last_failures)
 
     async def resolve(
         self,
@@ -118,6 +132,7 @@ class LyricsResolver:
         track: TrackMetadata,
         sources: Sequence[str],
     ) -> ResolvedLyrics | None:
+        self._last_failures.clear()
         ordered_sources = tuple(sources)
         key = (_track_key(track), ordered_sources, self._cache_enabled, self._prefer_best, self._fuzzy)
         task = self._inflight.get(key)
@@ -221,7 +236,8 @@ class LyricsResolver:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                 else:
                     if cached is not None:
-                        return ResolvedLyrics(source, lines=cached.lines, confidence=cached.confidence)
+                        return ResolvedLyrics(source, lines=cached.lines, confidence=cached.confidence,
+                                              duration_s=cached.duration_s)
 
             negative_key = source, track_key
             if self._negative_until.get(negative_key, 0.0) > time.monotonic():
@@ -230,6 +246,7 @@ class LyricsResolver:
                 artifact = await provider.fetch(session, track, fuzzy=self._fuzzy)
             except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
                 logger.warning("%s lyrics fetch failed: %s: %s", source, type(exc).__name__, exc)
+                self._last_failures.add(source)
                 continue
             if artifact is None or not artifact.lines:
                 self._negative_until[negative_key] = time.monotonic() + self._negative_ttl
@@ -239,7 +256,8 @@ class LyricsResolver:
                     await self._cache.store(artifact)
                 except (OSError, sqlite3.Error) as exc:
                     logger.warning("%s lyrics cache write failed: %s", source, exc)
-            return ResolvedLyrics(source, lines=artifact.lines, confidence=artifact.confidence)
+            return ResolvedLyrics(source, lines=artifact.lines, confidence=artifact.confidence,
+                                  duration_s=artifact.duration_s)
         return None
 
     async def _resolved_artifact(
@@ -253,6 +271,7 @@ class LyricsResolver:
             raise
         except (aiohttp.ClientError, TimeoutError, ValueError) as exc:
             logger.warning("%s lyrics fetch failed: %s: %s", source, type(exc).__name__, exc)
+            self._last_failures.add(source)
             return None
         if artifact is None or not artifact.lines:
             self._negative_until[source, track_key] = time.monotonic() + self._negative_ttl
@@ -297,7 +316,10 @@ class LyricsResolver:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                     cached = None
                 if cached is not None:
-                    candidate = ResolvedLyrics(source, lines=cached.lines, confidence=cached.confidence)
+                    candidate = ResolvedLyrics(
+                        source, lines=cached.lines, confidence=cached.confidence,
+                        duration_s=cached.duration_s,
+                    )
             if candidate is not None:
                 resolved.add(source)
                 score = (_CONF_RANK[candidate.confidence], -index)
@@ -332,7 +354,10 @@ class LyricsResolver:
                     score = (_CONF_RANK[artifact.confidence], -sources.index(source))
                     if best_score is None or score > best_score:
                         best_score = score
-                        best = ResolvedLyrics(source, lines=artifact.lines, confidence=artifact.confidence)
+                        best = ResolvedLyrics(
+                            source, lines=artifact.lines, confidence=artifact.confidence,
+                            duration_s=artifact.duration_s,
+                        )
                 if best_score is not None and pending:
                     # Nothing still pending can beat a HIGH from an earlier-ordered source.
                     ceiling = (_CONF_RANK[MatchConfidence.HIGH], -min(sources.index(s) for s in pending))
