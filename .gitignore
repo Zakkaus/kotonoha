@@ -40,6 +40,9 @@ Thumbs.db
 *.swo
 .worktrees/
 
+# Local repository analysis output
+.repo-visual-analysis/
+
 # Logs and local databases
 *.log
 *.sqlite

@@ -218,6 +218,15 @@ changed lines or restate the implementation.
   contract, such as user-visible output, a protocol field, or serialized data.
   They are not evidence that an implementation detail exists in a particular
   file.
+- When replacing regular expressions, grammar rules, parsers, matchers, or
+  other code with known corner cases, build or update a typed behavior corpus
+  with public inputs and canonical public outputs. Each rule needs a positive
+  case and a nearest meaningful negative case.
+- Behavior-preserving migrations must compare the current implementation and
+  the replacement against the same corpus. An unregistered difference is a
+  regression; changing an expected value alone is not a valid fix. Intentional
+  behavior changes require a written record of the case, old behavior, new
+  contract, user impact, and replacement tests.
 - Use fakes, stubs, or adapters for external services.
 - Cover normal, failure, cancellation, timeout, and repeated-call paths.
 - Exercise behavior through public construction and interfaces. Do not use `__new__` or manually populate private fields to bypass initialization for ordinary behavior tests; an isolated lifecycle/Qt harness may do so only when full construction invokes unavailable platform resources, and it must initialize the tested contract explicitly.
