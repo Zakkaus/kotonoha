@@ -8,11 +8,11 @@
 
 将 Kotonoha 改造成职责清晰、强类型、可验证、可持续演进的桌面歌词系统：
 
-- domain 不依赖外部系统；
-- application 明确编排和生命周期；
-- infrastructure 负责第三方系统适配和边界验证；
-- presentation 只负责展示和用户意图；
-- platform 负责 compositor/toolkit 事实和资源生命周期；
+- `app/` 明确编排、能力契约、工作流和资源生命周期；
+- `lyrics/`、`playback/`、`display/`、`config/` 等 feature package 各自拥有稳定值类型、纯规则和对应的外部适配；
+- `ui/` 只负责 Qt 展示、输入绑定和把用户操作转成 typed intent；
+- `platform/` 负责 compositor/toolkit 事实、能力探测和平台资源生命周期；
+- 不用泛化的 `domain/`、`infrastructure/`、`ports/`、`presentation/` 或 `composition/` 包隐藏 owner；
 - 每个行为由 policy、状态机、result type 和测试共同定义。
 
 ## 不做的事
@@ -43,56 +43,121 @@
 - `#49 -> #50 -> #57 -> #61 -> #63` 暴露 response/path/task/D-Bus/WebSocket 等边界预算和 cancellation owner 问题。
 - 当前 `prefer_best_lyrics` 会触发 resolver 的并发 source fetch，与确定性的 ordered source plan 存在冲突；这是必须在重构前明确的行为决策。
 
-## 目标代码边界
+## 目标代码边界与目录拆分
 
-建议目标目录如下。迁移期间可以用窄的兼容入口承接现有 import；完成切换后必须删除兼容层。
+这里参考 `bilihud/docs/architecture/module-boundaries.md` 的 feature-first 取向，但不机械复制业务名称。
+目录表达的是 owner，而不是抽象层口号：一个 feature package 可以同时拥有自己的稳定值类型、纯规则、
+解析器和具体外部适配；`app/` 只编排这些能力，不把它们重新包装成一个泛化的 `infrastructure/`。
+因此目标结构中不建立通用的 `domain/`、`infrastructure/`、`ports/`、`presentation/`、`composition/` 或
+`shared/` 包。
+
+迁移期间可以用窄的兼容入口承接现有 import；完成切换后必须删除兼容层。目标目录如下：
 
 ```text
 src/kotonoha/
-  domain/
-    playback.py              # RawTrackObservation, TrackIdentity, generation values
-    title_grammar.py         # pure title/artist decomposition and qualifiers
-    matching.py              # MatchEvidence, confidence, ranking policy
-    lyrics.py                # LyricDocument, LyricLine, word/line invariants
-    timeline.py              # clock observations, line selection, offsets
-    display.py               # DisplayState, DisplayFrame, interlude/word progress
-    source_policy.py         # SourcePlan, ResolutionPolicy, SourceResult semantics
-    overlay.py               # Surface/drag/output state values and commands
-    config.py                 # Config value objects and constraints
+  app/                         # workflow、生命周期、能力契约和 composition wiring
+    application_controller.py # 创建/启动/停止应用服务，保持关闭顺序
+    services.py                # 唯一的 concrete adapter object graph 组装点
+    lifecycle.py               # TaskScope/Supervisor 和取消/等待语义
+    playback_coordinator.py    # Player capability -> stabilized TrackIdentity/generation
+    lyrics_workflow.py         # generation-owned SourcePlan 执行和结果发布
+    clock_coordinator.py       # authoritative clock source 和 correction policy
+    display_coordinator.py     # DisplayFrame publisher
+    overlay_coordinator.py     # overlay state、user intent 和 platform command
+    settings_service.py        # ConfigPatch、持久化和 restart/cache intent
+    source_gate.py             # standalone/external/Cider source ownership
 
-  application/
-    supervisor.py             # start/stop ownership and task registry
-    playback_coordinator.py  # PlayerPort -> stabilized TrackIdentity
-    lyrics_workflow.py        # generation-owned source resolution
-    clock_coordinator.py      # authoritative clock source and correction
-    display_coordinator.py    # LyricsState publisher from domain frames
-    overlay_coordinator.py    # view model + user intents + platform commands
-    settings_service.py       # ConfigPatch, persistence, restart/cache intents
+  playback/                    # 播放功能的 contracts、规则和 MPRIS adapter
+    models.py                  # PlayerDescriptor、RawTrackObservation、TrackIdentity 等
+    clock.py                   # media-clock observation 的纯规则和 adapter contract
+    mpris.py                   # MPRIS polling/subscription adapter facade
+    mpris_session.py           # dbus-fast session boundary
+    mpris_track.py             # raw metadata validation/normalization
+    player_selection.py        # player discovery 和 selection policy
 
-  ports/
-    playback.py               # PlayerPort, PlayerSample
-    lyrics.py                 # LyricsSource, SourceResult, LyricsRequest
-    cache.py                  # LyricsCachePort
-    clock.py                  # ClockPort
-    surface.py                # SurfacePort, capability/result contracts
-    config.py                 # ConfigStore
+  lyrics/                     # 歌词功能的 contracts、解析、匹配、source/cache adapter
+    models.py                  # LyricDocument、LyricLine、LyricWord、LyricsArtifact
+    title_grammar.py           # title/artist decomposition、qualifier 和 normalizer
+    matching.py                # MatchEvidence、confidence 和 ranking policy
+    parsers/                   # LRC/KRC/YRC parser 及 translation/word invariant
+    sources/                   # Netease/LRCLib/Kugou/QQMusic/local adapter
+    cache.py                   # bounded SQLite/file cache boundary
+    cider/                     # Cider payload contract、receiver 和 Cider adapter
 
-  infrastructure/
-    mpris/                    # dbus-fast adapter and raw value validation
-    cider/                    # receiver protocol adapter; TS side has same states
-    lyrics_sources/           # netease/lrclib/kugou/qq/local adapters
-    cache/                    # SQLite and bounded executor/file storage
-    config/                   # JSON and atomic file store
-    platform/                 # Qt/native/layer-shell implementations
+  display/                    # 纯展示模型和时间轴规则
+    models.py                  # DisplayState、DisplayFrame 和 display diagnostics
+    timeline.py                # line selection、offset、interlude/finished state
+    karaoke.py                 # line/word progress 和 font-fit policy 的纯部分
 
-  presentation/
-    overlay_widget.py         # QWidget rendering and event translation only
-    settings_dialog.py         # controls and SettingsFormState binding
-    view_models.py             # Qt-friendly immutable projections
+  config/                     # typed configuration 和持久化边界
+    models.py                  # Config、ConfigPatch 和 constraints
+    store.py                   # JSON decode/validate/atomic persistence
 
-  composition/
-    main.py / controller.py    # dependency wiring, application lifecycle
+  platform/                   # toolkit-neutral contracts 与桌面/native adapters
+    overlay_contracts.py       # capability、geometry、output、drag 和 operation result
+    window_platform.py         # capability selection/registry
+    qt_window.py               # generic Qt window adapter
+    layer_shell.py             # Layer Shell/niri adapter
+    native.py / detect.py      # native bridge loading 和 environment probe
+
+  ui/                         # Qt presentation，按 user-facing responsibility 分组
+    overlay/                   # QWidget window、KaraokeLabel 和 state binding
+    settings/                  # dialog、form state 和 settings pages
+    tray/                      # tray menu、icon selection 和 commands
+    window_host.py             # Qt presentation binding for platform contracts
+    icons.py / leaf_icon.py    # Qt resource/rendering helpers
+    i18n.py / strings.py       # presentation text and language binding
+
+  main.py                     # process entry、Qt/qasync event loop 和 last-resort cleanup
 ```
+
+`app/services.py` 是组合根例外：它可以 import concrete adapters，并把同一份 config、cache、platform
+capability 和 workflow wiring 组装起来；`app/` 下的 workflow 与 capability contract 不能反向依赖
+Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` 只负责进程级启动和事件循环，
+不承载歌词、播放器或 Overlay 的业务决策。
+
+| Owner | 负责 | 可以依赖 | 不得依赖 |
+| --- | --- | --- | --- |
+| `app/` workflow | use case、generation、source plan、intent routing、task/resource lifecycle | feature contract、platform contract、标准库 | Qt presentation、network/dbus/native concrete adapter；`services.py` 之外不得组装实现 |
+| feature package contracts | `lyrics`/`playback`/`display`/`config` 的 typed values、状态、错误和纯规则 | 标准库及其他稳定 feature contract | Qt、aiohttp、dbus-fast、文件/平台 API、raw third-party object |
+| feature package adapters | 网络、文件、D-Bus 和第三方数据的解析/验证/归一化 | 本 feature contract、外部库、命名 capability contract | UI 决策、跨 feature workflow state |
+| `ui/` | QWidget、dialog、tray、输入翻译和 state binding | app contract、feature values、Qt | 网络/session/cache、配置持久化、具体平台实现和 native bridge |
+| `platform/` | compositor/toolkit facts、capability probe、surface/output/drag/native resource | toolkit/native API、toolkit-neutral platform contract | 歌词/provider policy、UI workflow 和应用状态决策 |
+| `main.py` | CLI、Qt/qasync event loop、last-resort cleanup | `app/services.py`、application controller、Qt/qasync | 具体业务 policy 和 feature 内部状态 |
+
+### 边界规则
+
+- feature contract 只依赖标准库和其他稳定 feature contract；第三方对象必须在 feature adapter
+  边界解析、验证并归一化后才能进入 workflow。
+- application workflow 只依赖命名的 capability contract；协议应放在所属 workflow 或 feature
+  旁边，例如 `app/lyrics_workflow.py` 的 source capability，而不是集中到 `ports/`。
+- `ui/` 可以依赖 `app` contract、feature value 和 Qt，但不能创建 network/session/cache，也不能
+  自己读取 desktop name、Qt platform name 或 native bridge。
+- `platform/overlay_contracts.py` 只描述 toolkit-neutral capability/result；Qt、Wayland、Layer Shell
+  和 `ctypes` 只出现在 `platform` adapter 内。surface、blur、input、output、drag 的失败必须返回
+  `Rejected`/`Unavailable`/`Degraded` 等实际结果及可展示 reason。
+- application 是异步 task、session、server 和 surface lifecycle 的 owner；UI signal 只提交 intent，
+  不创建无 owner 的 background task。
+- 配置只由 `config/` 持有一套 typed model；旧的 root `config.py`、`model.py`、`state.py` 等入口只能
+  在迁移期转发，并写明删除条件。
+- package 内没有独立责任的转发模块不应被创建；目录拆分必须同时带 public contract、owner、输入/输出
+  语义和对应测试。
+
+### 当前实现到目标 owner 的迁移映射
+
+| 当前实现 | 目标 owner | 目标位置 | 边界意图 |
+| --- | --- | --- | --- |
+| `controller.py` | 应用组合和 workflow wiring | `app/application_controller.py`、`app/services.py` 及各 coordinator | controller 不再拥有 MPRIS、歌词解析、Overlay 或 Settings policy |
+| `providers/mpris*.py`、`players.py` | Playback feature adapter/contracts | `playback/` | D-Bus/raw metadata 只在 adapter 内解析；poll/subscription task 归 `app/playback_coordinator.py` |
+| `providers/player_selection.py` | Playback selection policy | `playback/player_selection.py` | runtime 和 Settings 共用同一 typed descriptor/policy |
+| `providers/gate.py`、`receiver.py` | Cider adapter + source ownership workflow | `lyrics/cider/`、`app/source_gate.py` | WebSocket/HTTP payload 与 Cider snapshot 不越过 adapter；active source 由 app 决定 |
+| `platform/qt_host.py` | Qt WindowHost presentation adapter | `ui/window_host.py` | Qt widget/native handle translation 不进入 app 或 feature contract |
+| `lyrics/*.py` | Lyrics feature contracts、parsers 和 adapters | `lyrics/models.py`、`lyrics/title_grammar.py`、`lyrics/matching.py`、`lyrics/parsers/`、`lyrics/sources/` | provider 细节留在 lyrics feature，不再依赖 root `model.py` |
+| `model.py` | 按语义拆分的 feature values | `lyrics/models.py`、`playback/models.py`、`display/models.py`、`lyrics/cider/` | 不保留一个跨 feature 的万能 model module |
+| `clock.py`、`karaoke.py` | Playback observation / display rules | `playback/clock.py`、`display/timeline.py`、`display/karaoke.py` | 纯规则留在 owner feature，时间源选择和发布由 app coordinator 负责 |
+| `overlay.py` | Overlay application workflow + Qt presentation | `app/overlay_coordinator.py`、`ui/overlay/`、`platform/` | QWidget 只渲染 `DisplayFrame`、翻译输入和显示平台结果 |
+| `settings_dialog.py`、`tray.py`、`icons.py`、`leaf_icon.py` | Qt presentation | `ui/settings/`、`ui/tray/`、`ui/` | UI 通过 app capability 和 typed intent 工作，不直接保存配置或探测平台 |
+| `config.py` | Config model/store | `config/models.py`、`config/store.py` | JSON decode、validation、atomic persistence 只有一个 owner |
 
 目录名不是目标本身。每个模块必须有明确的 public contract、输入输出、owner 和测试；如果某个模块
 只有转发函数而没有独立责任，不应为了“分层”创建它。
@@ -129,51 +194,49 @@ src/kotonoha/
 
 **退出条件**：矩阵每一行都有行为 owner、输入/输出、失败语义和测试入口；所有冲突都已经写成新设计的明确决策，不能以“沿用当前实现”作为答案。
 
-### Phase 1：建立 domain primitives 和端口
+### Phase 1：建立 feature contracts 和 application capabilities
 
 **目的**：先建立独立于 Qt、D-Bus、HTTP 和文件系统的目标契约，再决定现有实现如何接入。
 
-- [ ] 新建 `domain` 值对象：`PlayerId`、`SourceId`、`TrackGeneration`、`Seconds`、`ProviderSongId`。
-- [ ] 新建 `RawTrackObservation`、`NormalizedTrackView`、`TrackIdentity`。
-- [ ] 新建 `LyricDocument`、`LyricLine`、`LyricWord` invariant validator。
-- [ ] 新建 `MatchEvidence`、`MatchConfidence`、`ResolutionPolicy`、`SourceResult`、`ResolutionDecision`。
-- [ ] 新建 `DisplayState`、`DisplayFrame`、`SurfaceState`、`DragState` 和 operation result。
-- [ ] 新建 `ports` Protocol；Protocol 只描述稳定业务契约，不暴露 `Any`、Qt、D-Bus 或 aiohttp 类型。
+- [ ] 在 owner feature 中新建值对象：`playback.models` 放 `PlayerId`、`TrackGeneration`、`RawTrackObservation`、`TrackIdentity`，`lyrics.models` 放 `SourceId`、`ProviderSongId` 和歌词文档类型。
+- [ ] 在 `lyrics` 中新建 `MatchEvidence`、`MatchConfidence`、`ResolutionPolicy`、`SourceResult`、`ResolutionDecision` 及 invariant validator。
+- [ ] 在 `display.models` 中新建 `DisplayState`、`DisplayFrame` 和 display diagnostics；在 `platform.overlay_contracts` 中新建 `SurfaceState`、`DragState` 和 operation result。
+- [ ] 在 workflow 或 feature 边界旁定义命名 Protocol；Protocol 只描述稳定业务契约，不暴露 `Any`、Qt、D-Bus 或 aiohttp 类型，不建立通用 `ports/` 包。
 - [ ] 将 Config 内部字符串 mode 收敛成 Enum/value object，保留 JSON serializer 的字符串格式。
-- [ ] 加 architecture tests：domain/application 禁止第三方 import；新 boundary 禁止 `Any`；端口 success/failure invariant 必须成立。
+- [ ] 加 architecture tests：feature contracts 禁止第三方 import，`app` workflow 禁止具体 adapter/UI，`ui` 禁止 native bridge；capability success/failure invariant 必须成立。
 - [ ] 加等价性门禁：grammar、parser、matcher、resolver、display 和 platform 相关变更必须运行 corpus；禁止通过修改 expected 或读取源代码绕过。
 
-**退出条件**：新类型可以被测试和文档引用；目标 domain/ports 有独立测试；`ty` 在新 domain/ports 上没有错误；没有通过 suppression 解决类型错误。
+**退出条件**：新类型可以被测试和文档引用；各 owner feature 与 `app` capability 有独立测试；`ty` 在新边界上没有错误；没有通过 suppression 解决类型错误。
 
 ### Phase 2：重建播放观察与歌词解析链
 
 **目的**：先切断最频繁 case 的源头：播放器观察和歌词 workflow。
 
-#### 2A. MPRIS infrastructure
+#### 2A. MPRIS playback adapter
 
-- [ ] 将 `MprisSession` 的动态访问集中在 adapter，输出 typed `PlayerSample`。
+- [ ] 将 `playback/mpris_session.py` 的动态访问集中在 adapter，输出 `playback.models.PlayerSample`。
 - [ ] deadline、D-Bus exception、empty metadata、invalid Variant 在 adapter 内转为 `BoundaryResult`。
 - [ ] adapter 不返回 raw player object；`PlayerSelector` 只接受 `PlayerDescriptor`。
 - [ ] `PlayerSelectionPolicy` 同时服务 runtime 和 Settings rows。
 
 #### 2B. PlaybackCoordinator
 
-- [ ] 将 stabilizer 作为纯 domain service；将 poll/subscription/task owner 放到 application coordinator。
+- [ ] 将 stabilizer 作为 `playback` feature 的纯规则；将 poll/subscription/task owner 放到 `app/playback_coordinator.py`。
 - [ ] 一个 committed identity 只产生一个 generation；generation 变更时由 workflow owner 取消旧 load。
 - [ ] position 读取失败不得阻止 metadata commit；clock 使用独立 observation。
 - [ ] provider hint 从 raw metadata 一次生成，不能在 title cleaning 后重新猜。
 
 #### 2C. LyricsResolutionWorkflow
 
-- [ ] 将 `resolve_hint`、`_resolve_best`、`_resolve_sequential` 改为一个显式 `SourcePlan` 执行器。
+- [ ] 将 `resolve_hint`、`_resolve_best`、`_resolve_sequential` 收进 `app/lyrics_workflow.py` 的显式 `SourcePlan` 执行器。
 - [ ] exact hint、local sidecar、embedded、Cider、network source 的 precedence 由 plan 测试覆盖。
 - [ ] 新旧 source workflow 对同一 typed request 做 canonical comparison；请求超时、失败 reason、source 顺序和 stale generation 都属于等价输出。
-- [ ] network provider 统一实现 `LyricsSource.fetch(LyricsRequest)`；HTTP/body/parser/cache 细节留在 adapter。
+- [ ] `lyrics/sources/` 的 network provider 统一实现命名的 source capability；HTTP/body/parser/cache 细节留在 lyrics adapter。
 - [ ] 将 cache hit、network hit、miss、unavailable、failure、rejected 转为 `SourceResult`。
-- [ ] shared in-flight task 的 owner 放在 workflow；`cancel_inflight` 不再作为 concrete resolver 的隐藏能力。
+- [ ] shared in-flight task 的 owner 放在 `app/lyrics_workflow.py`；`cancel_inflight` 不再作为 concrete resolver 的隐藏能力。
 - [ ] 只有 high-confidence artifact 写入 cache；negative cache 只记录真实 miss，不记录 unreachable/failure。
 
-**退出条件**：歌词行为 golden scenarios 全部通过；现有 provider adapter 可以逐个接入新 port；MPRIS coordinator 不再直接调用 network provider 或写 lyric state。
+**退出条件**：歌词行为 golden scenarios 全部通过；现有 provider adapter 可以逐个接入 source capability；MPRIS coordinator 不再直接调用 network provider 或写 lyric state。
 
 ### Phase 3：重建时间轴和展示模型
 
@@ -183,10 +246,10 @@ src/kotonoha/
 - [ ] 新建 `DisplayEngine`：输出 `DisplayFrame`，显式区分 Empty/Transition/Loading/ActiveLine/Interlude/Finished/Error。
 - [ ] word highlight 使用 document 中的 word spans 和最终 text mapping；不假设 words 之间有空格。
 - [ ] translation merge 变成 document index/transform；保持 #58 的复杂度改进并用性能测试守住。
-- [ ] interlude detector、countdown、font fit 的输入输出独立测试；字体尺寸测量留在 presentation adapter，但 fit policy 不留在 MPRIS。
+- [ ] interlude detector、countdown、font fit 的输入输出独立测试；字体尺寸测量留在 `ui` adapter，但 fit policy 不留在 MPRIS。
 - [ ] `DisplayFrame` 迁移必须通过 display corpus；比较 state、上下文行、word progress、diagnostic，不比较 QWidget 私有字段。
 - [ ] `MediaClock` 只提供 clock observation；source selection 和 pause/resume policy 由 `ClockCoordinator` 决定。
-- [ ] Overlay widget 改为接收 `DisplayFrame`，不再从 `LyricsSnapshot` 自己推导 provider/interlude/timing policy。
+- [ ] `ui/overlay/` 改为接收 `DisplayFrame`，不再从 `LyricsSnapshot` 自己推导 provider/interlude/timing policy。
 
 **退出条件**：可以不用 Qt 运行完整 display/timeline 测试；Overlay 只渲染 frame；lyrics provider 与 display policy 不再互相导入。
 
@@ -194,14 +257,14 @@ src/kotonoha/
 
 **目的**：把 #27-#31/#35/#38/#46/#55/#60/#64 的平台行为变成可验证状态机。
 
-- [ ] 将 `OverlayPlatform` 收缩为 capability-specific ports：surface、output binding、input、blur、drag；不适用能力不要求实现无关方法。
+- [ ] 将 `platform.OverlayPlatform` 收缩为 capability-specific contracts：surface、output binding、input、blur、drag；不适用能力不要求实现无关方法。
 - [ ] 实现 `SurfaceLifecycleOwner`：`Unprepared -> Prepared -> Active -> Rebinding/Degraded -> Closing -> Closed`。
 - [ ] surface owner 负责 blur/input release、native handle 生命周期和 deferred callback guard。
 - [ ] output source 只提供 toolkit-neutral `OutputSnapshot`；active output 更新只有一个 command path。
 - [ ] rebind 失败保留 pending intent；成功后才提交 active output/config。
 - [ ] drag strategy 只计算 compositor-specific movement；application 根据 `Applied/Rejected` 决定保存。
 - [ ] Layer Shell、Qt fallback、niri、X11 capability reason 分别测试；至少一个真实 KWin live lifecycle test 保留 opt-in。
-- [ ] `SettingsDialog` 和 `LyricsOverlay` 通过 composition root 获得同一个 session capability snapshot/adapter，不自行 probe。
+- [ ] `ui/settings/` 和 `ui/overlay/` 通过 `app/services.py` 获得同一个 session capability snapshot/adapter，不自行 probe。
 - [ ] surface/output/drag state machine 维护 operation-result corpus；失败、pending intent、关闭后 callback 都必须有正向和负向场景。
 
 **退出条件**：平台 fake 能完整跑 surface/drag/output 状态机；Overlay 不导入 native bridge；失败 operation 不会被伪装为成功；分散的 output lifecycle 代码收敛到唯一 owner。
@@ -213,19 +276,19 @@ src/kotonoha/
 - [ ] `ConfigStore` 负责 JSON decode/validation/atomic persistence；application 只处理 typed Config/ConfigPatch。
 - [ ] `SettingsFormState` 负责控件值；字段 constraints 与 Config 共用 value object，不使用 `getattr(defaults, field)`。
 - [ ] 所有 settings action 变成 typed intents：`ApplyConfig`、`ClearCache`、`RequestRestart`、`ChangeTrackOffset`。
-- [ ] `AppController` 只负责 composition/start/stop 和 intent routing；不再承载 MPRIS、Overlay、Settings 的业务决策。
-- [ ] 所有 async actions 由 application supervisor 保持 task handle，并在 stop 时 cancel/await。
+- [ ] `app/application_controller.py` 只负责 wiring/start/stop 和 intent routing；不再承载 MPRIS、Overlay、Settings 的业务决策。
+- [ ] 所有 async actions 由 `app/lifecycle.py` 的 supervisor 保持 task handle，并在 stop 时 cancel/await。
 - [ ] Qt signal 使用 bound method 或明确 QObject owner，不用 lambda 隐藏生命周期。
 
-**退出条件**：组合根只做 wiring；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
+**退出条件**：`app/services.py` 和 `main.py` 只做 wiring；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
 
 ### Phase 6：删除被替代路径、收紧质量门禁
 
 - [ ] 删除现有 `MprisProvider` 中已经迁移到新 owner 的 resolver/clock/display/platform policy 分支。
-- [ ] 删除 `match.py` 对 `titles.py` 私有 helper 的依赖，改为公开 domain result。
-- [ ] 合并 config/local 的 bounded regular-file reader，删除重复边界实现。
+- [ ] 删除 `lyrics/matching.py` 对 `lyrics/title_grammar.py` 私有 helper 的依赖，改为公开 feature result。
+- [ ] 合并 `config/store.py` 与 `lyrics/sources/local.py` 重复的 bounded regular-file reader，删除重复边界实现。
 - [ ] 删除临时 compatibility exports/fallback，并为每个删除记录对应迁移完成条件。
-- [ ] 逐步增加 Ruff/ty/architecture checks：domain Any、dynamic access、dependency direction、task ownership、public annotations。
+- [ ] 逐步增加 Ruff/ty/architecture checks：feature contract Any、dynamic access、dependency direction、task ownership、public annotations。
 - [ ] 完整验证 Python 3.11-3.15 CI、offscreen Qt、Cider test/build、`uv build`、live compositor opt-in。
 - [ ] 更新仓库规范、运行文档和开发规则，使文档描述目标架构、边界和验证命令。
 
@@ -233,16 +296,16 @@ src/kotonoha/
 
 ## PR 拆分规则
 
-每个 PR 只能属于一个层和一个行为主题：
+每个 PR 只能属于一个 feature owner、一个 application workflow 或一个 platform lifecycle 主题：
 
-1. `refactor(domain)`: 只增加值对象、纯规则和测试，不切生产 wiring。
-2. `refactor(ports)`: 只定义 Protocol/result，并提供兼容 adapter。
-3. `refactor(lyrics)`: 只迁移一条歌词 source/workflow，包含行为矩阵对应测试。
-4. `refactor(playback)`: 只迁移 MPRIS observation/generation/clock owner。
-5. `refactor(display)`: 只迁移 timeline/display model 与 renderer 输入。
-6. `refactor(platform)`: 只迁移 surface/output/drag lifecycle；live/fake 测试必须一起变更。
-7. `refactor(composition)`: 只切换 wiring、删除旧路径和清理 compatibility。
-8. `refactor(grammar)`: 只迁移正则、title grammar 或 parser rule；必须附带 typed corpus、近邻负例和 differential report。
+1. `refactor(playback)`: 只迁移 MPRIS observation、generation、clock 和 player selection。
+2. `refactor(lyrics)`: 只迁移一条 lyrics source、parser、matching 或 resolver workflow，包含行为矩阵对应测试。
+3. `refactor(display)`: 只迁移 timeline/display model 与 renderer 输入。
+4. `refactor(config)`: 只迁移 typed config、store 和 settings intent，不切换无关 workflow。
+5. `refactor(platform)`: 只迁移 surface/output/drag lifecycle；live/fake 测试必须一起变更。
+6. `refactor(ui)`: 只迁移 Qt presentation 和 intent binding，不把业务决策放回 widget。
+7. `refactor(app)`: 只切换 workflow wiring、task ownership、删除旧路径和清理 compatibility。
+8. `refactor(lyrics-grammar)`: 只迁移 title grammar 或 parser rule；必须附带 typed corpus、近邻负例和 differential report。
 
 禁止把“顺手修到的另一个 case”留在当前 PR；另开 issue，写明它属于哪一个行为契约和哪个 phase。
 
@@ -279,7 +342,7 @@ canonical diff：
 
 1. 完成 Phase 0 的 policy 决策、typed corpus 和 differential comparator。
 2. 修复当前 `ty` 诊断，禁止测试使用 `object.__new__` 绕过构造。
-3. 先落地 `domain`/`ports` 类型，不切换唯一 publisher。
+3. 先落地 feature contracts 和 `app` capability，不切换唯一 publisher。
 4. 从 `RawTrackObservation -> TrackIdentity -> SourcePlan` 这条最能减少后续 patch 的链开始迁移，并逐 case 对比。
 5. 再迁移 `DisplayFrame`，最后迁移 surface/platform 生命周期和组合根。
 
