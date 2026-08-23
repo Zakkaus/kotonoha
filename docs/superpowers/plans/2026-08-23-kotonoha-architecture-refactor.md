@@ -86,7 +86,7 @@ src/kotonoha/
 
   display/                    # 纯展示模型和时间轴规则
     models.py                  # DisplayState、DisplayFrame 和 display diagnostics
-    timeline.py                # line selection、offset、interlude/finished state
+    timeline.py                # line selection、offset、interlude 和 clock-independent display facts
     karaoke.py                 # line/word progress 和 font-fit policy 的纯部分
 
   config/                     # typed configuration 和持久化边界
@@ -168,13 +168,13 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 
 **目的**：把当前实现的行为与新设计的目标行为分开，先完成 policy 决策，再开始代码迁移。
 
-- [ ] 将歌词矩阵和 Overlay 矩阵中的行为标记为 `Retain`、`Redefine` 或 `Remove`；`Retain` 必须有用户价值和明确 owner，不能因为当前存在就默认保留。
+- [x] 将歌词矩阵和 Overlay 矩阵中的行为标记为 `Retain`、`Redefine` 或 `Remove`；`Retain` 必须有用户价值和明确 owner，不能因为当前存在就默认保留。逐条登记见两份行为矩阵的 Phase 0 决策登记。
 - [ ] 为每条 `Retain` 行为补一个 public contract test；测试输入使用真实形状的 fake，不读取源代码字符串。
-- [ ] 建立 `BehaviorCase[TInput, TPublicOutput]` typed corpus，先收录现有 title/parser/match/provider/overlay 测试和最近 PR 回归样本。
+- [x] 建立 `BehaviorCase[TInput, TPublicOutput]` typed corpus，先收录 title、LRC/YRC/KRC parser、match、display、gate、clock 和 platform 的代表性回归样本。当前入口为 `tests/behavior_corpus.py` 与 `tests/behavior_runtime_corpus.py`，provider/source workflow 的 target corpus 在迁移对应 owner 时继续扩充。
 - [ ] 为每个正则或 parser rule 建立正向 case、近邻负向 case 和 rule id；expected 只保存 canonical public result，不保存正则实现细节。
-- [ ] 用当前实现生成冻结 baseline，并实现新旧实现的 differential comparator；未登记差异不得合并。
-- [ ] 建立 `BehaviorChangeRecord` 流程：任何有意改变必须同时写明 case、旧行为、新目标、用户影响和新的契约测试。
-- [ ] 建立 golden scenarios：
+- [x] 用当前实现生成冻结 baseline，并实现新旧实现的 differential comparator；未登记差异不得合并。当前 comparator 和冻结结果位于 `tests/behavior_corpus.py`。
+- [x] 建立 `BehaviorChangeRecord` 流程：任何有意改变必须同时写明 case、旧行为、新目标、用户影响和新的契约测试。模板和 #62 拆分记录位于 `docs/superpowers/behavior-changes/`。
+- [ ] 建立并执行 golden scenarios（场景目录已建立，完整跨 owner 执行仍待 Phase 1）：
   - MPRIS queue cumulative length/position；
   - title 与 artist 在切歌时混合；
   - raw title 含 uploader/版本/频道噪声；
@@ -183,16 +183,33 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
   - network timeout、HTTP 200 错 payload、body/decompression over limit；
   - caller cancellation 与 owner shutdown；
   - Cider selected/unselected、disconnect、stale generation；
-  - word timing、无空格文字、interlude、finished、font fit；
+  - word timing、无空格文字、interlude、无歌词、font fit；
   - output unplug/replug、rebind failure、closed callback、drag failure。
-- [ ] 审核设计规格 §5.4 的默认 policy，并登记作者最终决策：
-  1. 来源优先级与 cache 是否严格分离；
-  2. `ordered_first` 与 `best_confidence` 是否都是公开 policy；默认是哪一个；
-  3. `MEDIUM` confidence 的 provisional 展示、fallback 和 cache 规则；
-  4. `NoTrack/Empty/Transition/Interlude/Finished` 的 UI 内容和清空时机。
-- [ ] 将 `#62` 中 restart failure 与 LRC cap 拆成两个独立行为记录，禁止未来 PR 混合不相关责任。
+- [x] 审核设计规格 §5.4 的默认 policy，并登记作者最终决策：
+  1. 来源优先级为“用户手动选择、sidecar、embedded、播放器精确歌曲 ID、当前选中的
+     Cider 会话、配置的网络来源”；自动 cache 只加速所属来源，不改变来源优先级。
+  2. `ordered_first` 与 `best_confidence` 都是公开 policy，默认使用 `ordered_first`，因为
+     默认行为应保持本地优先；`best_confidence` 作为可选策略。
+  3. `EXACT/HIGH` 可以作为自动结果；`MEDIUM` 先等待其他来源，只有没有更可靠结果时才作为
+     候选显示。自动流程不持久化 `MEDIUM`，用户确认后可以将其保存为本地歌词。
+  4. 用户手动选择的结果属于“用户确认歌词”，优先于所有自动来源；清除手动选择后才恢复
+     自动解析。它不要求新增一种文件格式，普通 cache 命中也不自动获得该优先级。
+  5. 展示解析状态使用 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；界面文案使用
+     “找不到歌词”。`Transition` 和 `Interlude` 是当前展示内容或时间轴推导，不建立
+     `Finished` 状态。
+  6. Cider 断线或 Position 暂不可用时，已经找到的歌词不清空，clock 回退到 MPRIS；短暂空 metadata
+     继续由 stabilizer 处理，稳定确认无曲目后才发布 `NoTrack`。
+  7. 旧 generation 的迟到结果不得更新当前歌曲的显示或状态。Phase 0 不新增缓存 TTL 或
+     “过期 cache”策略。
+  8. 如果没有明确放弃的用户能力，行为矩阵可以没有 `Remove`；LRC 上限行为属于
+     `Redefine`，应从静默截断改为明确拒绝。
+- [x] 将 `#62` 中 restart failure 与 LRC cap 拆成两个独立行为记录，禁止未来 PR 混合不相关责任。
 
 **退出条件**：矩阵每一行都有行为 owner、输入/输出、失败语义和测试入口；所有冲突都已经写成新设计的明确决策，不能以“沿用当前实现”作为答案。
+
+**当前执行状态（2026-08-23）**：policy 决策、矩阵登记、初始 typed corpus、differential comparator 和
+`BehaviorChangeRecord` 已完成；逐条 public contract test、全部 grammar/parser rule 的正负 corpus 以及
+完整 golden suite 仍是 Phase 0 的未完成工程项。
 
 ### Phase 1：建立 feature contracts 和 application capabilities
 
@@ -229,7 +246,7 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 #### 2C. LyricsResolutionWorkflow
 
 - [ ] 将 `resolve_hint`、`_resolve_best`、`_resolve_sequential` 收进 `app/lyrics_workflow.py` 的显式 `SourcePlan` 执行器。
-- [ ] exact hint、local sidecar、embedded、Cider、network source 的 precedence 由 plan 测试覆盖。
+- [ ] 用户确认歌词、local sidecar、embedded、exact hint、Cider、network source 的 precedence 由 plan 测试覆盖。
 - [ ] 新旧 source workflow 对同一 typed request 做 canonical comparison；请求超时、失败 reason、source 顺序和 stale generation 都属于等价输出。
 - [ ] `lyrics/sources/` 的 network provider 统一实现命名的 source capability；HTTP/body/parser/cache 细节留在 lyrics adapter。
 - [ ] 将 cache hit、network hit、miss、unavailable、failure、rejected 转为 `SourceResult`。
@@ -243,7 +260,8 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 **目的**：把 #38/#46/#56/#58/#59/#62/#64 的展示行为从 QWidget 和 MPRIS 协调器中收回到纯规则。
 
 - [ ] 新建 `TimelineEngine`：接收 `LyricDocument`、clock observation、per-track offset、playback status。
-- [ ] 新建 `DisplayEngine`：输出 `DisplayFrame`，显式区分 Empty/Transition/Loading/ActiveLine/Interlude/Finished/Error。
+- [ ] 新建 `DisplayEngine`：输出 `DisplayFrame`，显式区分 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；
+  当前行、transition 和 interlude 作为 frame 内容或时间轴结果，不建立 `Empty` 或 `Finished` 状态。
 - [ ] word highlight 使用 document 中的 word spans 和最终 text mapping；不假设 words 之间有空格。
 - [ ] translation merge 变成 document index/transform；保持 #58 的复杂度改进并用性能测试守住。
 - [ ] interlude detector、countdown、font fit 的输入输出独立测试；字体尺寸测量留在 `ui` adapter，但 fit policy 不留在 MPRIS。

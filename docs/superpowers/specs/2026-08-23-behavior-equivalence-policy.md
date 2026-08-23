@@ -77,3 +77,16 @@ BehaviorCase[TInput, TPublicOutput]
 样本优先来自现有测试和最近 PR 的回归输入；新增 generated/property cases 只能补充 corpus，不能替代
 可审阅的固定 case。测试必须通过 public API，不能通过 `object.__new__`、私有字段填充或读取源代码来
 绕过生产契约。
+
+## 当前仓库入口
+
+- `tests/behavior_corpus.py` 定义 `BehaviorCase[TInput, TPublicOutput]`、歌词/匹配/展示的固定公共
+  结果和 `compare_to_baseline`；`tests/behavior_runtime_corpus.py` 保存 gate、clock、platform 的
+  runtime cases。expected 值是迁移期间的冻结 baseline。
+- `tests/test_behavior_corpus.py` 通过当前 title grammar、LRC/YRC/KRC parser、matcher、timeline
+  selector、raw-title lookup gate、Cider clock gate 和 platform operation result 运行 corpus，同时
+  验证每条 case 有近邻负例。
+- `docs/superpowers/behavior-changes/` 保存有意变化的 `BehaviorChangeRecord`；#62 的 LRC budget 和
+  restart failure 已拆成两个独立记录。
+- [Golden scenario 目录](2026-08-23-kotonoha-golden-scenarios.md) 索引跨模块输入、失败语义和当前
+  测试证据；其中 `target` 场景必须在 Phase 1 的新 owner/API 落地后补齐。

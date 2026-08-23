@@ -54,7 +54,7 @@ adapter 退出时必须将结果收敛为 domain/application 能理解的结构�
 ```python
 BoundaryResult[T]
     = Accepted(value: T)
-    | Empty(reason: EmptyReason)
+    | Miss(reason: MissReason)
     | Rejected(reason: RejectionReason)
     | Unavailable(reason: UnavailableReason)
     | Failed(kind: FailureKind, retryable: bool)
@@ -206,7 +206,7 @@ network、Cider、sidecar、embedded 和 exact-id 都可以是 source adapter，
 
 ```text
 DisplayState
-    NoTrack | Empty | Transition | Loading | ActiveLine | Interlude | Finished | Error
+    NoTrack | Resolving | LyricsAvailable | LyricsNotFound
 
 DisplayFrame
     state: DisplayState
@@ -250,13 +250,15 @@ strategy 由 platform lifecycle owner 持有。
    - 两种 policy 都有每 source deadline 和整体 generation owner。
 5. source 结果必须区分 `Miss`、`Unavailable`、`Failed`、`Rejected`；只有 `Miss` 可进入 negative memory cache。
 6. 只有通过持久化置信度门槛的 artifact 才写 SQLite；cache hit 必须重新检查 schema/normalizer version。
-7. Cider 被选中后绑定 client id；外部 provider 被选中后 Cider tick 不得校准共同 clock。
+7. Cider 被选中后绑定 client id；Cider 是否为外部歌词提供 clock calibration 由显式 ClockPolicy 决定，
+   Cider 断线或 Position 不可用时保留已找到的歌词并回退 MPRIS。
 
 ### 5.2 时间轴与展示
 
 1. parser 输出的 line/word timing 必须经过统一 invariant validator：非负、单调、有界、文本与 word 可对应。
 2. `karaoke=False` 时展示 line text，不计算 word highlight；`karaoke=True` 但 word timing 不可用时退化到 line timing。
-3. interlude、empty、transition、finished 是不同状态；不能用空字符串表达全部情况。
+3. 当前行、transition 和 interlude 是 DisplayFrame/Timeline 的内容；resolution state 只表达
+   `NoTrack`、`Resolving`、`LyricsAvailable` 和 `LyricsNotFound`，不能用空字符串表达“正在查找”或“找不到歌词”。
 4. per-track offset 以 stable `TrackIdentity` key 关联，由 application/config service 持有；Overlay 只发布 intent。
 5. pause/resume 使用 clock policy 选择 player position 或估算值；clock policy 不由 renderer 决定。
 6. font fit 使用实际 layout measurement，不能用固定字符数替代最终渲染尺寸。
@@ -275,16 +277,18 @@ strategy 由 platform lifecycle owner 持有。
 以下是为了让实现可以从明确边界开始的初始提案，不是从当前代码自动推导出的兼容承诺。Phase 0 必须
 逐项确认；若作者修改，必须同时更新 SourcePlan、DisplayState 和对应的 golden scenario。
 
-1. **来源优先级**：同一音频的 sidecar -> embedded artifact -> 可信 provider hint -> 已选 Cider session
-   -> 按配置顺序的 network search。cache 是每个 source 的存储加速，不是独立的来源，也不能改变来源优先级。
+1. **来源优先级**：用户确认歌词 -> 同一音频的 sidecar -> embedded artifact -> 可信 provider hint
+   -> 已选 Cider session -> 按配置顺序的 network search。自动 cache 是每个 source 的存储加速，不是独立的
+   来源，也不能改变来源优先级；用户确认结果才是最高优先级的本地歌词。
 2. **默认竞争策略**：默认使用 `ordered_first`，保证请求数量、结果选择和失败诊断可预测；`best_confidence`
    只能作为显式配置，且必须有总预算、取消规则和确定性的 tie-breaker。
-3. **置信度处理**：`EXACT/HIGH` 才能成为 active document；`MEDIUM` 只能作为带诊断的 provisional result，
-   不写持久 cache；`LOW` 直接 `Rejected`。provisional 是否展示由 DisplayPolicy 决定，不能由 provider 自行决定。
-4. **播放状态**：没有可提交曲目身份时输出 `NoTrack`；身份已提交但尚未完成解析时输出 `Loading`；解析完成
-   但没有可接受文档时输出 `Empty`。这些状态不得用空字符串或保留上一曲文本来隐式表达。
-5. **时钟归属**：只有当前 `ResolutionDecision` 选中的 live source 可以提供校准 tick；source 失效时先生成
-   明确的 clock unavailable 事件，再由 ClockPolicy 决定保持、估算或进入 transition，不能由 Overlay 猜测。
+3. **置信度处理**：`EXACT/HIGH` 才能成为自动 active document；`MEDIUM` 等待其他来源后只作为 fallback，
+   不写自动持久 cache；`LOW` 直接 `Rejected`。用户确认后可以保存任意候选为本地歌词。
+4. **播放状态**：没有可提交曲目身份时输出 `NoTrack`；身份已提交但尚未完成解析时输出 `Resolving`；解析完成
+   但没有可接受文档时输出 `LyricsNotFound`。界面文案使用“找不到歌词”，这些状态不得用空字符串或保留上一曲文本
+   来隐式表达。
+5. **时钟归属**：`follow_lyrics_source` 使用当前歌词来源的 clock；`prefer_matching_cider` 在 Cider 确认
+   同曲且 tick 有效时优先使用 Cider。Cider 失效时保留已找到的歌词并回退 MPRIS，不能由 Overlay 猜测。
 
 ## 6. 禁止的依赖和实现形状
 

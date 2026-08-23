@@ -40,7 +40,33 @@ flowchart LR
 | `#59` | pause/resume 的 display clock 使用播放器实际 position，避免估算漂移。 | clock source selection 和 display rendering 分离；pause/resume 是 timeline state transition。 | `application/clock` + `domain/timeline` |
 | `#60` | startup 时把当前 screen/output 告知 platform；修复 adapter `_active_output` 未初始化导致 output removal/rebuild 不工作。 | active output 绑定只能通过一个 command；不能同时直接改 widget field 和 adapter field。 | `application/overlay` -> `platform/surface_lifecycle` |
 | `#62` | 与 overlay 无直接展示契约的 restart failure + LRC cap 同时合入。 | 一个 PR 应只改变一个行为边界；restart result 和 parser budget 应拆成独立变更，减少回归定位范围。 | governance/process |
-| `#64` | Overlay 增加 instrumental/interlude 展示、dots/symbol/countdown、按字体扩大 fit width；同时修复 MPRIS metadata 前置错误。 | `DisplayModel` 必须区分 empty、transition、interlude、active line、finished；font measurement 是 renderer/layout policy，不是 MPRIS coordinator。 | `domain/display` + `presentation/renderer` |
+| `#64` | Overlay 增加 instrumental/interlude 展示、dots/symbol/countdown、按字体扩大 fit width；同时修复 MPRIS metadata 前置错误。 | `DisplayModel` 区分 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；当前行、transition 和 interlude 是 frame/timeline 内容；font measurement 是 renderer/layout policy。 | `domain/display` + `presentation/renderer` |
+
+## Phase 0 决策登记
+
+`Retain` 表示用户可见能力继续存在，`Redefine` 表示能力保留但公共契约改变，`Remove` 表示不再
+承诺该行为。本矩阵目前没有需要 `Remove` 的用户能力。
+
+| PR | 决策 | 公共输入、输出和失败语义 | Owner / test entry |
+| --- | --- | --- | --- |
+| `#25` | Retain | platform facts 仍由 adapter 产出；UI 不能根据 desktop 或 Qt 名称自行决策。 | `platform_probe`；`tests/test_platform_detect.py`、`tests/test_architecture.py` |
+| `#27` | Redefine | capability、live probe、snapshot 和 operation result 分开；不可用能力必须带 reason，Protocol 不等于成功。 | `platform_contracts`；`tests/test_platform_capabilities.py`、`tests/test_platform_registry.py` |
+| `#28` | Retain | Overlay 只调用 toolkit-free platform contract；native handle 和 compositor protocol 不越过 adapter。 | `overlay/platform adapter`；`tests/test_architecture.py`、`tests/test_overlay_platform.py` |
+| `#29` | Retain | Drag session 只在平台报告 applied 后提交位置；Rejected/failed move 不持久化。 | `drag/application`；`tests/test_overlay_platform.py`、`tests/test_platform_registry.py` |
+| `#30` | Retain | surface、blur、input 和 output resource 有明确 owner；rebind 失败保留 pending intent，Closed callback 被丢弃。 | `surface_lifecycle`；`tests/test_platform_registry.py`、`tests/test_overlay_platform.py` |
+| `#31` | Retain | composition root 只 probe/wire 一次；settings 和 overlay 共享同一 capability adapter。 | `platform_registry`；`tests/test_platform_registry.py`、`tests/test_settings_dialog.py` |
+| `#35` | Retain | compositor-specific drag 仅实现 strategy 差异；环境探测在 composition boundary 完成。 | `drag_strategy`；`tests/test_platform_registry.py` |
+| `#38` | Retain | track offset 由 typed timing policy 管理，key、clamp、eviction 和 apply timing 可观察。 | `timing/application settings`；`tests/test_overlay.py`、`tests/test_config.py` |
+| `#39` | Retain | runtime/settings 使用同一 player selection policy，UI 不复刻排序和 fallback。 | `playback_selection`；`tests/test_player_selection.py`、`tests/test_settings_dialog.py` |
+| `#44` | Retain | deterministic fake capability 与 live compositor test 分开，并明确运行前提。 | test architecture；`tests/test_platform_*.py` |
+| `#46` | Retain | display model 计算 word progress，renderer 按最终 layout text 测量；无空格文字仍正确 sweep。 | `display_timeline/renderer`；`tests/test_karaoke.py`、`tests/test_overlay.py` |
+| `#47` | Retain | settings form 与 Config 共用 range/value constraint；转换或应用失败不得静默截断。 | `config/form adapter`；`tests/test_config.py`、`tests/test_settings_dialog.py` |
+| `#54` | Retain | focus style 是 presentation 视觉行为，不进入 platform 或 workflow contract。 | `settings presentation`；`tests/test_settings_dialog.py` |
+| `#55` | Retain | late callback、删除 widget、FIFO bridge path 都转为明确 infrastructure failure，不抛出伪成功。 | `native_adapter`；`tests/test_overlay_platform.py`、`tests/test_native.py` |
+| `#59` | Redefine | clock source 是可配置 policy；Cider 不可用时保留已找到歌词并回退 MPRIS，不清空 display。 | `clock_coordinator`；`tests/test_clock.py`、`tests/test_receiver.py` |
+| `#60` | Retain | output binding 只有一个 command owner；重建失败保留 pending output intent。 | `overlay_application/surface_lifecycle`；`tests/test_platform_registry.py` |
+| `#62` | Redefine | restart failure 与 LRC budget 分成独立行为记录和测试，不再作为 Overlay 的混合契约。 | lifecycle governance；`BehaviorChangeRecord` |
+| `#64` | Redefine | 展示 resolution state 使用 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；当前行、transition 和 interlude 是 frame/timeline 内容，不建立 `Empty` 或 `Finished`。 | `display/renderer`；`tests/test_select.py`、`tests/test_overlay.py`、display corpus |
 
 ## Overlay 必须拥有的状态机
 
@@ -76,7 +102,7 @@ Idle -> Pressed -> Updating -> Released
 
 ## 展示行为必须从 Overlay 中移出的规则
 
-- 当前歌词、上下文行、翻译、interlude、word progress、finished/empty 由纯 `DisplayModel` 决定。
+- 当前歌词、上下文行、翻译、interlude、word progress 和找不到歌词的原因由纯 `DisplayModel` 决定。
 - `LyricsOverlay` 不知道 provider、MPRIS、Cider、cache、match confidence。
 - `LyricsOverlay` 不决定 compositor capability；它只读取 `OverlayCapabilities` 和 operation result。
 - `SettingsDialog` 不通过 `getattr` 枚举 Config 字段，也不自己构造 native/platform probe。
