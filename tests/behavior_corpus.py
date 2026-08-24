@@ -16,6 +16,7 @@ from typing import Generic, TypeVar
 
 from kotonoha.lyrics.krc_parser import KRC_MAGIC, KRC_XOR_KEY
 from kotonoha.lyrics.match import Candidate, MatchConfidence, TrackMetadata
+from kotonoha.lyrics.payload import MAX_DECOMPRESSED_BYTES
 from kotonoha.model import LyricLine
 from kotonoha.providers.mpris_track import TrackInfo
 
@@ -143,6 +144,16 @@ LRC_CASES: tuple[BehaviorCase[LrcInput, tuple[LineOutput, ...]], ...] = (
         source=RegressionSource("#34/#49", "bounded offset is applied while an absurd offset is ignored"),
         rule_ids=("lrc.offset", "lrc.offset.bound"),
     ),
+    BehaviorCase(
+        case_id="lrc.multiple-tags-and-end",
+        input=LrcInput("[00:01.00][00:05.00]repeat"),
+        expected=(LineOutput(1.0, 5.0, "repeat"), LineOutput(5.0, 10.0, "repeat")),
+        negative_variants=(LrcInput("[00:01.00]"),),
+        source=RegressionSource(
+            "#34/#56", "one content line can have several timestamps and the final line gets a bounded end"
+        ),
+        rule_ids=("lrc.multiple_tags", "lrc.line_end"),
+    ),
 )
 
 
@@ -228,6 +239,24 @@ YRC_CASES: tuple[BehaviorCase[YrcInput, tuple[WordLineOutput, ...]], ...] = (
         source=RegressionSource("#40/#56", "YRC word spans are absolute and metadata lines are not lyric content"),
         rule_ids=("yrc.line_head", "yrc.word_span", "yrc.metadata_skip"),
     ),
+    BehaviorCase(
+        case_id="yrc.timestamp-bound",
+        input=YrcInput(
+            "[" + "9" * 400 + ",1950](1300,243,0)skip\n"
+            "[1300,1950](1300,243,0)眉(1543,243,0)目\n"
+        ),
+        expected=(
+            WordLineOutput(
+                1.3,
+                3.25,
+                "眉目",
+                (WordOutput(1.3, 1.543, "眉"), WordOutput(1.543, 1.786, "目")),
+            ),
+        ),
+        negative_variants=(YrcInput("[1300,1950]not word timed"),),
+        source=RegressionSource("#56", "an absurd provider timestamp skips only its own line"),
+        rule_ids=("yrc.timestamp_bound",),
+    ),
 )
 
 
@@ -251,7 +280,38 @@ KRC_CASES: tuple[BehaviorCase[KrcInput, tuple[WordLineOutput, ...]], ...] = (
         source=RegressionSource(
             "#40/#49/#56", "KRC decoding preserves absolute word spans and rejects malformed bodies"
         ),
-        rule_ids=("krc.magic", "krc.decompression_budget", "krc.word_span"),
+        rule_ids=("krc.magic", "krc.word_span"),
+    ),
+    BehaviorCase(
+        case_id="krc.timestamp-bound",
+        input=KrcInput(
+            _encode_krc("[" + "9" * 400 + ",1000]<0,500,0>skip\n[1000,2000]<0,500,0>real\n")
+        ),
+        expected=(
+            WordLineOutput(
+                1.0,
+                3.0,
+                "real",
+                (WordOutput(1.0, 1.5, "real"),),
+            ),
+        ),
+        negative_variants=(KrcInput(b"not krc"),),
+        source=RegressionSource("#56", "an absurd provider timestamp skips only its own line"),
+        rule_ids=("krc.timestamp_bound",),
+    ),
+)
+
+
+KRC_BUDGET_CASES: tuple[BehaviorCase[KrcInput, tuple[WordLineOutput, ...]], ...] = (
+    BehaviorCase(
+        case_id="krc.decompression-budget",
+        input=KrcInput(
+            _encode_krc("[0,1000]<0,500,0>hello\n" + "A" * (MAX_DECOMPRESSED_BYTES + 1024))
+        ),
+        expected=(),
+        negative_variants=(KrcInput(_encode_krc("[0,1000]<0,500,0>hello\n")),),
+        source=RegressionSource("#49/#56", "a compressed body over the expansion budget is rejected before parsing"),
+        rule_ids=("krc.decompression_budget",),
     ),
 )
 
@@ -372,6 +432,7 @@ LOOKUP_CASES: tuple[BehaviorCase[LookupCase, str | None], ...] = (
 __all__ = [
     "BehaviorCase",
     "BehaviorDifference",
+    "KRC_BUDGET_CASES",
     "KRC_CASES",
     "KrcInput",
     "DisplayInput",

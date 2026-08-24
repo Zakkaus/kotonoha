@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from behavior_corpus import (
     DISPLAY_CASES,
+    KRC_BUDGET_CASES,
     KRC_CASES,
     LOOKUP_CASES,
     LRC_BUDGET_CASES,
@@ -28,6 +29,7 @@ from behavior_corpus import (
     YrcInput,
     compare_to_baseline,
 )
+from behavior_rule_inventory import GRAMMAR_RULE_COVERAGE
 from behavior_runtime_corpus import (
     CLOCK_CASES,
     GATE_CASES,
@@ -184,6 +186,8 @@ def test_corpus_cases_have_rule_and_nearest_negative_evidence() -> None:
         *LRC_CASES,
         *YRC_CASES,
         *KRC_CASES,
+        *KRC_BUDGET_CASES,
+        *LRC_BUDGET_CASES,
         *MATCH_CASES,
         *DISPLAY_CASES,
         *LOOKUP_CASES,
@@ -193,6 +197,20 @@ def test_corpus_cases_have_rule_and_nearest_negative_evidence() -> None:
     )
     assert all(case.case_id and case.source.change and case.rule_ids for case in all_cases)
     assert all(case.negative_variants for case in all_cases)
+
+
+def test_every_grammar_rule_has_a_public_case_and_nearest_negative() -> None:
+    grammar_cases = (*TITLE_CASES, *LRC_CASES, *LRC_BUDGET_CASES, *YRC_CASES, *KRC_CASES, *KRC_BUDGET_CASES)
+    cases_by_id = {case.case_id: case for case in grammar_cases}
+    registered_rule_ids = {coverage.rule_id for coverage in GRAMMAR_RULE_COVERAGE}
+    corpus_rule_ids = {rule_id for case in grammar_cases for rule_id in case.rule_ids}
+
+    assert len(cases_by_id) == len(grammar_cases)
+    assert registered_rule_ids == corpus_rule_ids
+    for coverage in GRAMMAR_RULE_COVERAGE:
+        case = cases_by_id[coverage.positive_case_id]
+        assert coverage.rule_id in case.rule_ids
+        assert 0 <= coverage.negative_variant_index < len(case.negative_variants)
 
 
 def test_title_corpus_matches_the_current_public_oracle() -> None:
@@ -249,6 +267,8 @@ def test_nearest_negative_cases_do_not_repeat_the_positive_public_result() -> No
     for case in YRC_CASES:
         assert all(_yrc_projection(negative) != case.expected for negative in case.negative_variants)
     for case in KRC_CASES:
+        assert all(_krc_projection(negative) != case.expected for negative in case.negative_variants)
+    for case in KRC_BUDGET_CASES:
         assert all(_krc_projection(negative) != case.expected for negative in case.negative_variants)
     for case in MATCH_CASES:
         assert all(_match_projection(negative) != case.expected for negative in case.negative_variants)

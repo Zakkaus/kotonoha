@@ -169,12 +169,12 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 **目的**：把当前实现的行为与新设计的目标行为分开，先完成 policy 决策，再开始代码迁移。
 
 - [x] 将歌词矩阵和 Overlay 矩阵中的行为标记为 `Retain`、`Redefine` 或 `Remove`；`Retain` 必须有用户价值和明确 owner，不能因为当前存在就默认保留。逐条登记见两份行为矩阵的 Phase 0 决策登记。
-- [ ] 为每条 `Retain` 行为补一个 public contract test；测试输入使用真实形状的 fake，不读取源代码字符串。
+- [x] 为每条 `Retain` 行为补一个 public contract test；测试输入使用真实形状的 fake，不读取源代码字符串。逐条入口见 `docs/superpowers/specs/2026-08-23-phase0-evidence-register.md`。
 - [x] 建立 `BehaviorCase[TInput, TPublicOutput]` typed corpus，先收录 title、LRC/YRC/KRC parser、match、display、gate、clock 和 platform 的代表性回归样本。当前入口为 `tests/behavior_corpus.py` 与 `tests/behavior_runtime_corpus.py`，provider/source workflow 的 target corpus 在迁移对应 owner 时继续扩充。
-- [ ] 为每个正则或 parser rule 建立正向 case、近邻负向 case 和 rule id；expected 只保存 canonical public result，不保存正则实现细节。
+- [x] 为每个语义 grammar/parser rule 建立正向 case、近邻负向 case 和 rule id；expected 只保存 canonical public result，不保存私有正则实现细节。登记和门禁见 `tests/behavior_rule_inventory.py` 与 `tests/test_behavior_corpus.py`。
 - [x] 用当前实现生成冻结 baseline，并实现新旧实现的 differential comparator；未登记差异不得合并。当前 comparator 和冻结结果位于 `tests/behavior_corpus.py`。
 - [x] 建立 `BehaviorChangeRecord` 流程：任何有意改变必须同时写明 case、旧行为、新目标、用户影响和新的契约测试。模板和 #62 拆分记录位于 `docs/superpowers/behavior-changes/`。
-- [ ] 建立并执行 golden scenarios（场景目录已建立，完整跨 owner 执行仍待 Phase 1）：
+- [x] 建立并执行当前实现的 golden baseline（场景目录和逐场景入口见 `docs/superpowers/specs/2026-08-23-kotonoha-golden-scenarios.md` 与 `docs/superpowers/specs/2026-08-23-phase0-evidence-register.md`）；`target` 场景只冻结 Phase 1 契约，不伪装成当前实现：
   - MPRIS queue cumulative length/position；
   - title 与 artist 在切歌时混合；
   - raw title 含 uploader/版本/频道噪声；
@@ -207,9 +207,10 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 
 **退出条件**：矩阵每一行都有行为 owner、输入/输出、失败语义和测试入口；所有冲突都已经写成新设计的明确决策，不能以“沿用当前实现”作为答案。
 
-**当前执行状态（2026-08-23）**：policy 决策、矩阵登记、初始 typed corpus、differential comparator 和
-`BehaviorChangeRecord` 已完成；逐条 public contract test、全部 grammar/parser rule 的正负 corpus 以及
-完整 golden suite 仍是 Phase 0 的未完成工程项。
+**当前执行状态（2026-08-23）**：Phase 0 已完成。policy 决策、矩阵登记、逐条 Retain public contract
+test、语义 grammar/parser rule 的正负 corpus、differential comparator、`BehaviorChangeRecord` 和
+当前实现的 golden baseline 均已登记并执行。标为 `target` 的场景属于 Phase 1 迁移门禁，不表示目标 API
+已经存在，也不阻塞 Phase 0 退出。
 
 ### Phase 1：建立 feature contracts 和 application capabilities
 
