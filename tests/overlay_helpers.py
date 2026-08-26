@@ -48,17 +48,6 @@ class FakeScreen:
     def geometry(self) -> QRect:
         return self._geometry
 
-def _freeze_media_clock(overlay, value: float) -> None:
-    """Pin the media clock so an offset assertion is not racing wall time.
-
-    MediaClock.now is a method and the value it returns comes from wall time, so
-    there is no seam to inject; replacing the attribute is the only way to freeze
-    it, and ty rejects assigning over a method. The suppression is confined here
-    rather than repeated at each call site, and it disappears if MediaClock ever
-    takes an injected time source.
-    """
-    overlay._clock.now = lambda: value  # ty: ignore[invalid-assignment]
-
 def _ok():
 
     return OverlayOperationResult.success()

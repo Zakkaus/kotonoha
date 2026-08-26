@@ -1,104 +1,123 @@
 from kotonoha.config import Config
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
-from kotonoha.model import LyricsSnapshot
-from kotonoha.providers.gate import SourceGate
+from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 
-def test_gate_default_accepts_ws():
-    # With no external source consulted (e.g. dbus down), Cider keeps working.
-    assert SourceGate().accept_ws is True
+def source_facts(*, found=True, title="Song", artist="Artist", album="", duration_s=None):
+    lines = (LyricLine(0, "L0", 0.0, 5.0, title, ""),) if found else ()
+    document = LyricsDocument(
+        source_id="apple-music",
+        title=title,
+        artist=artist,
+        album=album,
+        duration_s=duration_s,
+        timing=TimingKind.LINE if lines else None,
+        lines=lines,
+    )
+    track = TrackIdentity(
+        "cider",
+        "cider",
+        stable_id="song-1",
+        title=title,
+        artist=artist,
+        album=album,
+        duration_s=duration_s,
+    )
+    observation = PlaybackObservation(
+        "cider", "cider", track, PlaybackStatus.PLAYING, 12.5, duration_s, 1.0
+    )
+    return observation, document
 
 
-def test_gate_set():
-    gate = SourceGate()
-    gate.set_accept_ws(False)
-    assert gate.accept_ws is False
-    gate.set_accept_ws(True)
-    assert gate.accept_ws is True
+def observe(coordinator, client_id=10, **kwargs):
+    observation, document = source_facts(**kwargs)
+    coordinator.observe(client_id, observation, document)
+    return observation
 
 
-def test_closed_gate_retains_matching_snapshot_without_publishing():
-    gate = SourceGate()
-    gate.select_external()
-    snapshot = LyricsSnapshot(found=True, title="Song", artist="Artist", song_id="am-1")
-    gate.observe_snapshot(10, snapshot)
+def test_closed_ownership_retains_matching_document_without_publishing():
+    coordinator = SourceOwnershipCoordinator()
+    coordinator.select_external()
+    observe(coordinator)
 
-    match = gate.current_match(TrackMetadata("Song", "Artist"))
+    match = coordinator.current_match(TrackMetadata("Song", "Artist"))
 
     assert match is not None
     assert match.client_id == 10
-    assert gate.accepts(10) is False
+    assert match.document.source_id == "apple-music"
+    assert coordinator.accepts(10) is False
 
 
-def test_select_cider_binds_one_connection_and_ticks_follow_binding():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Song", artist="Artist"))
-    gate.select_cider(10)
-    assert gate.accepts(10) is True
-    assert gate.accepts(20) is False
-    assert gate.cider_active is True
-    gate.drop_client(10)
-    assert gate.cider_active is False
+def test_select_live_binds_one_connection_and_ticks_follow_binding():
+    coordinator = SourceOwnershipCoordinator()
+    observation = observe(coordinator)
+    coordinator.select_live(10)
+    assert coordinator.accepts(10) is True
+    assert coordinator.accepts(20) is False
+    assert coordinator.live_active is True
+    assert coordinator.observe_clock(10, observation.track.track_ref, 12.5, True) is True
+    coordinator.drop_client(10)
+    assert coordinator.live_active is False
 
 
-def test_selected_cider_becomes_inactive_when_snapshot_has_no_lyrics():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Song", artist="Artist"))
-    gate.select_cider(10)
-    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Song", artist="Artist"))
-    assert gate.cider_active is False
+def test_selected_live_source_becomes_inactive_when_document_has_no_lyrics():
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator)
+    coordinator.select_live(10)
+    observe(coordinator, found=False)
+    assert coordinator.live_active is False
 
 
-def test_cider_match_rejects_different_track():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Other", artist="Artist"))
-    assert gate.current_match(TrackMetadata("Song", "Artist")) is None
+def test_live_match_rejects_different_track():
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator, title="Other")
+    assert coordinator.current_match(TrackMetadata("Song", "Artist")) is None
 
 
-def test_matching_cider_tick_is_available_without_selecting_cider_lyrics():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=194.222))
-    gate.observe_tick(10, 12.5, True)
-    gate.select_external()
+def test_matching_live_clock_is_available_without_selecting_live_lyrics():
+    coordinator = SourceOwnershipCoordinator()
+    observation = observe(coordinator, found=False, duration_s=194.222)
+    assert coordinator.observe_clock(10, observation.track.track_ref, 12.5, True) is True
+    coordinator.select_external()
 
-    timing = gate.current_timing(TrackMetadata("Song", "Artist"))
+    timing = coordinator.current_timing(TrackMetadata("Song", "Artist"))
 
     assert timing is not None
     assert timing.client_id == 10
     assert timing.current_time == 12.5
     assert timing.is_playing is True
     assert timing.duration_s == 194.222
-    assert gate.accepts(10) is False
+    assert coordinator.accepts(10) is False
 
 
-def test_cider_tick_rejects_a_different_track():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=False, title="Other", artist="Artist"))
-    gate.observe_tick(10, 12.5, True)
+def test_live_clock_rejects_a_different_track_reference():
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator, found=False, title="Other")
 
-    assert gate.current_timing(TrackMetadata("Song", "Artist")) is None
+    assert coordinator.observe_clock(10, "cider:cider:other-song", 12.5, True) is False
+    assert coordinator.current_timing(TrackMetadata("Song", "Artist")) is None
 
 
-def test_cider_exact_title_can_cover_transient_missing_mpris_artist():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Song", artist="Artist"))
-    assert gate.current_match(TrackMetadata("Song", "")) is not None
+def test_live_exact_title_can_cover_transient_missing_mpris_artist():
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator)
+    assert coordinator.current_match(TrackMetadata("Song", "")) is not None
 
 
 def test_current_match_reports_high_confidence_for_a_full_identity():
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Song", artist="Artist"))
-    match = gate.current_match(TrackMetadata("Song", "Artist"))
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator)
+    match = coordinator.current_match(TrackMetadata("Song", "Artist"))
     assert match is not None
     assert match.confidence is MatchConfidence.HIGH
 
 
 def test_current_match_reports_medium_confidence_for_a_title_only_match():
-    # Exact title but the track's artist is missing -> accepted only at MEDIUM, so a
-    # genuine network HIGH can still overrule it in "best" mode.
-    gate = SourceGate()
-    gate.observe_snapshot(10, LyricsSnapshot(found=True, title="Song", artist="Someone Else"))
-    match = gate.current_match(TrackMetadata("Song", ""))
+    coordinator = SourceOwnershipCoordinator()
+    observe(coordinator, artist="Someone Else")
+    match = coordinator.current_match(TrackMetadata("Song", ""))
     assert match is not None
     assert match.confidence is MatchConfidence.MEDIUM
 
@@ -109,12 +128,17 @@ def test_lyrics_sources_default():
 
 def test_lyrics_sources_cleaned():
     cfg = Config(lyrics_sources=["cider", "bogus", "netease", "netease"]).clamped()
-    assert cfg.lyrics_sources == ["cider", "netease"]  # unknown dropped, deduped, order kept
+    assert cfg.lyrics_sources == ["cider", "netease"]
 
 
 def test_lyrics_sources_empty_falls_back():
     assert Config(lyrics_sources=[]).clamped().lyrics_sources == ["netease", "lrclib", "kugou", "cider"]
-    assert Config(lyrics_sources=["nope"]).clamped().lyrics_sources == ["netease", "lrclib", "kugou", "cider"]
+    assert Config(lyrics_sources=["nope"]).clamped().lyrics_sources == [
+        "netease",
+        "lrclib",
+        "kugou",
+        "cider",
+    ]
 
 
 def test_lyrics_sources_roundtrip():

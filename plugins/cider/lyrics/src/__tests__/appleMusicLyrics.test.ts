@@ -53,36 +53,17 @@ describe("probeAppleMusicLyrics", () => {
 
     expect(mkfetch).toHaveBeenCalledWith("/v1/catalog/$MUSIC_STOREFRONT/songs/song-1/syllable-lyrics");
     expect(result).toMatchObject({
-      found: true,
-      provider: "Apple Music",
+      source: "apple-music",
+      sourceName: "Apple Music",
       songId: "song-1",
       timing: "Line",
       language: "en",
-      lineCount: 2,
-      currentTime: 3.5,
-      currentLine: {
-        id: "L2",
-        text: "world",
-      },
-      previousLine: {
-        id: "L1",
-      },
-      nextLine: null,
-      aroundLines: [
-        {
-          id: "L1",
-          text: "hello",
-        },
-        {
-          id: "L2",
-          text: "world",
-        },
-      ],
+      durationS: 6,
+      lines: [{ id: "L1", text: "hello" }, { id: "L2", text: "world" }],
     });
-    expect("lines" in result).toBe(false);
   });
 
-  it("keeps a current song working set without emitting full lyrics", async () => {
+  it("keeps a complete document for the current song without refetching", async () => {
     const mkfetch = vi.fn().mockResolvedValue({
       data: {
         data: [
@@ -120,12 +101,10 @@ describe("probeAppleMusicLyrics", () => {
     const result = await probeAppleMusicLyrics(globals);
 
     expect(mkfetch).toHaveBeenCalledTimes(1);
-    expect("lines" in result).toBe(false);
-    expect(result.currentLine?.text).toBe("world");
-    expect(result.aroundLines.map((line) => line.text)).toEqual(["hello", "world"]);
+    expect(result?.lines.map((line) => line.text)).toEqual(["hello", "world"]);
   });
 
-  it("returns a structured miss when lyrics are unavailable", async () => {
+  it("returns no document when lyrics are unavailable", async () => {
     const result = await probeAppleMusicLyrics({
       CiderApp: {
         mkfetch: vi.fn().mockResolvedValue({ data: { data: [{}] } }),
@@ -148,15 +127,7 @@ describe("probeAppleMusicLyrics", () => {
       },
     });
 
-    expect(result).toMatchObject({
-      found: false,
-      provider: "Apple Music",
-      songId: "song-2",
-      lineCount: 0,
-      aroundLines: [],
-      error: "No Apple Music TTML returned",
-    });
-    expect("lines" in result).toBe(false);
+    expect(result).toBeNull();
   });
 
   it("keeps previous/next correct when an empty <p> is filtered out", async () => {
@@ -186,16 +157,13 @@ describe("probeAppleMusicLyrics", () => {
       },
     });
 
-    // The empty <p id="X"> is dropped by the filter, so neighbours must be found
-    // by position in the FILTERED array, not the pre-filter DOM <p> index.
-    expect(result.currentLine?.id).toBe("L2");
-    expect(result.previousLine?.id).toBe("L1");
-    expect(result.nextLine?.id).toBe("L3");
+    // The empty <p id="X"> is dropped by the filter, and the canonical document
+    // preserves the filtered order for the shared display projection.
+    expect(result?.lines.map((line) => line.id)).toEqual(["L1", "L2", "L3"]);
   });
 
   it("does not ask again for a song that has no lyrics", async () => {
-    // Every miss cleared the cache, so the next probe — a second later — asked
-    // Apple Music for the same song again, for as long as it played.
+    // A miss is remembered, so repeated snapshots do not refetch the same song.
     const mkfetch = vi.fn().mockResolvedValue({ data: { data: [{}] } });
     const globals = {
       CiderApp: { mkfetch, musicKitStore: { player: { nowPlayingId: "song-quiet" } } },
@@ -212,9 +180,9 @@ describe("probeAppleMusicLyrics", () => {
     const second = await probeAppleMusicLyrics(globals);
     const third = await probeAppleMusicLyrics(globals);
 
-    expect(first.found).toBe(false);
-    expect(second.found).toBe(false);
-    expect(third.found).toBe(false);
+    expect(first).toBeNull();
+    expect(second).toBeNull();
+    expect(third).toBeNull();
     expect(mkfetch.mock.calls.length).toBe(calls);
   });
 });

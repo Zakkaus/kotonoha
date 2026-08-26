@@ -1,15 +1,15 @@
 """Local media clock.
 
-The probe sends ``currentTime`` only on change + heartbeat (~1s). To drive a
-smooth ~60fps word sweep between those updates, we advance a local estimate of
-the media time from the last sync point using wall-clock deltas. Each incoming
-frame re-anchors the clock, correcting any drift.
+Adapters send playback position on change and at a low-rate calibration
+interval. To drive a smooth ~60fps word sweep between those updates, we advance
+a local estimate of the media time from the last sync point using wall-clock
+deltas. Each incoming observation re-anchors the clock, correcting drift.
 
-Crucially, playback state is inferred from whether the *reported time is moving
-forward*, NOT from the probe's ``isPlaying`` flag — that flag has proven
+Crucially, playback state is inferred from whether the *reported position is
+moving forward*, NOT from a probe's legacy boolean flag — that flag has proven
 unreliable (it can arrive as False while audio plays), and trusting it froze the
 clock so the sweep jumped once per update instead of flowing. Forward motion of
-``currentTime`` is the ground truth.
+the reported position is the ground truth.
 
 The estimation math is a pure function; :class:`MediaClock` adds the small bit
 of mutable wall-clock state around it.

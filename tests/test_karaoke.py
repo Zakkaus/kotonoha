@@ -4,7 +4,7 @@ from kotonoha.karaoke import (
     line_progress,
     word_fill_fractions,
 )
-from kotonoha.model import LyricLine, LyricWord
+from kotonoha.lyrics.models import LyricLine, LyricWord
 
 
 def test_line_fill_fraction_basic():
@@ -63,7 +63,7 @@ def test_the_sweep_follows_a_line_with_no_separators(_session_qapp):
     # KRC and YRC build the line by concatenating word texts, and the sweep assumed
     # one space between every pair: nine characters ran 24px past a 108px line.
     from kotonoha.karaoke_label import KaraokeLabel
-    from kotonoha.model import LyricLine, LyricWord
+    from kotonoha.lyrics.models import LyricLine, LyricWord
 
     text = "我曾经跨过山和大海"
     words = tuple(LyricWord(i * 0.5, (i + 1) * 0.5, ch) for i, ch in enumerate(text))
@@ -79,8 +79,8 @@ def test_the_sweep_follows_a_line_with_no_separators(_session_qapp):
 def test_the_interlude_marker_is_a_row_the_sweep_runs_across():
     # The only thing on screen during a break, so it has to say something at every
     # point in the span, including both ends.
+    from kotonoha.display.models import Interlude
     from kotonoha.karaoke import interlude_text
-    from kotonoha.model import Interlude
 
     wait = Interlude(100.0, 130.0)
 
@@ -92,8 +92,8 @@ def test_the_interlude_marker_is_a_row_the_sweep_runs_across():
 
 
 def test_the_interlude_countdown_is_optional_and_typed():
+    from kotonoha.display.models import Interlude
     from kotonoha.karaoke import interlude_text
-    from kotonoha.model import Interlude
 
     wait = Interlude(100.0, 130.0)
 
@@ -107,7 +107,7 @@ def test_the_interlude_countdown_is_optional_and_typed():
 def test_an_unknown_marker_setting_still_shows_something():
     # This is the only thing on screen at the time, so an unreadable config value
     # must not blank the panel.
+    from kotonoha.display.models import Interlude
     from kotonoha.karaoke import interlude_text
-    from kotonoha.model import Interlude
 
     assert interlude_text(Interlude(0.0, 10.0), 5.0, style="nonsense", countdown="nonsense") == "●\u2003●\u2003●"

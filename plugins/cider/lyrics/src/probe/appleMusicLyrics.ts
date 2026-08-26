@@ -1,7 +1,5 @@
-import { findCurrentLine, parseAppleMusicTtml } from "./ttml";
-import type { LyricsProbe, TimedLyricLine } from "./types";
-
-const AROUND_WINDOW_SECONDS = 8;
+import { parseAppleMusicTtml } from "./ttml";
+import type { LyricsDocumentPayload, TimedLyricLine } from "./types";
 
 type CiderGlobals = {
   CiderApp?: any;
@@ -12,37 +10,21 @@ type LyricsCacheEntry = {
   songId: string;
   timing: string | null;
   language: string | null;
+  durationS: number | null;
   lines: TimedLyricLine[];
 };
 
 let currentLyrics: LyricsCacheEntry | null = null;
 
-// Which translation language to extract from the TTML. Kotonoha pushes this
-// over the WebSocket (derived from the system locale or the user's setting);
-// changing it invalidates the cache so the next probe re-parses.
-let preferredTranslationLanguage = "zh-Hans";
-
-export function setPreferredTranslationLanguage(language: string): void {
-  if (!language || language === preferredTranslationLanguage) {
-    return;
-  }
-  preferredTranslationLanguage = language;
-  currentLyrics = null; // force re-parse with the new language
-}
-
 function numberOrNull(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) ? value : null;
-}
-
-function currentPlaybackTime(globals: CiderGlobals): number | null {
-  return numberOrNull(globals.MusicKit?.getInstance?.()?.currentPlaybackTime);
 }
 
 function currentNowPlayingItem(globals: CiderGlobals): any {
   return globals.MusicKit?.getInstance?.()?.nowPlayingItem ?? null;
 }
 
-function currentSongId(globals: CiderGlobals): string | null {
+export function currentSongId(globals: CiderGlobals): string | null {
   return (
     globals.CiderApp?.musicKitStore?.player?.nowPlayingId ??
     globals.CiderApp?.musicKitStore?.player?.nowPlayingItem?._songId ??
@@ -55,51 +37,22 @@ function currentSongId(globals: CiderGlobals): string | null {
 
 function currentDurationSeconds(globals: CiderGlobals): number | null {
   const item = currentNowPlayingItem(globals);
-  return numberOrNull(item?.attributes?.durationInMillis)
-    ? item.attributes.durationInMillis / 1000
-    : null;
+  const milliseconds = numberOrNull(item?.attributes?.durationInMillis);
+  return milliseconds === null ? null : milliseconds / 1000;
 }
 
-function emptyLyricsProbe(songId: string | null, currentTime: number | null, error?: string): LyricsProbe {
+function documentFromEntry(entry: LyricsCacheEntry): LyricsDocumentPayload {
   return {
-    found: false,
-    provider: "Apple Music",
-    songId,
-    timing: null,
-    language: null,
-    lineCount: 0,
-    currentTime,
-    currentLine: null,
-    previousLine: null,
-    nextLine: null,
-    aroundLines: [],
-    ...(error ? { error } : {}),
-  };
-}
-
-function withCurrentLine(entry: LyricsCacheEntry, currentTime: number | null): LyricsProbe {
-  const currentLine = findCurrentLine(entry.lines, currentTime);
-  const currentIndex = currentLine?.index ?? -1;
-  const aroundLines =
-    currentTime === null
-      ? []
-      : entry.lines.filter((line) => (
-          line.start <= currentTime + AROUND_WINDOW_SECONDS &&
-          line.end >= currentTime - AROUND_WINDOW_SECONDS
-        ));
-
-  return {
-    found: entry.lines.length > 0,
-    provider: "Apple Music",
+    source: "apple-music",
+    sourceName: "Apple Music",
     songId: entry.songId,
     timing: entry.timing,
     language: entry.language,
-    lineCount: entry.lines.length,
-    currentTime,
-    currentLine,
-    previousLine: currentIndex > 0 ? entry.lines[currentIndex - 1] : null,
-    nextLine: currentIndex >= 0 ? entry.lines[currentIndex + 1] ?? null : null,
-    aroundLines,
+    title: null,
+    artist: null,
+    album: null,
+    durationS: entry.durationS,
+    lines: entry.lines,
   };
 }
 
@@ -112,15 +65,13 @@ async function fetchLyrics(globals: CiderGlobals, songId: string): Promise<Lyric
     throw new Error("No Apple Music TTML returned");
   }
 
-  const parsed = parseAppleMusicTtml(ttml, {
-    durationSeconds: currentDurationSeconds(globals),
-    preferredTranslationLanguage,
-  });
-
+  const durationS = currentDurationSeconds(globals);
+  const parsed = parseAppleMusicTtml(ttml, { durationSeconds: durationS });
   return {
     songId,
     timing: parsed.timing,
     language: parsed.language,
+    durationS,
     lines: parsed.lines,
   };
 }
@@ -141,33 +92,28 @@ function rememberFailure(songId: string): void {
   failedSongs.set(songId, Date.now());
 }
 
-export async function probeAppleMusicLyrics(globals: CiderGlobals): Promise<LyricsProbe> {
+export async function probeAppleMusicLyrics(globals: CiderGlobals): Promise<LyricsDocumentPayload | null> {
   const songId = currentSongId(globals);
-  const playbackTime = currentPlaybackTime(globals);
-
   if (!songId) {
-    return emptyLyricsProbe(null, playbackTime, "No current song id");
+    return null;
   }
 
   if (currentLyrics?.songId === songId) {
-    return withCurrentLine(currentLyrics, playbackTime);
+    return documentFromEntry(currentLyrics);
   }
 
   const failedAt = failedSongs.get(songId);
   if (failedAt !== undefined && Date.now() - failedAt < RETRY_AFTER_MS) {
-    // Every miss used to clear the cache, so the next probe — a second later —
-    // asked Apple Music for the same song again, for as long as it played. A song
-    // with no lyrics at all was retried continuously.
-    return emptyLyricsProbe(songId, playbackTime, "No lyrics for this song");
+    return null;
   }
 
   try {
     currentLyrics = await fetchLyrics(globals, songId);
     failedSongs.delete(songId);
-    return withCurrentLine(currentLyrics, playbackTime);
-  } catch (error) {
+    return documentFromEntry(currentLyrics);
+  } catch {
     currentLyrics = null;
     rememberFailure(songId);
-    return emptyLyricsProbe(songId, playbackTime, error instanceof Error ? error.message : String(error));
+    return null;
   }
 }

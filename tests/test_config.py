@@ -6,6 +6,12 @@ from kotonoha.config import (
     TRACK_OFFSET_CAP,
     VALID_LYRICS_SOURCES,
     Config,
+    FxIntensity,
+    FxTransition,
+    LyricsScript,
+    PanelStyle,
+    PanelWidthMode,
+    ThemeMode,
     load_config,
     save_config,
     set_track_offset,
@@ -43,9 +49,21 @@ def test_player_lock_roundtrips_and_clamps():
     assert Config.from_dict({"player_lock": 123}).player_lock == ""
 
 
+def test_cider_api_token_is_runtime_only(tmp_path):
+    path = tmp_path / "c.json"
+    cfg = Config(cider_api_token="  test-token  ")
+
+    assert cfg.clamped().cider_api_token == "test-token"
+    save_config(cfg, path)
+
+    assert "cider_api_token" not in path.read_text(encoding="utf-8")
+    assert load_config(path).cider_api_token == ""
+    assert Config.from_dict({"cider_api_token": "from-file"}).cider_api_token == ""
+
+
 def test_frost_panel_style_survives_clamp():
-    assert Config(panel_style="frost").clamped().panel_style == "frost"
-    assert Config(panel_style="bogus").clamped().panel_style == "pill"
+    assert Config(panel_style=PanelStyle.FROST).clamped().panel_style == "frost"
+    assert Config.from_dict({"panel_style": "bogus"}).panel_style == "pill"
 
 
 def test_panel_accent_tint_roundtrips(tmp_path):
@@ -55,8 +73,8 @@ def test_panel_accent_tint_roundtrips(tmp_path):
 
 
 def test_lyrics_script_clamps_unknown_to_off():
-    assert Config(lyrics_script="zh-Hant").clamped().lyrics_script == "zh-Hant"
-    assert Config(lyrics_script="bogus").clamped().lyrics_script == "off"
+    assert Config(lyrics_script=LyricsScript.ZH_HANT).clamped().lyrics_script == "zh-Hant"
+    assert Config.from_dict({"lyrics_script": "bogus"}).lyrics_script == "off"
 
 
 def test_current_line_only_roundtrips_and_coerces(tmp_path):
@@ -72,7 +90,7 @@ def test_typography_and_panel_size_roundtrip(tmp_path):
     cfg = Config(
         font_family="Noto Sans CJK SC",
         context_font_size=18, translation_font_size=11,
-        panel_width_mode="fixed", panel_width=880,
+        panel_width_mode=PanelWidthMode.FIXED, panel_width=880,
     )
     save_config(cfg, path)
     loaded = load_config(path)
@@ -88,7 +106,7 @@ def test_typography_and_panel_size_defaults_and_clamps():
     assert Config().panel_width_mode == "fit"
     assert Config(context_font_size=1).clamped().context_font_size == 8
     assert Config(panel_width=99999).clamped().panel_width == 2400
-    assert Config(panel_width_mode="bogus").clamped().panel_width_mode == "fit"
+    assert Config.from_dict({"panel_width_mode": "bogus"}).panel_width_mode == "fit"
 
 
 def test_all_font_sizes_clamp_to_the_spin_box_range():
@@ -105,12 +123,12 @@ def test_effects_defaults_clamp_and_roundtrip(tmp_path):
     assert Config().fx_glow is False
     assert Config().fx_word_pop is False
     assert Config().fx_intensity == "subtle"
-    assert Config(fx_intensity="expressive").clamped().fx_intensity == "expressive"
-    assert Config(fx_intensity="bogus").clamped().fx_intensity == "subtle"
+    assert Config(fx_intensity=FxIntensity.EXPRESSIVE).clamped().fx_intensity == "expressive"
+    assert Config.from_dict({"fx_intensity": "bogus"}).fx_intensity == "subtle"
     # Line-change transition: "rise" default, known values kept, junk falls back.
     assert Config().fx_transition == "rise"
-    assert Config(fx_transition="zoom").clamped().fx_transition == "zoom"
-    assert Config(fx_transition="bogus").clamped().fx_transition == "rise"
+    assert Config(fx_transition=FxTransition.ZOOM).clamped().fx_transition == "zoom"
+    assert Config.from_dict({"fx_transition": "bogus"}).fx_transition == "rise"
     # Fuzzy matching: on by default, coerced to bool.
     assert Config().fuzzy_match is True
     assert Config(fuzzy_match=cast(bool, 0)).clamped().fuzzy_match is False
@@ -119,7 +137,9 @@ def test_effects_defaults_clamp_and_roundtrip(tmp_path):
     assert Config(settings_opacity=2.0).clamped().settings_opacity == 1.0
     assert Config(settings_opacity=-0.5).clamped().settings_opacity == 0.0
     path = tmp_path / "c.json"
-    save_config(Config(fx_animate=False, fx_glow=False, fx_word_pop=False, fx_intensity="expressive"), path)
+    save_config(
+        Config(fx_animate=False, fx_glow=False, fx_word_pop=False, fx_intensity=FxIntensity.EXPRESSIVE), path
+    )
     loaded = load_config(path)
     assert not loaded.fx_animate and not loaded.fx_glow and not loaded.fx_word_pop
     assert loaded.fx_intensity == "expressive"
@@ -127,11 +147,11 @@ def test_effects_defaults_clamp_and_roundtrip(tmp_path):
 
 def test_theme_and_white_panel_clamp_and_roundtrip(tmp_path):
     assert Config().theme == "auto"
-    assert Config(theme="light").clamped().theme == "light"
-    assert Config(theme="bogus").clamped().theme == "auto"
-    assert Config(panel_style="white").clamped().panel_style == "white"
+    assert Config(theme=ThemeMode.LIGHT).clamped().theme == "light"
+    assert Config.from_dict({"theme": "bogus"}).theme == "auto"
+    assert Config(panel_style=PanelStyle.WHITE).clamped().panel_style == "white"
     path = tmp_path / "c.json"
-    save_config(Config(theme="dark", panel_style="white"), path)
+    save_config(Config(theme=ThemeMode.DARK, panel_style=PanelStyle.WHITE), path)
     loaded = load_config(path)
     assert loaded.theme == "dark"
     assert loaded.panel_style == "white"
@@ -176,7 +196,7 @@ def test_clamping():
     assert Config(opacity=-1.0).clamped().opacity == 0.0  # 0..1 now (fully transparent allowed)
     assert Config(opacity=0.0).clamped().opacity == 0.0
     assert Config(font_size=1).clamped().font_size == 8
-    assert Config(panel_style="weird").clamped().panel_style == "pill"
+    assert Config.from_dict({"panel_style": "weird"}).panel_style == "pill"
 
 
 def test_from_dict_non_dict():

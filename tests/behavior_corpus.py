@@ -16,8 +16,8 @@ from typing import Generic, TypeVar
 
 from kotonoha.lyrics.krc_parser import KRC_MAGIC, KRC_XOR_KEY
 from kotonoha.lyrics.match import Candidate, MatchConfidence, TrackMetadata
+from kotonoha.lyrics.models import LyricLine
 from kotonoha.lyrics.payload import MAX_DECOMPRESSED_BYTES
-from kotonoha.model import LyricLine
 from kotonoha.providers.mpris_track import TrackInfo
 
 TInput = TypeVar("TInput")

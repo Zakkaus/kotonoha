@@ -2,7 +2,7 @@
 
 Kotonoha is a Linux desktop lyrics overlay. It reads the current track and playback position from any MPRIS player, then shows synchronized lyrics in a translucent Wayland overlay.
 
-It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible players. Lyrics can come from Netease, lrclib, Kugou, or the optional Cider probe.
+It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible players. Lyrics can come from Netease, lrclib, Kugou, or Cider's local HTTP API.
 
 ![Kotonoha lyrics overlay](screenshots/kotonoha-screenshot.png)
 
@@ -95,28 +95,21 @@ Open **Settings** from the tray. Under **Sources**, providers can be reordered o
 
 Settings also controls fonts, colors, opacity, position, translation, icons, panel style, and lyric effects.
 
-## Cider plugin (optional)
+## Cider HTTP API (optional)
 
-The Cider integration is experimental and depends on Cider's internal APIs and Apple Music's TTML endpoint. Keep an external lyric source enabled as a fallback.
+The current Cider integration uses Cider's local HTTP API directly; no Cider
+plugin is required. Enable `cider` under **Settings -> Sources** when you want
+it in the lyric source order.
 
-Install the plugin from a release ZIP:
+Kotonoha fetches the complete timed lyric document once per track from Cider,
+then calibrates playback position about once per second. The local media clock
+interpolates between calibrations, so Cider is not polled for every display
+frame.
 
-```bash
-install -d ~/.config/sh.cider.genten/plugins
-unzip -o kotonoha-cider-lyrics-*.zip -d ~/.config/sh.cider.genten/plugins
-```
-
-Or build it from source:
-
-```bash
-cd plugins/cider/lyrics
-pnpm install
-pnpm build
-install -d ~/.config/sh.cider.genten/plugins/dev.locez.kotonoha.cider.lyrics
-cp dist/dev.locez.kotonoha.cider.lyrics/plugin.js \
-  ~/.config/sh.cider.genten/plugins/dev.locez.kotonoha.cider.lyrics/plugin.js
-cp dist/dev.locez.kotonoha.cider.lyrics/plugin.yml \
-  ~/.config/sh.cider.genten/plugins/dev.locez.kotonoha.cider.lyrics/plugin.yml
-```
-
-Reload Cider after installing the plugin. `pnpm test` runs the plugin tests.
+If Cider API authentication is enabled, enter the token in **Settings ->
+Sources -> Cider API token**. The token is optional, is stored in the system
+keyring rather than `config.json`, and is never written to logs. When the field
+is empty, Kotonoha omits the `apptoken` header. The optional
+`plugins/cider/lyrics/` package is a generic `kotonoha.adapter` v1 producer for
+external-player integrations; it is not required by the HTTP path and no
+Cider-specific legacy receiver route is supported.

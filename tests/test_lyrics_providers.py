@@ -6,9 +6,10 @@ import aiohttp
 import pytest
 
 from kotonoha.lyrics import kugou, lrclib, netease
+from kotonoha.lyrics.http import LyricsSession
 from kotonoha.lyrics.match import Candidate, MatchConfidence, TrackMetadata
 
-SESSION = cast(aiohttp.ClientSession, None)
+SESSION = cast(LyricsSession, None)
 
 
 def async_return(value):
@@ -83,13 +84,13 @@ def test_provider_timeouts_are_per_provider_and_generous_enough():
 
 async def test_netease_search_uses_provider_timeout():
     session = _RecordingSession({"result": {"songs": []}})
-    await netease.search(cast(aiohttp.ClientSession, session), "query")
+    await netease.search(cast(LyricsSession, session), "query")
     assert session.timeouts == [netease.TIMEOUT]
 
 
 async def test_lrclib_search_uses_provider_timeout():
     session = _RecordingSession([])
-    await lrclib.search_records(cast(aiohttp.ClientSession, session), TrackMetadata("Song", "Artist"))
+    await lrclib.search_records(cast(LyricsSession, session), TrackMetadata("Song", "Artist"))
     assert session.timeouts == [lrclib.TIMEOUT]
 
 
@@ -110,7 +111,7 @@ async def test_netease_search_captures_aliases_and_trans_names():
         }
     }
     session = _RecordingSession(payload)
-    candidates = await netease.search(cast(aiohttp.ClientSession, session), "q")
+    candidates = await netease.search(cast(LyricsSession, session), "q")
     assert len(candidates) == 1
     assert "Life Like Summer Flowers" in candidates[0].aliases
     assert "生如夏花 现场版" in candidates[0].aliases
@@ -290,7 +291,7 @@ async def test_kugou_matches_by_title_and_duration_and_decodes_lrc():
         ]
     }
     download = {"fmt": "lrc", "content": base64.b64encode(lrc.encode()).decode()}
-    session = cast(aiohttp.ClientSession, _KugouSession(search, download))
+    session = cast(LyricsSession, _KugouSession(search, download))
     art = await kugou.fetch_artifact(session, TrackMetadata("晴天", "周杰伦", "", 269.0))
     assert art is not None
     assert art.provider == "kugou"
@@ -301,7 +302,7 @@ async def test_kugou_matches_by_title_and_duration_and_decodes_lrc():
 async def test_kugou_skips_a_candidate_whose_lyrics_are_empty():
     search = {"candidates": [{"id": "1", "accesskey": "K", "song": "晴天", "singer": "x", "duration": 269000}]}
     download = {"fmt": "lrc", "content": ""}  # no lyrics to decode
-    session = cast(aiohttp.ClientSession, _KugouSession(search, download))
+    session = cast(LyricsSession, _KugouSession(search, download))
     art = await kugou.fetch_artifact(session, TrackMetadata("晴天", "周杰伦", "", 269.0))
     assert art is None
 
@@ -335,7 +336,7 @@ async def test_kugou_falls_through_to_the_next_candidate_when_the_first_is_empty
     }
     downloads = {"1": "", "2": base64.b64encode(lrc.encode()).decode()}
     session = _KugouMultiSession(search, downloads)
-    art = await kugou.fetch_artifact(cast(aiohttp.ClientSession, session), TrackMetadata("晴天", "周杰伦", "", 269.0))
+    art = await kugou.fetch_artifact(cast(LyricsSession, session), TrackMetadata("晴天", "周杰伦", "", 269.0))
     assert art is not None
     assert art.provider_song_id == "2"  # skipped the empty "1", used "2"
     assert session.download_ids == ["1", "2"]
@@ -349,7 +350,7 @@ async def test_kugou_caps_the_number_of_downloads():
         ]
     }
     session = _KugouMultiSession(search, {})  # every download is empty
-    art = await kugou.fetch_artifact(cast(aiohttp.ClientSession, session), TrackMetadata("晴天", "周杰伦", "", 269.0))
+    art = await kugou.fetch_artifact(cast(LyricsSession, session), TrackMetadata("晴天", "周杰伦", "", 269.0))
     assert art is None
     assert len(session.download_ids) == kugou._MAX_FETCHES  # capped, not all 8
 
@@ -392,7 +393,7 @@ async def test_kugou_also_queries_the_title_with_the_performer():
             lrc = "[00:01.00]found by the second keyword"
             return _Resp({"fmt": "lrc", "content": base64.b64encode(lrc.encode()).decode()})
 
-    session = cast(aiohttp.ClientSession, _RecordingSession())
+    session = cast(LyricsSession, _RecordingSession())
     art = await kugou.fetch_artifact(session, TrackMetadata("晴天", "周杰伦", "", 269.0))
 
     # Both forms, in the ladder's order — which of them wins is the point, not when.
@@ -436,7 +437,7 @@ async def test_every_provider_refuses_an_unbounded_response():
         def post(self, _url, **_kwargs):
             return _Resp(oversized)
 
-    session = cast(aiohttp.ClientSession, _OversizedSession())
+    session = cast(LyricsSession, _OversizedSession())
     track = TrackMetadata("Song", "Artist", "", 180.0)
 
     for name, call in (

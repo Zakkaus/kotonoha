@@ -2,9 +2,8 @@ import base64
 import json
 from typing import cast
 
-import aiohttp
-
 from kotonoha.lyrics import payload, qqmusic
+from kotonoha.lyrics.http import LyricsSession
 
 
 def _b64(text: str) -> str:
@@ -84,7 +83,7 @@ class _Session:
 
 async def test_fetch_payload_uses_songmid_endpoint_without_network():
     session = _Session(_response())
-    payload = await qqmusic.fetch_payload(cast(aiohttp.ClientSession, session), "003aAYrm3GE0Ac")
+    payload = await qqmusic.fetch_payload(cast(LyricsSession, session), "003aAYrm3GE0Ac")
 
     assert payload["lyric"] == "[00:01.00]line"
     assert session.calls[0][0] == qqmusic.LYRIC_URL
@@ -102,13 +101,13 @@ async def test_song_id_conversion_then_lyric_fetch_uses_recorded_responses():
         return _Response(json.dumps(detail))
 
     session.post = post_detail  # ty: ignore[invalid-assignment]
-    payload = await qqmusic.fetch_payload_for_song_id(cast(aiohttp.ClientSession, session), "4830342")
+    payload = await qqmusic.fetch_payload_for_song_id(cast(LyricsSession, session), "4830342")
 
     assert payload["lyric"] == "[00:01.00]line"
     assert session.calls[0][0] == qqmusic.DETAIL_URL
     assert session.calls[0][1]["json"]["detail"]["param"] == {"song_id": 4830342}
     assert session.calls[1][1]["params"]["songmid"] == "001OyHbk2MSIi4"
-    assert await qqmusic.fetch_song_mid(cast(aiohttp.ClientSession, session), "not-numeric") is None
+    assert await qqmusic.fetch_song_mid(cast(LyricsSession, session), "not-numeric") is None
 
 
 async def test_an_oversized_response_is_refused_rather_than_buffered():
@@ -118,7 +117,7 @@ async def test_an_oversized_response_is_refused_rather_than_buffered():
     session = _Session("x" * (payload.MAX_RESPONSE_BYTES + 10))
 
     try:
-        await qqmusic.fetch_payload(cast(aiohttp.ClientSession, session), "mid")
+        await qqmusic.fetch_payload(cast(LyricsSession, session), "mid")
     except ValueError as exc:
         assert "exceeded" in str(exc)
     else:

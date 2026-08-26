@@ -28,8 +28,8 @@ async def _run(app) -> None:
     app.aboutToQuit.connect(close_event.set)
 
     controller = _build_app_objects(app, load_config())
-    await controller.start()
     try:
+        await controller.start()
         await close_event.wait()
     finally:
         await controller.stop()

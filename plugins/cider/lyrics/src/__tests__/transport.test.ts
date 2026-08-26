@@ -4,12 +4,11 @@ import { ReconnectingLyricsSocket, frameSignature } from "../probe/transport";
 
 const baseFrame = {
   lyrics: {
-    found: true,
+    source: "apple-music",
     songId: "song-1",
-    currentLine: { id: "L1" },
-    nextLine: { id: "L2" },
+    lines: [{ id: "L1" }, { id: "L2" }],
   },
-  playback: { isPlaying: true },
+  playback: { status: "Playing", track: { stableId: "song-1" } },
 } as any;
 
 describe("frameSignature", () => {
@@ -17,18 +16,18 @@ describe("frameSignature", () => {
     expect(frameSignature(baseFrame)).toBe(frameSignature({ ...baseFrame }));
   });
 
-  it("changes when the current line changes", () => {
-    const moved = { ...baseFrame, lyrics: { ...baseFrame.lyrics, currentLine: { id: "L2" } } };
+  it("changes when the lyric document changes", () => {
+    const moved = { ...baseFrame, lyrics: { ...baseFrame.lyrics, lines: [{ id: "L1" }, { id: "L3" }] } };
     expect(frameSignature(moved)).not.toBe(frameSignature(baseFrame));
   });
 
   it("changes when play/pause toggles", () => {
-    const paused = { ...baseFrame, playback: { isPlaying: false } };
+    const paused = { ...baseFrame, playback: { ...baseFrame.playback, status: "Paused" } };
     expect(frameSignature(paused)).not.toBe(frameSignature(baseFrame));
   });
 
   it("tolerates missing sections", () => {
-    expect(frameSignature({ lyrics: undefined, playback: undefined } as any)).toBe("0||||0");
+    expect(frameSignature({ lyrics: undefined, playback: undefined } as any)).toBe("|||");
   });
 });
 
@@ -136,16 +135,6 @@ describe("ReconnectingLyricsSocket", () => {
     latest().onopen?.();
     expect(socket.send("hello")).toBe(true);
     expect(latest().sent).toEqual(["hello"]);
-  });
-
-  it("routes server text messages to onMessage", () => {
-    const onMessage = vi.fn();
-    const { socket, latest } = makeSocket({ onMessage });
-    socket.connect();
-    latest().onmessage?.({ data: '{"type":"kotonoha/config"}' });
-    latest().onmessage?.({ data: 123 }); // non-string ignored
-    expect(onMessage).toHaveBeenCalledTimes(1);
-    expect(onMessage).toHaveBeenCalledWith('{"type":"kotonoha/config"}');
   });
 
   it("stops reconnecting after close()", () => {

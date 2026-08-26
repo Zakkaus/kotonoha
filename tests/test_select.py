@@ -1,7 +1,9 @@
 import pytest
 
-from kotonoha.lyrics.select import build_snapshot, find_current_index, song_timing
-from kotonoha.model import LyricLine, LyricWord
+from kotonoha.display.models import DisplayState
+from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
+from kotonoha.lyrics.select import build_frame, find_current_index, song_timing
+from kotonoha.playback.models import TrackIdentity
 
 
 def _line(i, start, end, text, words=()):
@@ -15,6 +17,23 @@ LINES = [
 ]
 
 
+def build_frame_case(lines, position, *, provider, song_id, title, artist, is_playing, duration_s=None):
+    timing = TimingKind.WORD if any(line.has_word_timing for line in lines) else TimingKind.LINE if lines else None
+    document = LyricsDocument(
+        source_id=provider,
+        song_id=song_id,
+        title=title,
+        artist=artist,
+        duration_s=duration_s,
+        timing=timing,
+        lines=tuple(lines),
+    )
+    track = None
+    if title is not None or artist is not None:
+        track = TrackIdentity("test", "player", stable_id=song_id, title=title or "", artist=artist or "")
+    return build_frame(document, position, track=track, is_playing=is_playing)
+
+
 def test_find_current_index():
     assert find_current_index(LINES, -1.0) == -1  # before first
     assert find_current_index(LINES, 0.0) == 0
@@ -22,29 +41,30 @@ def test_find_current_index():
     assert find_current_index(LINES, 99.0) == 2  # past end -> last
 
 
-def test_build_snapshot_middle():
-    snap = build_snapshot(
+def test_build_frame_middle():
+    snap = build_frame_case(
         LINES, 7.5, provider="MPRIS", song_id="1", title="T", artist="A", is_playing=True
     )
-    assert snap.found is True
+    assert snap.state is DisplayState.LYRICS_AVAILABLE
     assert snap.current is not None and snap.current.text == "two"
     assert snap.previous is not None and snap.previous.text == "one"
     assert snap.next is not None and snap.next.text == "three"
     assert snap.current_time == 7.5
-    assert snap.timing == "Line"
-    assert snap.title == "T"
+    assert snap.document is not None
+    assert snap.document.timing is TimingKind.LINE
+    assert snap.document.title == "T"
 
 
-def test_build_snapshot_before_first_line():
-    snap = build_snapshot(LINES, -1.0, provider="MPRIS", song_id=None, title=None, artist=None, is_playing=True)
-    assert snap.found is True
+def test_build_frame_before_first_line():
+    snap = build_frame_case(LINES, -1.0, provider="MPRIS", song_id=None, title=None, artist=None, is_playing=True)
+    assert snap.state is DisplayState.LYRICS_AVAILABLE
     assert snap.current is None
     assert snap.next is not None and snap.next.text == "one"
 
 
-def test_build_snapshot_empty_lines():
-    snap = build_snapshot([], 3.0, provider="MPRIS", song_id=None, title="T", artist="A", is_playing=False)
-    assert snap.found is False
+def test_build_frame_empty_lines():
+    snap = build_frame_case([], 3.0, provider="MPRIS", song_id=None, title="T", artist="A", is_playing=False)
+    assert snap.state is DisplayState.LYRICS_NOT_FOUND
     assert snap.current is None
     assert snap.current_time == 3.0
 
@@ -57,9 +77,10 @@ def test_song_timing_word_vs_line():
 
 def test_word_karaoke_flag_via_snapshot():
     worded = [_line(0, 0.0, 2.0, "hi", words=(LyricWord(0.0, 1.0, "hi"),))]
-    snap = build_snapshot(worded, 0.5, provider="MPRIS", song_id="1", title=None, artist=None, is_playing=True)
-    assert snap.timing == "Word"
-    assert snap.word_karaoke is True
+    snap = build_frame_case(worded, 0.5, provider="MPRIS", song_id="1", title=None, artist=None, is_playing=True)
+    assert snap.document is not None
+    assert snap.document.timing is TimingKind.WORD
+    assert snap.document.has_word_timing is True
 
 
 # Timings taken from 春夏秋冬的你 / 王宇良 as NetEase serves it: a 35.3s instrumental
@@ -77,10 +98,10 @@ def test_an_instrumental_break_is_not_the_line_before_it():
     # An LRC has no end times, so the parser gives every line the next line's start
     # and a 35s break was absorbed into the line before it, which then swept for
     # half a minute as though it were still being sung.
-    two_seconds_in = build_snapshot(
+    two_seconds_in = build_frame_case(
         BREAK_SONG, 108.2, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
-    deep_in_the_break = build_snapshot(
+    deep_in_the_break = build_frame_case(
         BREAK_SONG, 131.2, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -96,11 +117,11 @@ def test_an_instrumental_break_is_not_the_line_before_it():
 
 
 def test_the_last_line_stops_when_the_track_says_where_it_ends():
-    still_singing = build_snapshot(
+    still_singing = build_frame_case(
         BREAK_SONG, 150.0, provider="p", song_id=None, title="t", artist="a", is_playing=True,
         duration_s=200.0,
     )
-    after_the_words = build_snapshot(
+    after_the_words = build_frame_case(
         BREAK_SONG, 160.0, provider="p", song_id=None, title="t", artist="a", is_playing=True,
         duration_s=200.0,
     )
@@ -112,7 +133,7 @@ def test_the_last_line_stops_when_the_track_says_where_it_ends():
 def test_without_a_duration_the_last_line_stays():
     # There is nothing to count towards, and a marker that cannot move reads as a
     # wait that never finishes — worse than the last line simply staying put.
-    unbounded = build_snapshot(
+    unbounded = build_frame_case(
         BREAK_SONG, 160.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -126,7 +147,7 @@ def test_a_continuously_sung_song_has_no_interlude():
     dense = [_line(i, 2.58 * i, 2.58 * (i + 1), f"line {i}") for i in range(12)]
 
     for position in (1.0, 5.0, 14.0, 25.0, 30.0):
-        snapshot = build_snapshot(
+        snapshot = build_frame_case(
             dense, position, provider="p", song_id=None, title="t", artist="a", is_playing=True
         )
         assert snapshot.current is not None, f"a sung line was hidden at {position}s"
@@ -143,7 +164,7 @@ def test_a_merely_longer_phrase_is_not_a_break():
         _line(3, 14.0, 18.0, "four"),
     ]
 
-    late_in_the_held_line = build_snapshot(
+    late_in_the_held_line = build_frame_case(
         held, 13.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -154,10 +175,10 @@ def test_a_merely_longer_phrase_is_not_a_break():
 def test_the_interlude_span_is_carried_for_the_overlay():
     # The overlay cannot work the span out for itself: an LRC gives every line the
     # next one's start, so the lines show no gap at all.
-    intro = build_snapshot(
+    intro = build_frame_case(
         BREAK_SONG, 40.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
-    mid = build_snapshot(
+    mid = build_frame_case(
         BREAK_SONG, 131.2, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -170,7 +191,7 @@ def test_the_interlude_span_is_carried_for_the_overlay():
 
 
 def test_a_sung_line_carries_no_interlude():
-    singing = build_snapshot(
+    singing = build_frame_case(
         BREAK_SONG, 108.2, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -190,7 +211,7 @@ def test_a_breath_in_a_dense_song_is_not_a_break():
     ]
 
     for position in (17.0, 20.0, 23.0):
-        snapshot = build_snapshot(
+        snapshot = build_frame_case(
             breath, position, provider="p", song_id=None, title="t", artist="a", is_playing=True
         )
         assert snapshot.current is not None, f"a breath blanked the panel at {position}s"
@@ -200,7 +221,7 @@ def test_a_real_break_in_a_dense_song_is_still_read():
     dense = [_line(i, 3.15 * i, 3.15 * (i + 1), f"line {i}") for i in range(5)]
     with_break = [*dense, _line(5, 15.75, 49.45, "before the break"), _line(6, 49.45, 52.6, "after")]
 
-    mid = build_snapshot(
+    mid = build_frame_case(
         with_break, 35.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -216,7 +237,7 @@ def test_a_line_stops_sweeping_when_it_has_plainly_been_sung():
     dense = [_line(i, i * 2.4, (i + 1) * 2.4, f"line {i}") for i in range(5)]
     before_a_pause = [*dense, _line(5, 12.0, 21.6, "before the pause"), _line(6, 21.6, 24.0, "after")]
 
-    swept = build_snapshot(
+    swept = build_frame_case(
         before_a_pause, 13.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -232,7 +253,7 @@ def test_word_timings_say_exactly_when_a_line_stops():
         _line(1, 9.0, 11.0, "next"),
     ]
 
-    snapshot = build_snapshot(
+    snapshot = build_frame_case(
         lines, 1.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 
@@ -243,7 +264,7 @@ def test_word_timings_say_exactly_when_a_line_stops():
 def test_an_ordinary_line_keeps_its_own_end():
     dense = [_line(i, i * 2.4, (i + 1) * 2.4, f"line {i}") for i in range(6)]
 
-    snapshot = build_snapshot(
+    snapshot = build_frame_case(
         dense, 5.0, provider="p", song_id=None, title="t", artist="a", is_playing=True
     )
 

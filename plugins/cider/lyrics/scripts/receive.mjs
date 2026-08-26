@@ -1,8 +1,9 @@
-// Standalone debug receiver for the Cider lyrics probe.
+// Standalone debug receiver for a Kotonoha external adapter.
 //
-// The probe now speaks WebSocket (see src/probe/transport.ts), so this is a
-// minimal zero-dependency WS server that prints each lyric frame. It mirrors
-// what Kotonoha's Python receiver does, for use when Kotonoha is not running.
+// The adapter speaks the versioned generic WebSocket protocol (see
+// src/probe/transport.ts), so this is a minimal zero-dependency WS server that
+// prints each message. It mirrors what Kotonoha's Python receiver does, for use
+// when Kotonoha is not running.
 //
 //   node scripts/receive.mjs
 //
@@ -13,7 +14,7 @@ import { createServer } from "node:http";
 
 const host = "127.0.0.1";
 const port = Number.parseInt(process.env.CIDER_LYRICS_PROBE_PORT ?? "28745", 10);
-const path = "/kotonoha/cider/lyrics";
+const path = "/kotonoha/adapter";
 const WS_GUID = "258EAFA5-E914-47DA-95CA-C5AB0DC85B11";
 
 const server = createServer((req, res) => {
@@ -119,15 +120,15 @@ function handleText(raw) {
       JSON.stringify(
         {
           receivedAt: new Date().toISOString(),
-          reason: p.reason,
-          title: p.playback?.nowPlayingItem?.attributes?.name ?? p.playback?.nowPlayingItem?.title,
-          artist: p.playback?.nowPlayingItem?.attributes?.artistName ?? p.playback?.nowPlayingItem?.artistName,
-          lyricsFound: p.lyrics?.found,
+          type: p.type,
+          adapter: p.adapter,
+          title: p.playback?.track?.title,
+          artist: p.playback?.track?.artist,
+          lyricsSource: p.lyrics?.source,
+          lyricsLineCount: p.lyrics?.lines?.length,
           timing: p.lyrics?.timing,
-          currentTime: p.lyrics?.currentTime,
-          currentLine: p.lyrics?.currentLine?.text,
-          nextLine: p.lyrics?.nextLine?.text,
-          error: p.lyrics?.error,
+          positionS: p.positionS ?? p.playback?.positionS,
+          status: p.status ?? p.playback?.status,
         },
         null,
         2,
@@ -139,5 +140,5 @@ function handleText(raw) {
 }
 
 server.listen(port, host, () => {
-  console.log(`Kotonoha Cider lyrics receiver (WS) on ws://${host}:${port}${path}`);
+  console.log(`Kotonoha adapter receiver (WS) on ws://${host}:${port}${path}`);
 });

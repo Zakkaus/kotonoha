@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { probePlayback, probePlaybackTime } from "../probe/playback";
+import { probePlayback } from "../probe/playback";
 
 describe("probePlayback", () => {
   it("reads the PluginKit apple music store when present", () => {
@@ -21,12 +21,19 @@ describe("probePlayback", () => {
     };
 
     expect(probePlayback(globals)).toEqual({
-      // Projected, not forwarded: only the three fields the receiver reads.
-      nowPlayingItem: { title: "Song", artistName: null, albumName: null },
-      isPlaying: true,
-      currentPlaybackTime: 42,
-      audioCurrentTime: 42.5,
-      audioDuration: 180,
+      playerId: "cider",
+      status: "Playing",
+      positionS: 42,
+      durationS: 180,
+      track: {
+        stableId: null,
+        title: "Song",
+        rawTitle: "Song",
+        artist: "",
+        album: "",
+        url: null,
+        durationS: 180,
+      },
     });
   });
 
@@ -41,8 +48,10 @@ describe("probePlayback", () => {
     };
 
     expect(probePlayback(globals)).toMatchObject({
-      nowPlayingItem: { title: "Fallback" },
-      currentPlaybackTime: 8,
+      playerId: "cider",
+      status: "Stopped",
+      positionS: 8,
+      track: { title: "Fallback" },
     });
   });
 
@@ -70,21 +79,20 @@ describe("probePlayback", () => {
     };
 
     expect(probePlayback(globals)).toMatchObject({
-      // The nested attributes shape is read and flattened to what the receiver takes.
-      nowPlayingItem: { title: "Current Song", artistName: null, albumName: null },
-      isPlaying: true,
-      currentPlaybackTime: 41,
-      currentPlaybackDuration: 180,
+      playerId: "cider",
+      status: "Playing",
+      positionS: 41,
+      durationS: 180,
+      track: { title: "Current Song" },
     });
   });
 
-  it("uses MusicKit for a high-frequency tick when Cider exposes no audio element", () => {
+  it("uses MusicKit for the playback clock when Cider exposes no audio element", () => {
     const globals = {
       CiderApp: {
         musicKitStore: {
           player: {
             isPlaying: true,
-            currentPlaybackTime: 41,
           },
         },
       },
@@ -96,9 +104,9 @@ describe("probePlayback", () => {
       },
     };
 
-    expect(probePlaybackTime(globals)).toEqual({
-      currentTime: 42.5,
-      isPlaying: true,
+    expect(probePlayback(globals)).toMatchObject({
+      positionS: 42.5,
+      status: "Playing",
     });
   });
 
@@ -110,7 +118,7 @@ describe("probePlayback", () => {
 
     const probe = probePlayback({ MusicKit: { getInstance: () => ({ nowPlayingItem: cyclic }) } });
 
-    expect(probe.nowPlayingItem).toEqual({ title: "Looped", artistName: "A", albumName: null });
+    expect(probe.track).toMatchObject({ title: "Looped", artist: "A" });
     expect(() => JSON.stringify(probe)).not.toThrow();
   });
 });

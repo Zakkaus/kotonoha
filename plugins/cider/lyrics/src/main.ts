@@ -3,16 +3,15 @@ import {
   definePluginContext,
 } from "@ciderapp/pluginkit";
 
-import { setPreferredTranslationLanguage } from "./probe/appleMusicLyrics";
 import { createProbePayload } from "./probe/payload";
-import { probePlaybackTime } from "./probe/playback";
+import { probePlayback } from "./probe/playback";
 import { dedupeBrowserAppliedPluginList } from "./probe/pluginState";
 import { ReconnectingLyricsSocket, frameSignature } from "./probe/transport";
-import type { FrameReason, ProbeConfig } from "./probe/types";
+import type { AdapterClock, FrameReason, ProbeConfig } from "./probe/types";
 import PluginConfig from "./plugin.config";
 
 const DEFAULT_CONFIG: ProbeConfig = {
-  endpoint: "ws://127.0.0.1:28745/kotonoha/cider/lyrics",
+  endpoint: "ws://127.0.0.1:28745/kotonoha/adapter",
   pollMs: 200,
   heartbeatMs: 1000,
   tickMs: 100,
@@ -27,6 +26,7 @@ let socket: ReconnectingLyricsSocket | undefined;
 let lastSignature: string | null = null;
 let lastSentAt = 0;
 let building = false;
+let messageSequence = 0;
 
 const { plugin, setupConfig, customElementName, goToPage, useCPlugin } =
   definePluginContext({
@@ -77,23 +77,8 @@ function startSocket() {
       lastSignature = null;
       void pushFrame("open");
     },
-    // Kotonoha sends back its preferred translation language (system locale or
-    // the user's setting); apply it so the next probe extracts that language.
-    onMessage: handleServerMessage,
   });
   socket.connect();
-}
-
-function handleServerMessage(data: string) {
-  try {
-    const message = JSON.parse(data);
-    if (message?.type === "kotonoha/config" && typeof message.translationLanguage === "string") {
-      setPreferredTranslationLanguage(message.translationLanguage);
-      log(`translation language set to ${message.translationLanguage}`);
-    }
-  } catch (error) {
-    log("failed to handle server message", error);
-  }
 }
 
 function startProbeLoop() {
@@ -106,9 +91,8 @@ function startProbeLoop() {
   }, Math.max(50, config.pollMs));
 }
 
-// Lightweight high-frequency clock calibration: just the real playback head +
-// paused state, no lyric work. Kotonoha interpolates between these at 60fps, so
-// the sweep stays both accurate (frequently re-calibrated) and smooth.
+// Lightweight high-frequency clock calibration: only the real playback head and
+// status are sent. Kotonoha interpolates between these at display rate.
 function startTickLoop() {
   if (tickId !== undefined) {
     window.clearInterval(tickId);
@@ -118,11 +102,25 @@ function startTickLoop() {
     if (socket === undefined || !socket.isOpen) {
       return;
     }
-    const { currentTime, isPlaying } = probePlaybackTime(window);
-    if (currentTime === null) {
+    const playback = probePlayback(window);
+    if (playback.positionS === null) {
       return;
     }
-    socket.send(JSON.stringify({ reason: "tick", currentTime, isPlaying }));
+    const message: AdapterClock = {
+      protocol: "kotonoha.adapter",
+      version: 1,
+      type: "clock",
+      adapter: "cider",
+      sequence: ++messageSequence,
+      capturedAt: new Date().toISOString(),
+      trackRef:
+        playback.track?.stableId === null || playback.track?.stableId === undefined
+          ? null
+          : `cider:cider:${playback.track.stableId}`,
+      positionS: playback.positionS,
+      status: playback.status,
+    };
+    socket.send(JSON.stringify(message));
   }, Math.max(30, config.tickMs));
 }
 
@@ -144,7 +142,11 @@ async function buildPayload(): Promise<Awaited<ReturnType<typeof createProbePayl
   });
   try {
     const payload = await Promise.race([
-      createProbePayload({ globals: window, version: PluginConfig.version }),
+      createProbePayload({
+        globals: window,
+        version: PluginConfig.version,
+        sequence: ++messageSequence,
+      }),
       deadline,
     ]);
     if (payload === null) {
@@ -212,9 +214,8 @@ function sendBuiltPayload(
   signature: string,
   now: number,
 ) {
-  const frame = { ...payload, reason };
   log(`send ${reason}`);
-  const sent = socket?.send(JSON.stringify(frame)) ?? false;
+  const sent = socket?.send(JSON.stringify(payload)) ?? false;
   if (sent) {
     lastSignature = signature;
     lastSentAt = now;

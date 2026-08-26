@@ -9,10 +9,11 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from ..model import LyricLine
 from .artifact import LyricsArtifact
+from .http import LyricsSession
 from .lrc_parser import parse_lrc
 from .match import Candidate, TrackMetadata, best_match, query_variants
+from .models import LyricLine
 from .payload import read_json_capped
 from .titles import base_title, primary_artist
 
@@ -58,7 +59,7 @@ def _record(data: object) -> Record | None:
     )
 
 
-async def get_exact(session: aiohttp.ClientSession, track: TrackMetadata) -> Record | None:
+async def get_exact(session: LyricsSession, track: TrackMetadata) -> Record | None:
     params = {"track_name": track.title, "artist_name": track.artist}
     if track.duration_s is not None:
         params["duration"] = str(int(round(track.duration_s)))
@@ -72,7 +73,7 @@ async def get_exact(session: aiohttp.ClientSession, track: TrackMetadata) -> Rec
     return _record(data)
 
 
-async def _search(session: aiohttp.ClientSession, track_name: str, artist_name: str) -> list[Record]:
+async def _search(session: LyricsSession, track_name: str, artist_name: str) -> list[Record]:
     params = {"track_name": track_name}
     if artist_name:
         params["artist_name"] = artist_name
@@ -84,7 +85,7 @@ async def _search(session: aiohttp.ClientSession, track_name: str, artist_name: 
     return [record for item in data if (record := _record(item)) is not None]
 
 
-async def search_records(session: aiohttp.ClientSession, track: TrackMetadata) -> list[Record]:
+async def search_records(session: LyricsSession, track: TrackMetadata) -> list[Record]:
     return await _search(session, base_title(track.title), primary_artist(track.artist))
 
 
@@ -93,7 +94,7 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
 
 
 async def fetch_artifact(
-    session: aiohttp.ClientSession,
+    session: LyricsSession,
     track: TrackMetadata,
     *,
     fuzzy: bool = False,

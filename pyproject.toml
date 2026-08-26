@@ -39,6 +39,7 @@ dependencies = [
   "qasync",
   "aiohttp",
   "dbus-fast",
+  "keyring",
 ]
 
 [project.optional-dependencies]

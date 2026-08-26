@@ -16,9 +16,10 @@ const TTML = `
 </tt>`;
 
 describe("createProbePayload", () => {
-  it("emits current lyric context, not full static lyrics", async () => {
+  it("emits a complete versioned adapter snapshot", async () => {
     const payload = await createProbePayload({
       version: "0.0.1",
+      sequence: 7,
       globals: {
         location: {
           href: "http://127.0.0.1:10767/index.html#/am/home",
@@ -55,18 +56,22 @@ describe("createProbePayload", () => {
       },
     });
 
-    expect(payload.lyrics).toMatchObject({
-      found: true,
-      songId: "song-payload",
-      lineCount: 2,
-      currentLine: {
-        text: "world",
+    expect(payload).toMatchObject({
+      protocol: "kotonoha.adapter",
+      version: 1,
+      type: "snapshot",
+      adapter: "cider",
+      sequence: 7,
+      playback: {
+        positionS: 3.5,
+        track: { stableId: "song-payload" },
       },
-      aroundLines: [
-        { text: "hello" },
-        { text: "world" },
-      ],
+      lyrics: {
+        source: "apple-music",
+        sourceName: "Apple Music",
+        songId: "song-payload",
+        lines: [{ text: "hello" }, { text: "world" }],
+      },
     });
-    expect("lines" in payload.lyrics).toBe(false);
   });
 });

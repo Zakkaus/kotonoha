@@ -11,10 +11,11 @@ from typing import Any
 
 import aiohttp
 
-from ..model import LyricLine
 from .artifact import LyricsArtifact
+from .http import LyricsSession
 from .lrc_parser import merge_translation, parse_lrc
 from .match import TrackMetadata
+from .models import LyricLine
 from .payload import read_capped
 
 LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
@@ -55,7 +56,7 @@ def parse_response(body: str) -> dict[str, str]:
     }
 
 
-async def fetch_payload(session: aiohttp.ClientSession, song_mid: str) -> dict[str, str]:
+async def fetch_payload(session: LyricsSession, song_mid: str) -> dict[str, str]:
     """Fetch the raw lyric payload for a song mid, as it is cached."""
     params = {
         "songmid": song_mid,
@@ -75,7 +76,7 @@ async def fetch_payload(session: aiohttp.ClientSession, song_mid: str) -> dict[s
     return parse_response(body.decode("utf-8", "replace"))
 
 
-async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | None:
+async def fetch_song_mid(session: LyricsSession, song_id: str) -> str | None:
     """Resolve a numeric song id to the mid the lyric endpoint takes, or None."""
     try:
         numeric_id = int(song_id)
@@ -116,19 +117,19 @@ async def fetch_song_mid(session: aiohttp.ClientSession, song_id: str) -> str | 
     return mid if isinstance(mid, str) and mid else None
 
 
-async def fetch_payload_for_song_id(session: aiohttp.ClientSession, song_id: str) -> dict[str, str]:
+async def fetch_payload_for_song_id(session: LyricsSession, song_id: str) -> dict[str, str]:
     """Fetch the lyric payload for a numeric song id; empty when it resolves to nothing."""
     song_mid = await fetch_song_mid(session, song_id)
     return await fetch_payload(session, song_mid) if song_mid is not None else {}
 
 
-async def fetch_lyrics(session: aiohttp.ClientSession, song_mid: str) -> list[LyricLine]:
+async def fetch_lyrics(session: LyricsSession, song_mid: str) -> list[LyricLine]:
     """Fetch and parse the timed lines for a song mid."""
     return list(parse_payload(await fetch_payload(session, song_mid)))
 
 
 async def fetch_artifact(
-    session: aiohttp.ClientSession, track: TrackMetadata, *, fuzzy: bool = False
+    session: LyricsSession, track: TrackMetadata, *, fuzzy: bool = False
 ) -> LyricsArtifact | None:
     """QQ Music is id-only; ordinary metadata search is intentionally unsupported."""
     return None

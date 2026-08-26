@@ -9,8 +9,8 @@ different set of players and the interesting cases are the awkward combinations.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Any
 
+from ..playback.models import MprisPlayerPort
 from .mpris_track import TrackInfo
 
 #: How much later a rival must have started before the overlay follows it instead.
@@ -30,7 +30,7 @@ class PlayerRecord:
     type checking cannot see.
     """
 
-    player: Any
+    player: MprisPlayerPort | None
     bus_name: str
     status: str
     info: TrackInfo

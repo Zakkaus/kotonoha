@@ -8,8 +8,8 @@ from collections.abc import Iterator, Mapping
 
 import aiohttp
 
-from ..model import LyricLine
 from .artifact import LyricsArtifact
+from .http import LyricsSession
 from .lrc_parser import merge_translation, parse_lrc
 from .match import (
     Candidate,
@@ -21,6 +21,7 @@ from .match import (
     query_variants,
     ranked_matches,
 )
+from .models import LyricLine
 from .payload import read_json_capped
 from .yrc_parser import parse_yrc
 
@@ -34,7 +35,7 @@ HEADERS = {"Referer": "https://music.163.com", "User-Agent": "Mozilla/5.0"}
 TIMEOUT = aiohttp.ClientTimeout(total=6.0, connect=3.0)
 
 
-async def search(session: aiohttp.ClientSession, query: str, limit: int = 10) -> list[Candidate]:
+async def search(session: LyricsSession, query: str, limit: int = 10) -> list[Candidate]:
     params = {"s": query, "type": "1", "limit": str(limit)}
     async with session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
@@ -92,7 +93,7 @@ def lyric_text(data: Mapping[str, object], key: str) -> str:
     return lyric if isinstance(lyric, str) else ""
 
 
-async def fetch_payload(session: aiohttp.ClientSession, song_id: str) -> dict[str, str]:
+async def fetch_payload(session: LyricsSession, song_id: str) -> dict[str, str]:
     params = {"id": song_id, "lv": "1", "kv": "0", "tv": "1", "yv": "1"}
     async with session.get(LYRIC_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
@@ -114,7 +115,7 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
 
 
 async def _artifact_for_match(
-    session: aiohttp.ClientSession,
+    session: LyricsSession,
     match: MatchEvidence,
 ) -> LyricsArtifact | None:
     payload = await fetch_payload(session, match.candidate.song_id)
@@ -137,7 +138,7 @@ async def _artifact_for_match(
 
 
 async def fetch_artifact(
-    session: aiohttp.ClientSession,
+    session: LyricsSession,
     track: TrackMetadata,
     *,
     fuzzy: bool = False,
@@ -207,7 +208,7 @@ def _ladder_batches(variants: tuple[QueryVariant, ...]) -> Iterator[tuple[QueryV
 
 
 async def _search_batch(
-    session: aiohttp.ClientSession, variants: tuple[QueryVariant, ...]
+    session: LyricsSession, variants: tuple[QueryVariant, ...]
 ) -> list[list[Candidate]]:
     """Search a batch concurrently, keeping the results in the ladder's order.
 
@@ -226,5 +227,5 @@ async def _search_batch(
     return pages
 
 
-async def fetch_lyrics(session: aiohttp.ClientSession, song_id: str) -> list[LyricLine]:
+async def fetch_lyrics(session: LyricsSession, song_id: str) -> list[LyricLine]:
     return list(parse_payload(await fetch_payload(session, song_id)))

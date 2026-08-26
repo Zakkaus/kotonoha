@@ -1,13 +1,16 @@
 from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
-from kotonoha.providers.mpris import (
+from kotonoha.providers.mpris_track import (
+    CumulativeLengthDetector,
     TrackInfo,
     TrackObservation,
     TrackStabilizer,
-    _unwrap,
+    lyrics_lookup_reason,
     parse_metadata,
 )
-from kotonoha.providers.mpris_track import CumulativeLengthDetector, lyrics_lookup_reason
+from kotonoha.providers.mpris_track import (
+    unwrap as _unwrap,
+)
 
 
 def observation(track_id, title, artist, *, at, duration=180.0, pos=0.0):

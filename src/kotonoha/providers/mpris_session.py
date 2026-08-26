@@ -14,6 +14,9 @@ import logging
 from collections.abc import Awaitable, Callable
 from typing import Any, TypeVar
 
+from dbus_fast.errors import DBusFastError
+
+from ..playback.models import MprisPlayerPort, MprisPropertyChange
 from .mpris_track import TrackInfo, parse_metadata
 from .mpris_track import unwrap as _unwrap
 
@@ -39,11 +42,17 @@ MPRIS_INTROSPECTION = """<node>
 #: answers is not an error, it is silence, and there is one poll task: without a
 #: deadline it waits inside that call and every other player stops being looked at.
 DBUS_CALL_TIMEOUT = 2.0
+_MPRIS_BOUNDARY_ERRORS = (DBusFastError, OSError, TimeoutError, RuntimeError, ValueError, TypeError)
+_MPRIS_DETAIL_ERRORS = _MPRIS_BOUNDARY_ERRORS + (KeyError, IndexError, OverflowError)
 
 _T = TypeVar("_T")
 
 
-def plain_value(value: Any) -> Any:
+class MprisSessionError(RuntimeError):
+    """A session-bus operation failed at the MPRIS transport boundary."""
+
+
+def plain_value(value: object) -> object:
     """A property as its own value, whether or not D-Bus wrapped it.
 
     A single property comes back as a Variant while an a{sv} map arrives already
@@ -72,10 +81,13 @@ class MprisSession:
         return self._bus is not None
 
     async def connect(self) -> None:
-        from dbus_fast.aio import MessageBus
-        from dbus_fast.constants import BusType
+        try:
+            from dbus_fast.aio import MessageBus
+            from dbus_fast.constants import BusType
 
-        self._bus = await MessageBus(bus_type=BusType.SESSION).connect()
+            self._bus = await MessageBus(bus_type=BusType.SESSION).connect()
+        except _MPRIS_BOUNDARY_ERRORS as exc:
+            raise MprisSessionError("session bus connection failed") from exc
 
     def close(self) -> None:
         """Release the subscription and the connection. Safe to call twice."""
@@ -96,39 +108,42 @@ class MprisSession:
         except TimeoutError:
             logger.debug("%s did not answer within %.1fs", what, DBUS_CALL_TIMEOUT)
             return default
-        except Exception as exc:  # noqa: BLE001 - D-Bus boundary
+        except _MPRIS_BOUNDARY_ERRORS as exc:
             logger.debug("%s failed: %s", what, exc)
             return default
 
     async def player_names(self) -> list[str]:
-        introspection = await self._bus.introspect(DBUS_NAME, DBUS_PATH)
-        obj = self._bus.get_proxy_object(DBUS_NAME, DBUS_PATH, introspection)
-        names = await obj.get_interface(DBUS_NAME).call_list_names()
-        return sorted(name for name in names if name.startswith(MPRIS_PREFIX))
+        try:
+            introspection = await self._bus.introspect(DBUS_NAME, DBUS_PATH)
+            obj = self._bus.get_proxy_object(DBUS_NAME, DBUS_PATH, introspection)
+            names = await obj.get_interface(DBUS_NAME).call_list_names()
+            return sorted(name for name in names if name.startswith(MPRIS_PREFIX))
+        except _MPRIS_BOUNDARY_ERRORS as exc:
+            raise MprisSessionError("player discovery failed") from exc
 
-    async def player(self, name: str) -> Any:
+    async def player(self, name: str) -> MprisPlayerPort | None:
         """The Player interface of one player, or None when it cannot be reached."""
         try:
             obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
             return obj.get_interface(PLAYER_IFACE)
-        except Exception as exc:  # noqa: BLE001 - player may have vanished
+        except _MPRIS_BOUNDARY_ERRORS as exc:
             logger.debug("interface %s failed: %s", name, exc)
             return None
 
-    async def status(self, player: Any) -> str:
+    async def status(self, player: MprisPlayerPort) -> str:
         return await self.ask("status read", player.get_playback_status(), "")
 
-    async def position(self, player: Any) -> float | None:
+    async def position(self, player: MprisPlayerPort) -> float | None:
         micros = await self.ask("position read", player.get_position(), None)
         return None if micros is None else float(micros) / 1_000_000.0
 
-    async def track(self, player: Any) -> TrackInfo | None:
+    async def track(self, player: MprisPlayerPort) -> TrackInfo | None:
         metadata = await self.ask("metadata read", player.get_metadata(), None)
         if metadata is None:
             return None
         try:
             return parse_metadata(_unwrap(metadata))
-        except Exception as exc:  # noqa: BLE001 - D-Bus boundary
+        except _MPRIS_DETAIL_ERRORS as exc:
             logger.debug("metadata parse failed while selecting player: %s", exc)
             return None
 
@@ -152,7 +167,7 @@ class MprisSession:
             obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
             props = obj.get_interface(PROPERTIES_IFACE)
             identity = await props.call_get(ROOT_IFACE, "Identity")
-        except Exception as exc:  # noqa: BLE001 - player may vanish during discovery
+        except _MPRIS_BOUNDARY_ERRORS as exc:
             logger.debug("player identity read failed for %s: %s", name, exc)
             raise LookupError(name) from exc
         identity_text = str(plain_value(identity) or "")
@@ -161,12 +176,12 @@ class MprisSession:
             return identity_text, str(values.get("PlaybackStatus") or ""), parse_metadata(
                 _unwrap(values.get("Metadata", {}))
             )
-        except Exception as exc:  # noqa: BLE001 - detail is optional for the row
+        except _MPRIS_DETAIL_ERRORS as exc:
             logger.debug("player detail read failed for %s: %s", name, exc)
             return identity_text, "", empty
 
     async def subscribe(
-        self, name: str, on_change: Callable[[str, dict[str, Any], list[str]], None]
+        self, name: str, on_change: Callable[[MprisPropertyChange], None]
     ) -> None:
         """Follow one player's property changes, replacing any previous subscription."""
         if name == self._subscribed_name and self._props is not None:
@@ -175,14 +190,28 @@ class MprisSession:
         try:
             obj = self._bus.get_proxy_object(name, MPRIS_PATH, MPRIS_INTROSPECTION)
             props = obj.get_interface(PROPERTIES_IFACE)
-            props.on_properties_changed(on_change)
-            self._props, self._subscribed_name, self._on_change = props, name, on_change
-        except Exception as exc:  # noqa: BLE001 - signals are best effort
+
+            def normalize_change(
+                interface: str,
+                changed: dict[str, Any],
+                invalidated: list[str],
+            ) -> None:
+                on_change(
+                    MprisPropertyChange(
+                        interface,
+                        {key: plain_value(value) for key, value in changed.items()},
+                        tuple(invalidated),
+                    )
+                )
+
+            props.on_properties_changed(normalize_change)
+            self._props, self._subscribed_name, self._on_change = props, name, normalize_change
+        except _MPRIS_BOUNDARY_ERRORS as exc:
             logger.debug("subscribe failed for %s: %s", name, exc)
             self._props = self._subscribed_name = self._on_change = None
 
     def unsubscribe(self) -> None:
         if self._props is not None and self._on_change is not None:
-            with contextlib.suppress(Exception):
+            with contextlib.suppress(*_MPRIS_BOUNDARY_ERRORS):
                 self._props.off_properties_changed(self._on_change)
         self._props = self._subscribed_name = self._on_change = None

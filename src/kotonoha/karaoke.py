@@ -9,7 +9,8 @@ from __future__ import annotations
 
 import math
 
-from .model import Interlude, LyricLine, LyricWord
+from .display.models import Interlude
+from .lyrics.models import LyricLine, LyricWord
 
 
 def _clamp01(value: float) -> float:

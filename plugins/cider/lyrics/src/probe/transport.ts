@@ -12,13 +12,12 @@ const OPEN_READY_STATE = 1;
  */
 export function frameSignature(payload: Pick<ProbePayload, "lyrics" | "playback">): string {
   const lyrics = payload.lyrics;
-  const playing = payload.playback?.isPlaying ? "1" : "0";
+  const playback = payload.playback;
   return [
-    lyrics?.found ? "1" : "0",
-    lyrics?.songId ?? "",
-    lyrics?.currentLine?.id ?? "",
-    lyrics?.nextLine?.id ?? "",
-    playing,
+    playback?.track?.stableId ?? "",
+    lyrics?.source ?? "",
+    lyrics?.lines.at(-1)?.id ?? "",
+    playback?.status ?? "",
   ].join("|");
 }
 
@@ -26,8 +25,6 @@ export type ReconnectingSocketOptions = {
   url: string;
   /** Called every time a fresh connection opens (send a full snapshot here). */
   onOpen: () => void;
-  /** Called with the text of each message Kotonoha sends back (e.g. config frames). */
-  onMessage?: (data: string) => void;
   /** Optional logger for diagnostics. */
   log?: (message: string, error?: unknown) => void;
   /** Backoff bounds in milliseconds. */
@@ -57,7 +54,6 @@ export class ReconnectingLyricsSocket {
 
   private readonly url: string;
   private readonly onOpen: () => void;
-  private readonly onMessage: (data: string) => void;
   private readonly log: (message: string, error?: unknown) => void;
   private readonly minBackoffMs: number;
   private readonly openTimeoutMs: number;
@@ -73,7 +69,6 @@ export class ReconnectingLyricsSocket {
   constructor(options: ReconnectingSocketOptions) {
     this.url = options.url;
     this.onOpen = options.onOpen;
-    this.onMessage = options.onMessage ?? (() => {});
     this.log = options.log ?? (() => {});
     this.minBackoffMs = options.minBackoffMs ?? 500;
     this.openTimeoutMs = options.openTimeoutMs ?? 10_000;
@@ -138,11 +133,6 @@ export class ReconnectingLyricsSocket {
       this.backoff = this.minBackoffMs;
       this.log("connected");
       this.onOpen();
-    };
-    socket.onmessage = (event: MessageEvent) => {
-      if (attempt === this.generation && typeof event.data === "string") {
-        this.onMessage(event.data);
-      }
     };
     socket.onclose = () => {
       if (attempt !== this.generation) {

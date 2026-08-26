@@ -10,7 +10,7 @@ import re
 from bisect import bisect_left
 from dataclasses import replace
 
-from ..model import LyricLine
+from .models import LyricLine
 
 # [mm:ss], [mm:ss.xx] or [mm:ss.xxx]; a line may carry several time tags.
 _TIME = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")

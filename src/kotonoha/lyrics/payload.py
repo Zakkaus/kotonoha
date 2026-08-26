@@ -14,7 +14,7 @@ import json
 import zlib
 from typing import Any
 
-import aiohttp
+from .http import LyricsResponse
 
 #: Lyrics for one song are a few kilobytes; a search result is a few hundred.
 MAX_RESPONSE_BYTES = 2 * 1024 * 1024
@@ -27,7 +27,7 @@ MAX_DECOMPRESSED_BYTES = 4 * 1024 * 1024
 _CHUNK_BYTES = 64 * 1024
 
 
-async def read_capped(response: aiohttp.ClientResponse, source: str) -> bytes:
+async def read_capped(response: LyricsResponse, source: str) -> bytes:
     """Return the whole body, refusing one larger than :data:`MAX_RESPONSE_BYTES`.
 
     Read in a loop to end of stream. A single ``content.read(n)`` returns only what
@@ -49,7 +49,7 @@ async def read_capped(response: aiohttp.ClientResponse, source: str) -> bytes:
     return b"".join(chunks)
 
 
-async def read_json_capped(response: aiohttp.ClientResponse, source: str) -> Any:
+async def read_json_capped(response: LyricsResponse, source: str) -> Any:
     """Return the body parsed as JSON, refusing an oversized one.
 
     Used instead of ``response.json()``, which buffers whatever arrives.

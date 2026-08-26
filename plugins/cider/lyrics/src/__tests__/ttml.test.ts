@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { findCurrentLine, parseAppleMusicTtml } from "../probe/ttml";
+import { parseAppleMusicTtml } from "../probe/ttml";
 
 const LINE_TTML = `<?xml version="1.0" encoding="UTF-8"?>
 <tt xmlns="http://www.w3.org/ns/ttml"
@@ -66,10 +66,9 @@ describe("parseAppleMusicTtml", () => {
     ]);
   });
 
-  it("finds the current line by playback time", () => {
+  it("keeps the complete timed document for display projection", () => {
     const parsed = parseAppleMusicTtml(LINE_TTML, { durationSeconds: 10 });
 
-    expect(findCurrentLine(parsed.lines, 4)?.id).toBe("L2");
-    expect(findCurrentLine(parsed.lines, 9)).toBeNull();
+    expect(parsed.lines.map((line) => line.id)).toEqual(["L1", "L2", "L3"]);
   });
 });

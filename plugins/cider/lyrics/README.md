@@ -1,12 +1,12 @@
 # Kotonoha Cider Lyrics
 
-Optional Cider plugin that supplies Apple Music TTML lyrics and reliable playback metadata to Kotonoha's Linux desktop lyric overlay.
+Optional Cider external adapter that supplies Apple Music TTML lyrics and reliable playback metadata to Kotonoha's Linux desktop lyric overlay.
 
 > **Experimental:** The current Cider 4 player layout and MusicKit clock are supported, but this plugin still depends on Cider internals and Apple Music's private TTML response. Keep Netease or lrclib enabled as external providers.
 
-The probe does not mount or scrape Cider lyric views. It reads the current Apple Music song ID, fetches `/syllable-lyrics` through `CiderApp.mkfetch`, parses TTML, and streams the current timed lyric line to the local receiver over WebSocket. Playback state is read from the current Cider player layout with MusicKit fallbacks for song-relative time, duration, playing state, and now-playing metadata.
+The probe does not mount or scrape Cider lyric views. It reads the current Apple Music song ID, fetches `/syllable-lyrics` through `CiderApp.mkfetch`, parses TTML, and sends the complete timed lyric document in the versioned `kotonoha.adapter` protocol. Playback state is read from the current Cider player layout with MusicKit fallbacks for song-relative time, duration, playing state, and now-playing metadata.
 
-It connects as a WebSocket client with automatic reconnect/backoff, pushes a full snapshot on connect and track/line changes, sends a heartbeat about once per second, and sends lightweight clock ticks about every 100 ms.
+It connects as a WebSocket client with automatic reconnect/backoff, pushes a full `snapshot` on connect and track changes, sends a heartbeat about once per second, and sends lightweight `clock` messages about every 100 ms. Current-line and surrounding-line selection stays inside Kotonoha's display layer.
 
 ## Local Receiver
 
@@ -19,10 +19,10 @@ pnpm receive
 It listens on:
 
 ```text
-ws://127.0.0.1:28745/kotonoha/cider/lyrics
+ws://127.0.0.1:28745/kotonoha/adapter
 ```
 
-Kotonoha's Python app hosts the same WebSocket endpoint, so in normal use you do not run this — just start `kotonoha`.
+Kotonoha's Python app hosts the same generic adapter endpoint, so in normal use you do not run this - just start `kotonoha`.
 
 ## Plugin Development
 

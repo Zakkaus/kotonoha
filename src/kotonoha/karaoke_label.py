@@ -21,7 +21,7 @@ from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QP
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
 from .karaoke import line_progress, word_fill_fraction
-from .model import LyricLine
+from .lyrics.models import LyricLine
 
 UNSUNG_COLOR = QColor(255, 255, 255, 95)
 SHADOW_COLOR = QColor(0, 0, 0, 170)

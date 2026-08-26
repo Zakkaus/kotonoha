@@ -1,6 +1,9 @@
-import type { NowPlayingItem, PlaybackProbe } from "./types";
+import { currentSongId } from "./appleMusicLyrics";
+import type { NowPlayingItem, PlaybackProbe, PlaybackTrackPayload } from "./types";
 
 type CiderGlobals = {
+  /** Keeps the browser Window object assignable at the third-party global boundary. */
+  window?: Window;
   CiderApp?: any;
   __PLUGINSYS__?: any;
   MusicKit?: any;
@@ -48,43 +51,7 @@ function audioElement(globals: CiderGlobals, player: any): any {
   return player?.audioElement ?? globals.CiderApp?.musicKitStore?.audioElement;
 }
 
-/**
- * Lightweight, high-frequency read of just the playback head + play state.
- *
- * Prefers an explicitly exposed HTMLMediaElement, then MusicKit's continuous
- * song clock, then the resolved Cider player store. Used by the ~100ms tick loop
- * so Kotonoha's local clock is frequently re-calibrated against ground truth.
- */
-export function probePlaybackTime(globals: any): {
-  currentTime: number | null;
-  isPlaying: boolean | null;
-} {
-  const player = playbackPlayer(globals);
-  const instance = musicKit(globals);
-  const audio = audioElement(globals, player);
-  const audioPlaying = typeof audio?.paused === "boolean" ? !audio.paused : undefined;
-
-  return {
-    currentTime:
-      numberOrUndefined(audio?.currentTime) ??
-      numberOrUndefined(instance?.currentPlaybackTime) ??
-      numberOrUndefined(player?.currentPlaybackTime ?? player?.playbackTime) ??
-      null,
-    isPlaying:
-      audioPlaying ??
-      booleanOrUndefined(instance?.isPlaying) ??
-      booleanOrUndefined(player?.isPlaying) ??
-      null,
-  };
-}
-
-/** Read the three identity fields out of whatever Cider exposes.
- *
- * Cider's item is an external object of its own choosing: it may be cyclic, and
- * forwarding it whole made JSON.stringify throw, which silently dropped the frame
- * rather than sending a track with missing fields. The names match what the
- * receiver already reads, in both the nested and the flat shape.
- */
+/** Read the small, stable metadata subset used by the adapter wire contract. */
 function projectNowPlaying(item: unknown): NowPlayingItem | null {
   if (item === null || typeof item !== "object") {
     return null;
@@ -110,23 +77,55 @@ function projectNowPlaying(item: unknown): NowPlayingItem | null {
   };
 }
 
+function playbackDuration(player: any, instance: any, audio: any): number | null {
+  return (
+    numberOrUndefined(player?.currentPlaybackDuration ?? player?.playbackDuration) ??
+    numberOrUndefined(instance?.currentPlaybackDuration) ??
+    numberOrUndefined(audio?.duration) ??
+    null
+  );
+}
+
+function playbackPosition(player: any, instance: any, audio: any): number | null {
+  return (
+    numberOrUndefined(player?.currentPlaybackTime ?? player?.playbackTime) ??
+    numberOrUndefined(instance?.currentPlaybackTime) ??
+    numberOrUndefined(audio?.currentTime) ??
+    null
+  );
+}
+
 export function probePlayback(globals: CiderGlobals): PlaybackProbe {
   const player = playbackPlayer(globals);
   const instance = musicKit(globals);
   const audio = audioElement(globals, player);
+  const item = projectNowPlaying(player?.nowPlayingItem ?? instance?.nowPlayingItem ?? null);
+  const stableId = currentSongId(globals);
+  const positionS = playbackPosition(player, instance, audio);
+  const durationS = playbackDuration(player, instance, audio);
+  const isPlaying =
+    booleanOrUndefined(player?.isPlaying) ??
+    booleanOrUndefined(instance?.isPlaying) ??
+    (typeof audio?.paused === "boolean" ? !audio.paused : undefined);
+
+  let track: PlaybackTrackPayload | null = null;
+  if (item !== null || stableId !== null) {
+    track = {
+      stableId,
+      title: item?.title ?? "",
+      rawTitle: item?.title ?? "",
+      artist: item?.artistName ?? "",
+      album: item?.albumName ?? "",
+      url: null,
+      durationS,
+    };
+  }
 
   return {
-    nowPlayingItem: projectNowPlaying(player?.nowPlayingItem ?? instance?.nowPlayingItem ?? null),
-    isPlaying:
-      booleanOrUndefined(player?.isPlaying) ??
-      booleanOrUndefined(instance?.isPlaying),
-    currentPlaybackTime:
-      numberOrUndefined(player?.currentPlaybackTime ?? player?.playbackTime) ??
-      numberOrUndefined(instance?.currentPlaybackTime),
-    currentPlaybackDuration:
-      numberOrUndefined(player?.currentPlaybackDuration ?? player?.playbackDuration) ??
-      numberOrUndefined(instance?.currentPlaybackDuration),
-    audioCurrentTime: numberOrUndefined(audio?.currentTime),
-    audioDuration: numberOrUndefined(audio?.duration),
+    playerId: "cider",
+    status: isPlaying === true ? "Playing" : isPlaying === false ? "Paused" : "Stopped",
+    positionS,
+    durationS,
+    track,
   };
 }

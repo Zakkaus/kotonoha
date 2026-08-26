@@ -6,23 +6,25 @@ from dataclasses import dataclass
 
 from behavior_corpus import BehaviorCase, RegressionSource
 
+from kotonoha.display.models import DisplayFrame, DisplayState
 from kotonoha.lyrics.match import TrackMetadata
-from kotonoha.model import LyricsSnapshot
+from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.playback.models import TrackIdentity
 
 
 @dataclass(frozen=True)
 class GateSnapshotInput:
     """One Cider snapshot observation crossing the gate boundary."""
 
-    client_id: int
-    snapshot: LyricsSnapshot
+    client_id: int | str
+    frame: DisplayFrame
 
 
 @dataclass(frozen=True)
 class GateTickInput:
     """One Cider timing observation tied to the latest snapshot."""
 
-    client_id: int
+    client_id: int | str
     current_time: float | None
     is_playing: bool | None
 
@@ -43,11 +45,27 @@ class GateInput:
 class GateOutput:
     """Canonical source-gate facts used by lyrics workflow policy."""
 
-    match_client_id: int | None
+    match_client_id: int | str | None
     match_confidence: str | None
-    timing_client_id: int | None
+    timing_client_id: int | str | None
     timing_current_time: float | None
-    accept_ws: bool
+    accepts_client: bool
+
+
+def cider_frame(*, title: str = "Song", artist: str = "Artist", found: bool = False, duration_s: float | None = None):
+    lines = (LyricLine(0, "L0", 0.0, 5.0, title, ""),) if found else ()
+    return DisplayFrame(
+        DisplayState.LYRICS_AVAILABLE if found else DisplayState.LYRICS_NOT_FOUND,
+        TrackIdentity("cider", "cider", stable_id="song-1", title=title, artist=artist, duration_s=duration_s),
+        LyricsDocument(
+            "apple-music",
+            timing=TimingKind.LINE if lines else None,
+            title=title,
+            artist=artist,
+            duration_s=duration_s,
+            lines=lines,
+        ),
+    )
 
 
 GATE_CASES: tuple[BehaviorCase[GateInput, GateOutput], ...] = (
@@ -58,7 +76,7 @@ GATE_CASES: tuple[BehaviorCase[GateInput, GateOutput], ...] = (
             (
                 GateSnapshotInput(
                     10,
-                    LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=194.222),
+                    cider_frame(duration_s=194.222),
                 ),
                 GateTickInput(10, 12.5, True),
             ),
@@ -71,7 +89,7 @@ GATE_CASES: tuple[BehaviorCase[GateInput, GateOutput], ...] = (
                 (
                     GateSnapshotInput(
                         10,
-                        LyricsSnapshot(found=False, title="Song", artist="Artist", duration_s=194.222),
+                        cider_frame(duration_s=194.222),
                     ),
                     GateTickInput(10, 12.5, True),
                 ),
@@ -90,12 +108,12 @@ GATE_CASES: tuple[BehaviorCase[GateInput, GateOutput], ...] = (
             (
                 GateSnapshotInput(
                     10,
-                    LyricsSnapshot(found=False, title="Song", artist="Artist"),
+                    cider_frame(),
                 ),
                 GateTickInput(10, 12.5, True),
                 GateSnapshotInput(
                     10,
-                    LyricsSnapshot(found=False, title="Song", artist="Artist"),
+                    cider_frame(),
                 ),
             ),
             "external",
@@ -107,7 +125,7 @@ GATE_CASES: tuple[BehaviorCase[GateInput, GateOutput], ...] = (
                 (
                     GateSnapshotInput(
                         10,
-                        LyricsSnapshot(found=False, title="Song", artist="Artist"),
+                        cider_frame(),
                     ),
                     GateTickInput(10, 12.5, True),
                 ),

@@ -11,7 +11,7 @@ from kotonoha import controller as controller_module
 from kotonoha.config import Config
 from kotonoha.controller import AppController
 from kotonoha.providers.mpris import MprisProvider
-from kotonoha.receiver import LyricsReceiver
+from kotonoha.receiver import AdapterReceiver
 
 
 @pytest.fixture(scope="module")
@@ -39,6 +39,19 @@ class _FakeMpris:
         return None
 
 
+class _FakeCiderTokenStore:
+    def __init__(self, token: str = "") -> None:
+        self.token = token
+        self.saved: list[str] = []
+
+    def load(self) -> str:
+        return self.token
+
+    def save(self, token: str) -> None:
+        self.token = token
+        self.saved.append(token)
+
+
 class _Signal:
     def connect(self, _slot):
         return None
@@ -58,17 +71,42 @@ class _FakeDialog:
 async def test_start_survives_optional_receiver_bind_failure(qapp):
     # A stale instance / double-launch holding port 28745 must only disable the
     # optional Cider receiver, not take down the already-shown overlay and tray.
-    controller = AppController(qapp, Config())
-    controller._receiver = cast(LyricsReceiver, _FakeReceiver())
+    token_store = _FakeCiderTokenStore("loaded-token")
+    controller = AppController(qapp, Config(), cider_token_store=token_store)
+    controller._receiver = cast(AdapterReceiver, _FakeReceiver())
     fake_mpris = _FakeMpris()
     controller._mpris = cast(MprisProvider, fake_mpris)
 
     await controller.start()  # must not raise
 
     assert fake_mpris.started is True  # reached MPRIS despite the receiver failure
-    controller._overlay._render_timer.stop()
+    assert controller._config.cider_api_token == "loaded-token"
+    await controller.stop()
     controller._overlay.deleteLater()
     qapp.processEvents()
+
+
+async def test_run_stops_controller_when_startup_fails(qapp, monkeypatch):
+    from kotonoha import main as main_module
+
+    class _StartupFailureController:
+        def __init__(self) -> None:
+            self.stopped = False
+
+        async def start(self) -> None:
+            raise RuntimeError("startup failed")
+
+        async def stop(self) -> None:
+            self.stopped = True
+
+    controller = _StartupFailureController()
+    monkeypatch.setattr(main_module, "_build_app_objects", lambda _app, _config: controller)
+    monkeypatch.setattr("kotonoha.config.load_config", Config)
+
+    with pytest.raises(RuntimeError, match="startup failed"):
+        await main_module._run(qapp)
+
+    assert controller.stopped is True
 
 
 def test_out_of_range_cli_port_is_clamped(qapp):
@@ -80,7 +118,6 @@ def test_out_of_range_cli_port_is_clamped(qapp):
         assert controller._config.port == 65535
     finally:
         qapp.setProperty("cli_port", None)
-        controller._overlay._render_timer.stop()
         controller._overlay.deleteLater()
         qapp.processEvents()
 
@@ -112,7 +149,6 @@ async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
         await asyncio.sleep(0)
         assert len(created) == 1
     finally:
-        controller._overlay._render_timer.stop()
         controller._overlay.deleteLater()
         qapp.processEvents()
 def test_controller_persists_track_offset(qapp, monkeypatch):
@@ -122,7 +158,6 @@ def test_controller_persists_track_offset(qapp, monkeypatch):
     controller._on_track_offset_changed("track", 50)
     assert controller._config.track_offsets == {"track": 50}
     assert saved == [controller._config]
-    controller._overlay._render_timer.stop()
     controller._overlay.deleteLater()
     qapp.processEvents()
 
@@ -138,12 +173,7 @@ def test_a_restart_that_cannot_start_the_replacement_stays_up(qapp, monkeypatch)
     monkeypatch.setattr(QProcess, "startDetached", staticmethod(lambda *_a, **_k: (False, 0)))
     quits: list[bool] = []
 
-    class Stub:
-        def quit(self) -> None:
-            quits.append(True)
-
     instance = object.__new__(controller_module.AppController)
-    instance._app = Stub()
 
     instance._restart()
 

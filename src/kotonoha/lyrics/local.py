@@ -6,8 +6,8 @@ import os
 import stat
 from pathlib import Path
 
-from ..model import LyricLine
 from .lrc_parser import parse_lrc
+from .models import LyricLine
 
 #: A sidecar is a lyric file; anything near this size is not one. The read is
 #: bounded because the path comes from a player, not from this program.
@@ -56,11 +56,11 @@ def load_local_lyrics(audio_path: Path) -> list[LyricLine]:
     because a function called load_sidecar that also parses tags left every caller
     having to know that its name described half of what it did.
     """
-    lines = _load_sidecar(audio_path)
-    return lines if lines else _load_embedded(audio_path)
+    lines = load_sidecar_lyrics(audio_path)
+    return lines if lines else load_embedded_lyrics(audio_path)
 
 
-def _load_sidecar(audio_path: Path) -> list[LyricLine]:
+def load_sidecar_lyrics(audio_path: Path) -> list[LyricLine]:
     """Return timed lines from the LRC file adjacent to the audio file."""
     if not audio_path.name:
         # A player publishing xesam:url = "file:///" reaches here as Path("/"), and
@@ -87,7 +87,7 @@ def _load_sidecar(audio_path: Path) -> list[LyricLine]:
     return []
 
 
-def _load_embedded(audio_path: Path) -> list[LyricLine]:
+def load_embedded_lyrics(audio_path: Path) -> list[LyricLine]:
     """Return timed lines from the audio file's own tags.
 
     The path came from a player, so the file is opened once and judged through

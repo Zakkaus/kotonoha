@@ -49,6 +49,7 @@ from PyQt6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QListView,
     QListWidget,
     QListWidgetItem,
@@ -175,7 +176,7 @@ QCheckBox::indicator:disabled { border-color: %IND_BORDER%; background: %IND_BG%
 QCheckBox::indicator:checked:disabled { background: %HINT%; border-color: %HINT%; image: url(%CHECK%); }
 /* One field style for every input so combos, spin boxes and the font picker are
    the same height and look uniform. */
-QSpinBox, QComboBox, QFontComboBox {
+QSpinBox, QComboBox, QFontComboBox, QLineEdit {
     background: %FIELD_BG%;
     border: 1px solid %FIELD_BORDER%;
     border-radius: 7px;
@@ -184,9 +185,9 @@ QSpinBox, QComboBox, QFontComboBox {
     min-height: 24px;
     max-height: 24px;  /* combos and spin boxes end up exactly the same height (~34px) */
 }
-QSpinBox:hover, QComboBox:hover, QFontComboBox:hover { border-color: %FIELD_BORDER_HOVER%; }
+QSpinBox:hover, QComboBox:hover, QFontComboBox:hover, QLineEdit:hover { border-color: %FIELD_BORDER_HOVER%; }
 /* Accent focus ring — clear interactive feedback on the control you're editing. */
-QSpinBox:focus, QComboBox:focus, QFontComboBox:focus { border: 1px solid %ACCENT%; }
+QSpinBox:focus, QComboBox:focus, QFontComboBox:focus, QLineEdit:focus { border: 1px solid %ACCENT%; }
 QSpinBox:disabled, QComboBox:disabled { color: %TEXT_DIM%; }
 /* Force the QSS-styled drop-down list instead of a native popup menu: on Breeze /
    Fusion (KDE) the style otherwise opens a system-palette popup that ignores the
@@ -351,7 +352,9 @@ _PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
     ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script",
      "interlude_style", "interlude_countdown"),                                          # Lyrics
     ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
-    ("lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled"),  # Sources
+    (
+        "lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled", "cider_api_token"
+    ),  # Sources
 )
 
 
@@ -369,7 +372,7 @@ class SettingsDialog(QDialog):
         platform_factory: OverlayPlatformFactory | None = None,
     ) -> None:
         super().__init__(parent)
-        self._config = config
+        self._config = config.clamped()
         self._players = list(players or [])
         # Every icon strip built (tray + window), each with its own {key: item} map,
         # so accent re-renders can refresh all of them. Populated by _build_icon_picker.
@@ -606,7 +609,7 @@ class SettingsDialog(QDialog):
         self._ui_language = QComboBox()
         for value, label in UI_LANGUAGES:
             self._ui_language.addItem(label, value)
-        idx = self._ui_language.findData(self._config.ui_language)
+        idx = self._ui_language.findData(self._config.ui_language.value)
         self._ui_language.setCurrentIndex(idx if idx >= 0 else 0)
         form.addRow(t("set.language"), self._ui_language)
         form.addRow(self._hint(t("set.language_hint")))
@@ -615,7 +618,7 @@ class SettingsDialog(QDialog):
         self._theme_combo = QComboBox()
         for value, key in (("auto", "theme.auto"), ("light", "theme.light"), ("dark", "theme.dark")):
             self._theme_combo.addItem(t(key), value)
-        theme_idx = self._theme_combo.findData(self._config.theme)
+        theme_idx = self._theme_combo.findData(self._config.theme.value)
         self._theme_combo.setCurrentIndex(theme_idx if theme_idx >= 0 else 0)
         form.addRow(t("set.theme"), self._theme_combo)
 
@@ -720,7 +723,7 @@ class SettingsDialog(QDialog):
         # by the chosen family's real styles — no numeric weight, no faux styling.
         self._font_style = QComboBox()
         self._rebuild_style_options(self._font_family.currentFont().family(), prefer=c.font_style)
-        self._font_family.currentFontChanged.connect(lambda font: self._rebuild_style_options(font.family()))
+        self._font_family.currentFontChanged.connect(self._on_font_family_changed)
         form.addRow(t("set.font_style"), self._font_style)
 
         self._font_size = self._spin(8, 120, c.font_size, " px")
@@ -739,14 +742,14 @@ class SettingsDialog(QDialog):
         self._panel.addItem(t("set.panel.white"), "white")
         self._panel.addItem(t("set.panel.frost"), "frost")
         self._panel.addItem(t("set.panel.text"), "text")
-        panel_index = self._panel.findData(c.panel_style)
+        panel_index = self._panel.findData(c.panel_style.value)
         self._panel.setCurrentIndex(panel_index if panel_index >= 0 else 0)
         form.addRow(t("set.panel_style"), self._panel)
 
         self._panel_width_mode = QComboBox()
         self._panel_width_mode.addItem(t("panelsize.fit"), "fit")
         self._panel_width_mode.addItem(t("panelsize.fixed"), "fixed")
-        width_index = self._panel_width_mode.findData(c.panel_width_mode)
+        width_index = self._panel_width_mode.findData(c.panel_width_mode.value)
         self._panel_width_mode.setCurrentIndex(width_index if width_index >= 0 else 0)
         form.addRow(t("set.panel_size"), self._panel_width_mode)
 
@@ -809,7 +812,7 @@ class SettingsDialog(QDialog):
             ("zoom", "fxtrans.zoom"),
         ):
             self._fx_transition.addItem(t(key), value)
-        trans_idx = self._fx_transition.findData(c.fx_transition)
+        trans_idx = self._fx_transition.findData(c.fx_transition.value)
         self._fx_transition.setCurrentIndex(trans_idx if trans_idx >= 0 else 1)
         form.addRow(t("set.fx_transition"), self._fx_transition)
         self._fx_glow = QCheckBox(t("set.fx_glow"))
@@ -821,7 +824,7 @@ class SettingsDialog(QDialog):
         self._fx_intensity = QComboBox()
         for value, key in (("subtle", "fxintensity.subtle"), ("expressive", "fxintensity.expressive")):
             self._fx_intensity.addItem(t(key), value)
-        fx_idx = self._fx_intensity.findData(c.fx_intensity)
+        fx_idx = self._fx_intensity.findData(c.fx_intensity.value)
         self._fx_intensity.setCurrentIndex(fx_idx if fx_idx >= 0 else 0)
         form.addRow(t("set.fx_intensity"), self._fx_intensity)
         return page
@@ -899,7 +902,7 @@ class SettingsDialog(QDialog):
             ("zh-Hant", "lyricscript.hant"),
         ):
             self._lyrics_script.addItem(t(key), value)
-        script_idx = self._lyrics_script.findData(c.lyrics_script)
+        script_idx = self._lyrics_script.findData(c.lyrics_script.value)
         self._lyrics_script.setCurrentIndex(script_idx if script_idx >= 0 else 0)
         form.addRow(t("set.lyrics_script"), self._lyrics_script)
         form.addRow(self._hint(t("set.lyrics_script_hint")))
@@ -907,7 +910,7 @@ class SettingsDialog(QDialog):
         self._interlude_style = QComboBox()
         self._interlude_style.addItem(t("set.interlude.dots"), "dots")
         self._interlude_style.addItem(t("set.interlude.symbol"), "symbol")
-        style_idx = self._interlude_style.findData(c.interlude_style)
+        style_idx = self._interlude_style.findData(c.interlude_style.value)
         self._interlude_style.setCurrentIndex(style_idx if style_idx >= 0 else 0)
         form.addRow(t("set.interlude_style"), self._interlude_style)
 
@@ -915,7 +918,7 @@ class SettingsDialog(QDialog):
         self._interlude_countdown.addItem(t("set.interlude.count_off"), "off")
         self._interlude_countdown.addItem(t("set.interlude.count_percent"), "percent")
         self._interlude_countdown.addItem(t("set.interlude.count_seconds"), "seconds")
-        count_idx = self._interlude_countdown.findData(c.interlude_countdown)
+        count_idx = self._interlude_countdown.findData(c.interlude_countdown.value)
         self._interlude_countdown.setCurrentIndex(count_idx if count_idx >= 0 else 0)
         form.addRow(t("set.interlude_countdown"), self._interlude_countdown)
         form.addRow(self._hint(t("set.interlude_hint")))
@@ -1006,10 +1009,26 @@ class SettingsDialog(QDialog):
         self._cache_enabled.setChecked(self._config.cache_enabled)
         layout.addWidget(self._cache_enabled)
 
+        self._cider_token = QLineEdit()
+        self._cider_token.setEchoMode(QLineEdit.EchoMode.Password)
+        self._cider_token.setClearButtonEnabled(True)
+        self._cider_token.setText(self._config.cider_api_token)
+        layout.addWidget(QLabel(t("set.cider_token")))
+        layout.addWidget(self._cider_token)
+        layout.addWidget(self._hint(t("set.cider_token_hint")))
+
         self._clear_cache = QPushButton(t("btn.clear_cache"))
-        self._clear_cache.clicked.connect(lambda _checked=False: self.clear_cache_requested.emit())
+        self._clear_cache.clicked.connect(self._emit_clear_cache)
         layout.addWidget(self._clear_cache)
         return page
+
+    def _on_font_family_changed(self, font: QFont) -> None:
+        """Rebuild the style picker after the user chooses a font family."""
+        self._rebuild_style_options(font.family())
+
+    def _emit_clear_cache(self, _checked: bool = False) -> None:
+        """Bridge the Qt button signal to the dialog's typed application signal."""
+        self.clear_cache_requested.emit()
 
     def _keep_one_source_checked(self, _item: QListWidgetItem | None = None) -> None:
         """Put the last enabled lyric source back when it is unchecked.
@@ -1239,6 +1258,7 @@ class SettingsDialog(QDialog):
             prefer_best_lyrics=self._prefer_best.isChecked(),
             fuzzy_match=self._fuzzy_match.isChecked(),
             cache_enabled=self._cache_enabled.isChecked(),
+            cider_api_token=self._cider_token.text().strip(),
             player_lock=str(self._player_combo.currentData()),
         ).clamped()
 
@@ -1250,12 +1270,11 @@ class SettingsDialog(QDialog):
         if not 0 <= idx < len(self._page_builders):
             return
         defaults = Config()
-        reset_fields = {field: getattr(defaults, field) for field in _PAGE_FIELDS[idx]}
-        self._config = replace(self.current_config(), **reset_fields).clamped()
+        self._config = self._reset_page_values(self.current_config(), defaults, idx)
         # Drop the icon strips the page being rebuilt had registered, so _icon_tab
         # re-adding them doesn't leave stale duplicates. (Compare the underlying
-        # function — a bound method is a fresh object on every attribute access.)
-        if self._page_builders[idx].__func__ is SettingsDialog._icon_tab:
+        # page index explicitly: bound-method reflection would hide ownership.
+        if idx == 1:
             self._icon_pickers.clear()
         new_page = self._page_builders[idx]()
         old_page = self._stack.widget(idx)
@@ -1264,6 +1283,81 @@ class SettingsDialog(QDialog):
             self._stack.removeWidget(old_page)
             old_page.deleteLater()
         self._stack.setCurrentIndex(idx)
+
+    @staticmethod
+    def _reset_page_values(current: Config, defaults: Config, index: int) -> Config:
+        """Reset one page through explicit fields while preserving other edits."""
+        if index == 0:
+            return replace(
+                current,
+                ui_language=defaults.ui_language,
+                theme=defaults.theme,
+                frost_window=defaults.frost_window,
+                settings_opacity=defaults.settings_opacity,
+            ).clamped()
+        if index == 1:
+            return replace(current, icon_name=defaults.icon_name, window_icon_name=defaults.window_icon_name).clamped()
+        if index == 2:
+            return replace(
+                current,
+                font_family=defaults.font_family,
+                font_style=defaults.font_style,
+                font_size=defaults.font_size,
+                context_font_size=defaults.context_font_size,
+                translation_font_size=defaults.translation_font_size,
+            ).clamped()
+        if index == 3:
+            return replace(
+                current,
+                panel_style=defaults.panel_style,
+                panel_width_mode=defaults.panel_width_mode,
+                panel_width=defaults.panel_width,
+                opacity=defaults.opacity,
+                frost_opacity=defaults.frost_opacity,
+                panel_accent_tint=defaults.panel_accent_tint,
+            ).clamped()
+        if index == 4:
+            return replace(
+                current,
+                accent_start=defaults.accent_start,
+                accent_end=defaults.accent_end,
+                accent_sweep=defaults.accent_sweep,
+                fx_animate=defaults.fx_animate,
+                fx_transition=defaults.fx_transition,
+                fx_glow=defaults.fx_glow,
+                fx_word_pop=defaults.fx_word_pop,
+                fx_intensity=defaults.fx_intensity,
+            ).clamped()
+        if index == 5:
+            return replace(
+                current,
+                karaoke=defaults.karaoke,
+                lead_ms=defaults.lead_ms,
+                show_translation=defaults.show_translation,
+                current_line_only=defaults.current_line_only,
+                lyrics_script=defaults.lyrics_script,
+                interlude_style=defaults.interlude_style,
+                interlude_countdown=defaults.interlude_countdown,
+            ).clamped()
+        if index == 6:
+            return replace(
+                current,
+                anchor_top=defaults.anchor_top,
+                margin_edge=defaults.margin_edge,
+                margin_x=defaults.margin_x,
+                passthrough=defaults.passthrough,
+            ).clamped()
+        if index == 7:
+            return replace(
+                current,
+                lyrics_sources=defaults.lyrics_sources,
+                player_lock=defaults.player_lock,
+                prefer_best_lyrics=defaults.prefer_best_lyrics,
+                fuzzy_match=defaults.fuzzy_match,
+                cache_enabled=defaults.cache_enabled,
+                cider_api_token=defaults.cider_api_token,
+            ).clamped()
+        raise ValueError(f"unknown settings page index: {index}")
 
     def _emit(self) -> None:
         self._config = self.current_config()

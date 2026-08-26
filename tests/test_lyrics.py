@@ -5,6 +5,7 @@ import pytest
 from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
 from kotonoha.lyrics import kugou
+from kotonoha.lyrics.http import LyricsSession
 from kotonoha.lyrics.match import (
     Candidate,
     MatchConfidence,
@@ -45,7 +46,7 @@ async def test_kugou_undecodable_krc_falls_back_to_lrc(monkeypatch):
     monkeypatch.setattr(kugou, "download_lrc", fake_download_lrc)
 
     artifact = await kugou.fetch_artifact(
-        cast(aiohttp.ClientSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
+        cast(LyricsSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
     )
 
     assert artifact is not None
@@ -69,7 +70,7 @@ async def test_kugou_a_failed_krc_download_moves_on_instead_of_raising(monkeypat
 
     assert (
         await kugou.fetch_artifact(
-            cast(aiohttp.ClientSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
+            cast(LyricsSession, None), TrackMetadata("Song", "Artist", duration_s=180.0)
         )
         is None
     )

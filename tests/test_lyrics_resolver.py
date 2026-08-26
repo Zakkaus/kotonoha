@@ -5,17 +5,32 @@ import sqlite3
 from pathlib import Path
 from typing import cast
 
-import aiohttp
+import pytest
 
+from kotonoha.lyrics import netease, qqmusic
 from kotonoha.lyrics.artifact import LyricsArtifact
+from kotonoha.lyrics.catalog import LyricsSourceCatalog
 from kotonoha.lyrics.hint import LyricsHint
+from kotonoha.lyrics.http import LyricsSession
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
-from kotonoha.lyrics.resolver import LyricsResolver, NetworkProvider, ResolvedLyrics
-from kotonoha.model import LyricLine, LyricsSnapshot
-from kotonoha.providers.gate import CiderMatch
+from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.lyrics.network_sources import NetworkLyricsSource
+from kotonoha.lyrics.ownership import LiveSourceMatch, SourceOwnershipCoordinator
+from kotonoha.lyrics.resolver import LyricsResolver
+from kotonoha.lyrics.sources import LyricsSourceKind
+from kotonoha.lyrics.workflow import ResolverLookup
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 TRACK = TrackMetadata("Song", "Artist", "Album", 180.0)
-SESSION = cast(aiohttp.ClientSession, None)
+SESSION = cast(LyricsSession, object())
+
+
+def live_match(*, artist: str = "Artist", confidence: MatchConfidence = MatchConfidence.HIGH) -> LiveSourceMatch:
+    line = LyricLine(0, "L0", 0.0, 5.0, "Song", "")
+    document = LyricsDocument("apple-music", timing=TimingKind.LINE, title="Song", artist=artist, lines=(line,))
+    track = TrackIdentity("cider", "cider", stable_id="song-1", title="Song", artist=artist)
+    observation = PlaybackObservation("cider", "cider", track, PlaybackStatus.PLAYING, 1.0, 180.0, 1.0)
+    return LiveSourceMatch(12, observation, document, confidence)
 
 
 def artifact(*, provider: str = "netease", confidence: MatchConfidence = MatchConfidence.HIGH) -> LyricsArtifact:
@@ -50,6 +65,9 @@ class FakeCache:
     async def clear(self):
         self.calls.append("clear")
 
+    def close(self):
+        self.calls.append("close")
+
 
 class FakeGate:
     def __init__(self, calls, match=None):
@@ -63,7 +81,7 @@ class FakeGate:
         self.calls.append("cider")
         return self.match
 
-    def select_cider(self, _client_id):
+    def select_live(self, _client_id):
         return None
 
 
@@ -84,12 +102,54 @@ def resolver_with_fakes(
             calls.append(f"network:{name}")
             return network_hits.get(name)
 
-        return NetworkProvider(name=name, fetch=fetch, parse_payload=lambda _payload: ())
+        exact_fetch = None
+        if name == "netease":
+            async def exact_netease(session, track, song_id):
+                payload = await netease.fetch_payload(session, song_id)
+                lines = netease.parse_payload(payload)
+                return LyricsArtifact(
+                    provider=name,
+                    provider_song_id=song_id,
+                    title=track.title,
+                    artist=track.artist,
+                    album=track.album,
+                    duration_s=track.duration_s,
+                    payload=payload,
+                    lines=lines,
+                    confidence=MatchConfidence.HIGH,
+                )
 
+            exact_fetch = exact_netease
+        elif name == "qqmusic":
+            async def exact_qqmusic(session, track, song_id):
+                payload = await qqmusic.fetch_payload_for_song_id(session, song_id)
+                lines = qqmusic.parse_payload(payload)
+                return LyricsArtifact(
+                    provider=name,
+                    provider_song_id=song_id,
+                    title=track.title,
+                    artist=track.artist,
+                    album=track.album,
+                    duration_s=track.duration_s,
+                    payload=payload,
+                    lines=lines,
+                    confidence=MatchConfidence.HIGH,
+                )
+
+            exact_fetch = exact_qqmusic
+        return NetworkLyricsSource(
+            source_id=name,
+            fetch=fetch,
+            parse_payload=lambda _payload: (),
+            exact_fetch=exact_fetch,
+        )
+
+    gate = FakeGate(calls, cider_match)
     return LyricsResolver(
+        catalog=LyricsSourceCatalog.from_providers(
+            {name: adapter(name) for name in ("netease", "qqmusic", "lrclib")}, gate
+        ),
         cache=cache or FakeCache(calls, cache_hits),
-        gate=FakeGate(calls, cider_match),
-        providers={name: adapter(name) for name in ("netease", "lrclib")},
         cache_enabled=cache_enabled,
         negative_ttl=30.0,
         prefer_best=prefer_best,
@@ -112,6 +172,19 @@ async def test_set_fuzzy_clears_the_negative_cache_so_a_miss_can_retry():
     assert calls.count("network:netease") == first + 1
 
 
+async def test_resolver_does_not_change_display_ownership():
+    ownership = SourceOwnershipCoordinator()
+    resolver = LyricsResolver(
+        catalog=LyricsSourceCatalog.from_providers({}, ownership),
+        cache=FakeCache([]),
+        cache_enabled=False,
+    )
+
+    assert await resolver.resolve(SESSION, TRACK, ["unknown"]) is None
+
+    assert ownership.accepts("external-player") is True
+
+
 async def test_exact_netease_hint_bypasses_matching(monkeypatch):
     calls = []
 
@@ -124,7 +197,7 @@ async def test_exact_netease_hint_bypasses_matching(monkeypatch):
     result = await resolver.resolve_hint(
         SESSION, TrackMetadata("Wrong", "Wrong"), ["netease"], LyricsHint("netease", "42")
     )
-    assert result is not None and result.source == "netease"
+    assert result is not None and result.source_id == "netease"
     assert calls == ["42"]
 
 
@@ -143,37 +216,44 @@ async def test_exact_qqmusic_hint_fetches_only_when_source_is_enabled(monkeypatc
     assert calls == []
 
     result = await resolver.resolve_hint(SESSION, TRACK, ["qqmusic"], hint)
-    assert result is not None and result.source == "qqmusic"
-    assert [line.text for line in result.lines] == ["exact"]
+    assert result is not None and result.source_id == "qqmusic"
+    assert [line.text for line in result.document.lines] == ["exact"]
     assert calls == ["003aAYrm3GE0Ac"]
 
 
-async def test_local_hint_wins_without_using_sources_or_network(tmp_path: Path):
+async def test_local_hint_wins_without_using_sources_or_network(monkeypatch, tmp_path: Path):
     audio = tmp_path / "song.flac"
-    audio.touch()
-    (tmp_path / "song.lrc").write_text("[00:01.00]local", encoding="utf-8")
+
+    def sidecar(_audio_path: Path) -> list[LyricLine]:
+        return [LyricLine(0, "L0", 1.0, 6.0, "local", "")]
+
+    from kotonoha.lyrics import sources as sources_module
+
+    monkeypatch.setattr(sources_module, "load_sidecar_lyrics", sidecar)
     calls = []
     resolver = resolver_with_fakes(calls, cache_enabled=False, network_hits={"netease": artifact()})
 
     result = await resolver.resolve_hint(SESSION, TRACK, ["netease"], LyricsHint("local", local_path=audio))
 
-    assert result is not None and result.source == "local"
+    assert result is not None and result.source_id == "sidecar"
     assert result.confidence is MatchConfidence.HIGH
-    assert [line.text for line in result.lines] == ["local"]
+    assert [line.text for line in result.document.lines] == ["local"]
     assert calls == []
 
 
-async def test_local_hint_falls_back_to_normal_resolution_when_sidecar_is_empty(tmp_path: Path):
+async def test_local_hint_falls_back_to_normal_resolution_when_sidecar_is_empty(monkeypatch, tmp_path: Path):
     audio = tmp_path / "song.flac"
-    audio.touch()
-    (tmp_path / "song.lrc").write_text("[ar:Artist]\n", encoding="utf-8")
+    from kotonoha.lyrics import sources as sources_module
+
+    monkeypatch.setattr(sources_module, "load_sidecar_lyrics", lambda _audio_path: [])
+    monkeypatch.setattr(sources_module, "load_embedded_lyrics", lambda _audio_path: [])
     calls = []
     resolver = resolver_with_fakes(calls, cache_enabled=False, network_hits={"netease": artifact()})
 
     assert await resolver.resolve_hint(SESSION, TRACK, ["netease"], LyricsHint("local", local_path=audio)) is None
     result = await resolver.resolve(SESSION, TRACK, ["netease"])
 
-    assert result is not None and result.source == "netease"
+    assert result is not None and result.source_id == "netease"
     assert calls == ["network:netease"]
 
 
@@ -202,7 +282,7 @@ async def test_default_order_is_cache_network_per_provider_then_cider():
 
     result = await resolver.resolve(SESSION, TRACK, ["netease", "lrclib", "cider"])
 
-    assert result is not None and result.source == "lrclib"
+    assert result is not None and result.source_id == "lrclib"
     assert calls == [
         "cache:netease",
         "network:netease",
@@ -230,14 +310,14 @@ async def test_cider_runs_at_configured_position_and_continues_when_unavailable(
 
 async def test_available_cider_stops_at_its_configured_position():
     calls = []
-    snapshot = LyricsSnapshot(found=True, title="Song", artist="Artist")
-    resolver = resolver_with_fakes(calls, cider_match=CiderMatch(12, snapshot))
+    resolver = resolver_with_fakes(calls, cider_match=live_match())
 
     result = await resolver.resolve(SESSION, TRACK, ["cider", "netease"])
 
     assert result is not None
-    assert result.source == "cider"
-    assert result.live_snapshot is snapshot
+    assert result.source_id == "cider"
+    assert result.source_kind is LyricsSourceKind.LIVE
+    assert result.document.source_id == "apple-music"
     assert calls == ["cider"]
 
 
@@ -255,7 +335,7 @@ async def test_cache_failure_does_not_block_same_provider_network():
 
     result = await resolver.resolve(SESSION, TRACK, ["netease"])
 
-    assert result is not None and result.source == "netease"
+    assert result is not None and result.source_id == "netease"
     assert calls == ["cache:netease", "network:netease", "store:netease"]
 
 
@@ -284,10 +364,12 @@ async def test_concurrent_identical_requests_share_network_work():
         await release.wait()
         return artifact()
 
+    gate = FakeGate(calls)
     resolver = LyricsResolver(
+        catalog=LyricsSourceCatalog.from_providers(
+            {"netease": NetworkLyricsSource("netease", fetch, lambda _payload: ())}, gate
+        ),
         cache=FakeCache(calls),
-        gate=FakeGate(calls),
-        providers={"netease": NetworkProvider("netease", fetch, lambda _payload: ())},
         cache_enabled=False,
     )
     first = asyncio.create_task(resolver.resolve(SESSION, TRACK, ["netease"]))
@@ -301,14 +383,52 @@ async def test_concurrent_identical_requests_share_network_work():
     assert calls == ["network:netease"]
 
 
+async def test_resolver_cancels_shared_network_work_on_shutdown():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+
+    async def fetch(
+        session: LyricsSession,
+        track: TrackMetadata,
+        *,
+        fuzzy: bool = False,
+    ) -> LyricsArtifact | None:
+        del session, track, fuzzy
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancelled.set()
+            raise
+
+    ownership = SourceOwnershipCoordinator()
+    resolver = LyricsResolver(
+        catalog=LyricsSourceCatalog.from_providers(
+            {"netease": NetworkLyricsSource("netease", fetch, lambda _payload: ())}, ownership
+        ),
+        cache=FakeCache([]),
+        cache_enabled=False,
+    )
+    request = asyncio.create_task(resolver.resolve(SESSION, TRACK, ["netease"]))
+    await started.wait()
+
+    await resolver.cancel_inflight()
+
+    assert cancelled.is_set()
+    with pytest.raises(asyncio.CancelledError):
+        await request
+
+
 async def test_network_timeout_log_includes_exception_type(caplog):
     async def timeout(session, track, *, fuzzy=False):
         raise TimeoutError
 
+    gate = FakeGate([])
     resolver = LyricsResolver(
+        catalog=LyricsSourceCatalog.from_providers(
+            {"netease": NetworkLyricsSource("netease", timeout, lambda _payload: ())}, gate
+        ),
         cache=FakeCache([]),
-        gate=FakeGate([]),
-        providers={"netease": NetworkProvider("netease", timeout, lambda _payload: ())},
         cache_enabled=False,
     )
     caplog.set_level(logging.WARNING)
@@ -333,7 +453,7 @@ async def test_best_mode_prefers_higher_confidence_over_first_source():
     result = await resolver.resolve(SESSION, TRACK, ["netease", "lrclib"])
 
     assert result is not None
-    assert result.source == "lrclib"
+    assert result.source_id == "lrclib"
     assert result.confidence is MatchConfidence.HIGH
     # Both sources are fetched concurrently rather than strictly in order.
     assert "network:netease" in calls
@@ -355,21 +475,20 @@ async def test_best_mode_same_confidence_keeps_configured_order():
     result = await resolver.resolve(SESSION, TRACK, ["netease", "lrclib"])
 
     assert result is not None
-    assert result.source == "netease"
+    assert result.source_id == "netease"
 
 
 async def test_best_mode_cider_at_top_skips_network():
     # A cider match at the top of the order is HIGH and unbeatable, so best mode
     # returns it without launching any network fetch.
     calls = []
-    snapshot = LyricsSnapshot(found=True, title="Song", artist="Artist")
-    resolver = resolver_with_fakes(calls, prefer_best=True, cider_match=CiderMatch(12, snapshot))
+    resolver = resolver_with_fakes(calls, prefer_best=True, cider_match=live_match())
 
     result = await resolver.resolve(SESSION, TRACK, ["cider", "netease"])
 
     assert result is not None
-    assert result.source == "cider"
-    assert result.live_snapshot is snapshot
+    assert result.source_id == "cider"
+    assert result.document.source_id == "apple-music"
     assert "network:netease" not in calls
 
 
@@ -385,7 +504,7 @@ async def test_best_mode_cached_hit_short_circuits_network():
     result = await resolver.resolve(SESSION, TRACK, ["netease", "lrclib"])
 
     assert result is not None
-    assert result.source == "netease"
+    assert result.source_id == "netease"
     assert "network:netease" not in calls
     assert "network:lrclib" not in calls
 
@@ -394,18 +513,17 @@ async def test_best_mode_cider_beats_lower_priority_cache_hit():
     # cider is configured above netease and has a live HIGH match; it must win the
     # HIGH tie over a netease cache hit (configured order breaks the tie), no network.
     calls = []
-    snapshot = LyricsSnapshot(found=True, title="Song", artist="Artist")
     resolver = resolver_with_fakes(
         calls,
         prefer_best=True,
-        cider_match=CiderMatch(12, snapshot, MatchConfidence.HIGH),
+        cider_match=live_match(confidence=MatchConfidence.HIGH),
         cache_hits={"netease": artifact(provider="netease")},
     )
 
     result = await resolver.resolve(SESSION, TRACK, ["cider", "netease"])
 
     assert result is not None
-    assert result.source == "cider"
+    assert result.source_id == "cider"
     assert "network:netease" not in calls
 
 
@@ -413,18 +531,17 @@ async def test_best_mode_medium_cider_does_not_block_a_network_high():
     # A MEDIUM cider match must not short-circuit the network: a genuine network
     # HIGH beats it regardless of cider's position.
     calls = []
-    snapshot = LyricsSnapshot(found=True, title="Song", artist="")
     resolver = resolver_with_fakes(
         calls,
         prefer_best=True,
-        cider_match=CiderMatch(12, snapshot, MatchConfidence.MEDIUM),
+        cider_match=live_match(artist="", confidence=MatchConfidence.MEDIUM),
         network_hits={"netease": artifact(provider="netease", confidence=MatchConfidence.HIGH)},
     )
 
     result = await resolver.resolve(SESSION, TRACK, ["cider", "netease"])
 
     assert result is not None
-    assert result.source == "netease"
+    assert result.source_id == "netease"
     assert result.confidence is MatchConfidence.HIGH
     assert "network:netease" in calls
 
@@ -444,7 +561,7 @@ async def test_best_mode_uncached_top_source_wins_over_cached_lower_source():
     result = await resolver.resolve(SESSION, TRACK, ["netease", "lrclib"])
 
     assert result is not None
-    assert result.source == "netease"
+    assert result.source_id == "netease"
     assert "network:netease" in calls
     assert "network:lrclib" not in calls  # lrclib was resolved from cache, no fetch
 
@@ -463,7 +580,7 @@ async def test_best_mode_duplicate_source_fetches_once():
     result = await resolver.resolve(SESSION, TRACK, ["netease", "netease", "lrclib"])
 
     assert result is not None
-    assert result.source == "netease"
+    assert result.source_id == "netease"
     assert calls.count("network:netease") == 1
 
 
@@ -473,7 +590,7 @@ async def test_a_local_lyric_read_does_not_hold_the_event_loop(monkeypatch):
     # it for the whole read; the loop must keep running instead.
     import time
 
-    from kotonoha.lyrics import resolver as resolver_module
+    from kotonoha.lyrics import sources as sources_module
 
     ticks: list[int] = []
 
@@ -487,16 +604,18 @@ async def test_a_local_lyric_read_does_not_hold_the_event_loop(monkeypatch):
         time.sleep(0.2)
         return [LyricLine(0, "L0", 1.0, 6.0, "hello", "")]
 
-    monkeypatch.setattr(resolver_module, "load_local_lyrics", blocking_load)
+    monkeypatch.setattr(sources_module, "load_sidecar_lyrics", blocking_load)
     beat = asyncio.create_task(ticker())
     try:
-        resolved = await LyricsResolver().resolve_hint(
+        resolved = await LyricsResolver(
+            catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator())
+        ).resolve_hint(
             SESSION, TRACK, ("netease",), LyricsHint("local", local_path=Path("/music/song.flac"))
         )
     finally:
         beat.cancel()
 
-    assert resolved is not None and resolved.lines
+    assert resolved is not None and resolved.document.lines
     assert len(ticks) > 5, f"the loop was blocked for the whole read: {len(ticks)} ticks"
 
 
@@ -510,14 +629,14 @@ async def test_one_caller_leaving_does_not_cancel_the_other():
         """Stands in for a lookup that is still running when a caller leaves."""
 
         async def _resolve_once(
-            self, session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
-        ) -> ResolvedLyrics | None:
+            self, session: LyricsSession | None, track: TrackMetadata, sources: tuple[str, ...]
+        ) -> ResolverLookup:
             del session, track, sources
             started.set()
             await asyncio.sleep(0.2)
-            return None
+            return ResolverLookup(None)
 
-    resolver = SlowResolver()
+    resolver = SlowResolver(catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator()))
     first = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
     second = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
@@ -539,14 +658,14 @@ async def test_the_resolver_can_stop_the_work_it_started():
         """Stands in for a lookup that never finishes on its own."""
 
         async def _resolve_once(
-            self, session: aiohttp.ClientSession, track: TrackMetadata, sources: tuple[str, ...]
-        ) -> ResolvedLyrics | None:
+            self, session: LyricsSession | None, track: TrackMetadata, sources: tuple[str, ...]
+        ) -> ResolverLookup:
             del session, track, sources
             started.set()
             await asyncio.Event().wait()
-            return None
+            return ResolverLookup(None)
 
-    resolver = NeverResolver()
+    resolver = NeverResolver(catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator()))
     caller = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
 

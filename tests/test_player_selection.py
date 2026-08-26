@@ -10,7 +10,7 @@ from kotonoha.providers.player_selection import RECENT_PLAYER_MARGIN, PlayerReco
 
 
 def _record(name, status="Playing", title="Song", artist="Artist"):
-    return PlayerRecord(object(), name, status, TrackInfo(title, artist, "", 180.0, f"/{name}"))
+    return PlayerRecord(None, name, status, TrackInfo(title, artist, "", 180.0, f"/{name}"))
 
 
 def test_a_source_with_no_performer_never_wins_on_recency():

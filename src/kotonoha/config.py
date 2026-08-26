@@ -12,9 +12,11 @@ import logging
 import os
 import stat
 import tempfile
+from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
+from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final
+from typing import Any, Final, TypeVar
 
 logger = logging.getLogger(__name__)
 
@@ -22,7 +24,7 @@ APP_DIR_NAME = "kotonoha"
 CONFIG_FILE_NAME = "config.json"
 
 # Lyric sources in priority order; first one with lyrics for the song wins.
-# "cider" = the Apple Music lyrics the Cider probe pushes over WebSocket.
+# "cider" = lyrics exposed by Cider's public API.
 VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "qqmusic", "cider")
 DEFAULT_LYRICS_SOURCES = ["netease", "lrclib", "kugou", "cider"]
 
@@ -41,6 +43,82 @@ ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (
 DEFAULT_ICON_NAME = "default"
 TRACK_OFFSET_CAP = 100
 TRACK_OFFSET_STEP_MS = 50
+
+
+class PanelStyle(StrEnum):
+    """Supported overlay panel presentations."""
+
+    PILL = "pill"
+    WHITE = "white"
+    FROST = "frost"
+    TEXT = "text"
+
+
+class PanelWidthMode(StrEnum):
+    """Whether the overlay follows lyric width or uses a fixed width."""
+
+    FIT = "fit"
+    FIXED = "fixed"
+
+
+class UiLanguage(StrEnum):
+    """Languages exposed by the settings UI."""
+
+    AUTO = "auto"
+    ZH_HANS = "zh-Hans"
+    ZH_HANT = "zh-Hant"
+    JA = "ja"
+    EN = "en"
+
+
+class ThemeMode(StrEnum):
+    """Settings-window theme selection."""
+
+    AUTO = "auto"
+    LIGHT = "light"
+    DARK = "dark"
+
+
+class LyricsScript(StrEnum):
+    """Display-only Chinese script conversion mode."""
+
+    OFF = "off"
+    ZH_HANS = "zh-Hans"
+    ZH_HANT = "zh-Hant"
+
+
+class InterludeStyle(StrEnum):
+    """Marker used while a lyric document is between sung lines."""
+
+    DOTS = "dots"
+    SYMBOL = "symbol"
+
+
+class InterludeCountdown(StrEnum):
+    """Optional progress representation for an instrumental gap."""
+
+    OFF = "off"
+    PERCENT = "percent"
+    SECONDS = "seconds"
+
+
+class FxTransition(StrEnum):
+    """Line-change animation choices."""
+
+    FADE = "fade"
+    RISE = "rise"
+    SLIDE = "slide"
+    ZOOM = "zoom"
+
+
+class FxIntensity(StrEnum):
+    """Visual effect intensity choices."""
+
+    SUBTLE = "subtle"
+    EXPRESSIVE = "expressive"
+
+
+EnumValue = TypeVar("EnumValue", bound=StrEnum)
 
 
 @dataclass
@@ -66,8 +144,8 @@ class Config:
     translation_font_size: int = 13  # translation line size (px)
     opacity: float = 0.8            # black-panel fill opacity 0.0..1.0 (fully opaque reads harsh)
     frost_opacity: float = 0.6       # frosted-panel fill opacity 0.0..1.0 (0 = pure blur)
-    panel_style: str = "pill"        # "pill" (black) | "white" | "frost" (frosted glass) | "text" (no panel)
-    panel_width_mode: str = "fit"    # "fit" (hug the text) | "fixed" (constant width)
+    panel_style: PanelStyle = PanelStyle.PILL
+    panel_width_mode: PanelWidthMode = PanelWidthMode.FIT
     panel_width: int = 720           # panel width in px when panel_width_mode == "fixed"
     panel_accent_tint: bool = False  # tint the black panel toward the accent colour
     icon_name: str = "@leaf-accent"  # system-tray icon; accent-following leaf by default (see leaf_icon.py)
@@ -81,20 +159,22 @@ class Config:
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
+    # Loaded from the OS keyring at startup; never serialized to config.json.
+    cider_api_token: str = field(default="", repr=False, compare=False, kw_only=True)
     player_lock: str = ""
     prefer_best_lyrics: bool = True  # query sources concurrently and pick the best-quality match
     fuzzy_match: bool = True          # salvage noisy browser titles (strip 【HD】/[歌詞]/channel tails)
     cache_enabled: bool = True
-    ui_language: str = "auto"        # UI language: "auto" -> system locale, else zh-Hans/zh-Hant/ja/en
-    theme: str = "auto"              # settings-window theme: "auto" (follow system) | "light" | "dark"
+    ui_language: UiLanguage = UiLanguage.AUTO
+    theme: ThemeMode = ThemeMode.AUTO
     frost_window: bool = True        # frosted-glass settings window (needs a blur-capable compositor)
     settings_opacity: float = 0.95   # settings-window opacity 0.0..1.0 (a touch see-through by default)
-    lyrics_script: str = "off"       # display-convert lyrics: "off" | "zh-Hans" | "zh-Hant"
+    lyrics_script: LyricsScript = LyricsScript.OFF
     # An intro or an instrumental break has no line to show. What stands in for one:
     # "dots" fills three dots as the wait runs, "symbol" holds a still note.
-    interlude_style: str = "dots"
+    interlude_style: InterludeStyle = InterludeStyle.DOTS
     # Whether the wait also counts itself down, and in what: "off" | "percent" | "seconds".
-    interlude_countdown: str = "off"
+    interlude_countdown: InterludeCountdown = InterludeCountdown.OFF
     # Pink accent (sung text gradient + sweep highlight)
     accent_start: str = "#FF4FA3"
     accent_end: str = "#FF8FCB"
@@ -102,16 +182,16 @@ class Config:
     # Visual effects (all user-toggleable). Default to a calm look: animations on,
     # the flashier glow / word-pop off.
     fx_animate: bool = True          # master switch: line-change + settings fade-in animations
-    fx_transition: str = "rise"      # line-change style when fx_animate: "fade"|"rise"|"slide"|"zoom"
+    fx_transition: FxTransition = FxTransition.RISE
     fx_glow: bool = False            # soft accent glow behind the current line
     fx_word_pop: bool = False        # brighten the word currently being sung
-    fx_intensity: str = "subtle"     # "subtle" | "expressive"
+    fx_intensity: FxIntensity = FxIntensity.SUBTLE
 
     def clamped(self) -> Config:
         """Return a copy with values forced into sane ranges."""
         return Config(
             port=_clamp_int(self.port, 1, 65535, 28745),
-            anchor_top=bool(self.anchor_top),
+            anchor_top=_clean_bool(self.anchor_top, True),
             margin_edge=_clamp_int(self.margin_edge, 0, 4000, 64),
             margin_x=_clamp_int(self.margin_x, -4000, 4000, 0),
             screen_name=str(self.screen_name),
@@ -126,57 +206,85 @@ class Config:
             translation_font_size=_clamp_int(self.translation_font_size, 8, 120, 13),
             opacity=_clamp_float(self.opacity, 0.0, 1.0, 0.8),
             frost_opacity=_clamp_float(self.frost_opacity, 0.0, 1.0, 0.6),
-            panel_style=self.panel_style if self.panel_style in ("pill", "white", "frost", "text") else "pill",
-            panel_width_mode=self.panel_width_mode if self.panel_width_mode in ("fit", "fixed") else "fit",
+            panel_style=_enum_or_default(self.panel_style, PanelStyle, PanelStyle.PILL),
+            panel_width_mode=_enum_or_default(self.panel_width_mode, PanelWidthMode, PanelWidthMode.FIT),
             panel_width=_clamp_int(self.panel_width, 240, 2400, 720),
-            panel_accent_tint=bool(self.panel_accent_tint),
+            panel_accent_tint=_clean_bool(self.panel_accent_tint, False),
             icon_name=_clean_icon_name(self.icon_name),
             window_icon_name=_clean_icon_name(self.window_icon_name),
-            passthrough=bool(self.passthrough),
-            karaoke=bool(self.karaoke),
+            passthrough=_clean_bool(self.passthrough, False),
+            karaoke=_clean_bool(self.karaoke, True),
             lead_ms=_clamp_int(self.lead_ms, -LEAD_MS_LIMIT, LEAD_MS_LIMIT, 120),
             track_offsets=_clean_track_offsets(self.track_offsets),
-            show_translation=bool(self.show_translation),
-            current_line_only=bool(self.current_line_only),
+            show_translation=_clean_bool(self.show_translation, True),
+            current_line_only=_clean_bool(self.current_line_only, False),
             translation_language=str(self.translation_language),
             accent_start=str(self.accent_start),
             accent_end=str(self.accent_end),
             accent_sweep=str(self.accent_sweep),
-            fx_animate=bool(self.fx_animate),
-            fx_transition=self.fx_transition if self.fx_transition in ("fade", "rise", "slide", "zoom") else "rise",
-            fx_glow=bool(self.fx_glow),
-            fx_word_pop=bool(self.fx_word_pop),
-            fx_intensity=self.fx_intensity if self.fx_intensity in ("subtle", "expressive") else "subtle",
+            fx_animate=_clean_bool(self.fx_animate, True),
+            fx_transition=_enum_or_default(self.fx_transition, FxTransition, FxTransition.RISE),
+            fx_glow=_clean_bool(self.fx_glow, False),
+            fx_word_pop=_clean_bool(self.fx_word_pop, False),
+            fx_intensity=_enum_or_default(self.fx_intensity, FxIntensity, FxIntensity.SUBTLE),
             lyrics_sources=_clean_sources(self.lyrics_sources),
+            cider_api_token=_clean_token(self.cider_api_token),
             player_lock=self.player_lock if isinstance(self.player_lock, str) else "",
-            prefer_best_lyrics=bool(self.prefer_best_lyrics),
-            fuzzy_match=bool(self.fuzzy_match),
-            cache_enabled=bool(self.cache_enabled),
-            ui_language=str(self.ui_language),
-            theme=self.theme if self.theme in ("auto", "light", "dark") else "auto",
-            frost_window=bool(self.frost_window),
+            prefer_best_lyrics=_clean_bool(self.prefer_best_lyrics, True),
+            fuzzy_match=_clean_bool(self.fuzzy_match, True),
+            cache_enabled=_clean_bool(self.cache_enabled, True),
+            ui_language=_enum_or_default(self.ui_language, UiLanguage, UiLanguage.AUTO),
+            theme=_enum_or_default(self.theme, ThemeMode, ThemeMode.AUTO),
+            frost_window=_clean_bool(self.frost_window, True),
             settings_opacity=_clamp_float(self.settings_opacity, 0.0, 1.0, 0.95),
-            lyrics_script=self.lyrics_script if self.lyrics_script in ("off", "zh-Hans", "zh-Hant") else "off",
-            interlude_style=self.interlude_style if self.interlude_style in ("dots", "symbol") else "dots",
-            interlude_countdown=(
-                self.interlude_countdown if self.interlude_countdown in ("off", "percent", "seconds") else "off"
+            lyrics_script=_enum_or_default(self.lyrics_script, LyricsScript, LyricsScript.OFF),
+            interlude_style=_enum_or_default(self.interlude_style, InterludeStyle, InterludeStyle.DOTS),
+            interlude_countdown=_enum_or_default(
+                self.interlude_countdown, InterludeCountdown, InterludeCountdown.OFF
             ),
         )
 
-    def to_dict(self) -> dict[str, Any]:
-        return asdict(self)
+    def to_dict(self) -> dict[str, object]:
+        """Serialize safe settings fields into the external JSON shape."""
+        data: dict[str, object] = asdict(self)
+        data.pop("cider_api_token", None)
+        for key in _ENUM_FIELDS:
+            value = data[key]
+            if isinstance(value, StrEnum):
+                data[key] = value.value
+        return data
 
     @classmethod
-    def from_dict(cls, data: Any) -> Config:
-        if not isinstance(data, dict):
+    def from_dict(cls, data: object) -> Config:
+        """Parse an untrusted JSON object, ignoring unknown configuration keys."""
+        if not isinstance(data, Mapping):
             return cls()
-        known = {f.name for f in fields(cls)}
-        filtered = {k: v for k, v in data.items() if k in known}
+        known = {f.name for f in fields(cls)} - {"cider_api_token"}
+        # ``Any`` is isolated to this compatibility boundary: JSON values are
+        # deliberately untyped until ``clamped`` validates every field.
+        filtered: dict[str, Any] = {
+            k: v for k, v in data.items() if isinstance(k, str) and k in known
+        }
         try:
             return cls(**filtered).clamped()
         except (TypeError, ValueError):
             logger.warning("Invalid config contents; using defaults")
             return cls()
+
+
+_ENUM_FIELDS = frozenset(
+    {
+        "panel_style",
+        "panel_width_mode",
+        "ui_language",
+        "theme",
+        "lyrics_script",
+        "interlude_style",
+        "interlude_countdown",
+        "fx_transition",
+        "fx_intensity",
+    }
+)
 
 
 def config_dir() -> Path:
@@ -302,7 +410,34 @@ def save_config(config: Config, path: Path | None = None) -> None:
 LEAD_MS_LIMIT = 2000
 
 
-def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
+def _enum_or_default(
+    value: object,
+    enum_type: type[EnumValue],
+    default: EnumValue,
+) -> EnumValue:
+    """Normalize one persisted string enum without accepting arbitrary values."""
+    if isinstance(value, enum_type):
+        return value
+    if isinstance(value, str):
+        try:
+            return enum_type(value)
+        except ValueError:
+            pass
+    return default
+
+
+def _clean_bool(value: object, default: bool) -> bool:
+    """Accept only actual booleans and the legacy JSON 0/1 representation."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    return default
+
+
+def _clamp_int(value: object, low: int, high: int, default: int) -> int:
+    if not isinstance(value, (str, int, float, bool)):
+        return default
     try:
         n = int(value)
     except (OverflowError, TypeError, ValueError):
@@ -313,7 +448,7 @@ def _clamp_int(value: Any, low: int, high: int, default: int) -> int:
     return max(low, min(high, n))
 
 
-def _clean_sources(value: Any) -> list[str]:
+def _clean_sources(value: object) -> list[str]:
     """Keep only known sources, de-duplicated, order preserved; never empty."""
     if not isinstance(value, list):
         return list(DEFAULT_LYRICS_SOURCES)
@@ -324,14 +459,19 @@ def _clean_sources(value: Any) -> list[str]:
     return cleaned or list(DEFAULT_LYRICS_SOURCES)
 
 
-def _clean_icon_name(value: Any) -> str:
+def _clean_token(value: object) -> str:
+    """Normalize the in-memory token without ever treating it as config data."""
+    return value.strip() if isinstance(value, str) and value.strip() else ""
+
+
+def _clean_icon_name(value: object) -> str:
     if not isinstance(value, str) or not value or value == DEFAULT_ICON_NAME:
         return DEFAULT_ICON_NAME
     return value if Path(value).name == value else DEFAULT_ICON_NAME
 
 
-def _clean_track_offsets(value: Any) -> dict[str, int]:
-    if not isinstance(value, dict):
+def _clean_track_offsets(value: object) -> dict[str, int]:
+    if not isinstance(value, Mapping):
         return {}
     cleaned: dict[str, int] = {}
     for key, offset in value.items():
@@ -355,7 +495,9 @@ def set_track_offset(config: Config, key: str, offset_ms: int) -> int:
     return offset
 
 
-def _clamp_float(value: Any, low: float, high: float, default: float) -> float:
+def _clamp_float(value: object, low: float, high: float, default: float) -> float:
+    if not isinstance(value, (str, int, float, bool)):
+        return default
     try:
         n = float(value)
     except (TypeError, ValueError):

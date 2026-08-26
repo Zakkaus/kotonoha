@@ -1,11 +1,11 @@
 export type ProbeConfig = {
-  /** Kotonoha WebSocket endpoint, e.g. ws://127.0.0.1:28745/kotonoha/cider/lyrics */
+  /** Generic Kotonoha adapter endpoint, e.g. ws://127.0.0.1:28745/kotonoha/adapter */
   endpoint: string;
   /** How often to sample Cider state for change detection. */
   pollMs: number;
-  /** Floor interval for heartbeat frames (clock-drift correction) when nothing changes. */
+  /** Floor interval for repeated snapshot messages when nothing changes. */
   heartbeatMs: number;
-  /** Interval for lightweight tick frames (currentTime + paused) that calibrate the clock. */
+  /** Interval for lightweight clock messages that calibrate the receiver clock. */
   tickMs: number;
   consoleLog: boolean;
 };
@@ -28,46 +28,65 @@ export type TimedLyricLine = {
   words: TimedLyricWord[];
 };
 
-export type LyricsProbe = {
-  found: boolean;
-  provider: "Apple Music";
+export type LyricsDocumentPayload = {
+  /** Stable final lyric provider id, independent of the Cider transport. */
+  source: string;
+  sourceName: string | null;
   songId: string | null;
   timing: string | null;
   language: string | null;
-  lineCount: number;
-  currentTime: number | null;
-  currentLine: TimedLyricLine | null;
-  previousLine: TimedLyricLine | null;
-  nextLine: TimedLyricLine | null;
-  aroundLines: TimedLyricLine[];
-  error?: string;
+  title: string | null;
+  artist: string | null;
+  album: string | null;
+  durationS: number | null;
+  lines: TimedLyricLine[];
 };
 
-/** The track identity the receiver reads, projected out of Cider's own object.
- *
- * Only these three fields are consumed; the raw object was forwarded whole, and a
- * cyclic one makes JSON.stringify throw, which drops the entire frame.
- */
 export type NowPlayingItem = {
   title: string | null;
   artistName: string | null;
   albumName: string | null;
 };
 
-export type PlaybackProbe = {
-  nowPlayingItem: NowPlayingItem | null;
-  isPlaying?: boolean;
-  currentPlaybackTime?: number;
-  currentPlaybackDuration?: number;
-  audioCurrentTime?: number;
-  audioDuration?: number;
+export type PlaybackTrackPayload = {
+  stableId: string | null;
+  title: string;
+  rawTitle: string;
+  artist: string;
+  album: string;
+  url: string | null;
+  durationS: number | null;
 };
 
-export type ProbePayload = {
-  source: "kotonoha-cider-lyrics";
-  version: string;
-  capturedAt: string;
-  locationHref: string;
-  playback: PlaybackProbe;
-  lyrics: LyricsProbe;
+export type PlaybackProbe = {
+  playerId: string;
+  status: "Playing" | "Paused" | "Stopped";
+  positionS: number | null;
+  durationS: number | null;
+  track: PlaybackTrackPayload | null;
 };
+
+export type AdapterSnapshot = {
+  protocol: "kotonoha.adapter";
+  version: 1;
+  type: "snapshot";
+  adapter: string;
+  sequence: number;
+  capturedAt: string;
+  playback: PlaybackProbe;
+  lyrics: LyricsDocumentPayload | null;
+};
+
+export type AdapterClock = {
+  protocol: "kotonoha.adapter";
+  version: 1;
+  type: "clock";
+  adapter: string;
+  sequence: number;
+  capturedAt: string;
+  trackRef: string | null;
+  positionS: number | null;
+  status: PlaybackProbe["status"];
+};
+
+export type ProbePayload = AdapterSnapshot;

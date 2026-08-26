@@ -24,7 +24,7 @@ from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from kotonoha.config import Config
+from kotonoha.config import Config, PanelStyle
 from kotonoha.overlay import LyricsOverlay
 from kotonoha.platform.overlay_contracts import Output, OverlayOperationResult, WindowRectangle
 from kotonoha.state import LyricsState
@@ -34,7 +34,7 @@ from kotonoha.state import LyricsState
 def test_container_geometry_change_schedules_surface_repaint(qapp, event_type):
     overlay = LyricsOverlay(
         LyricsState(),
-        Config(passthrough=False, panel_style="pill"),
+        Config(passthrough=False, panel_style=PanelStyle.PILL),
         UnavailableController(),
     )
 
@@ -42,7 +42,6 @@ def test_container_geometry_change_schedules_surface_repaint(qapp, event_type):
         overlay.eventFilter(overlay._container, QEvent(event_type))
 
     update.assert_called_once_with()
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -69,7 +68,6 @@ def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
     assert overlay._layer_pos == QPoint(2080, 100)
     assert overlay._active_screen is source
     assert LyricsOverlay._screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -95,7 +93,6 @@ def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
     assert overlay._config.screen_name == "DP-1"
     assert overlay._layer_pos == QPoint(52, 100)
     assert emitted == [(100, -658, "DP-1")]
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -114,7 +111,6 @@ def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
 
     assert overlay._layer_pos == QPoint(-1020, 100)
     assert overlay._config.margin_x == -1494
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -138,7 +134,6 @@ def test_drag_keeps_the_original_vertical_bottom_range(qapp):
         overlay.mouseMoveEvent(event)
 
     assert overlay._layer_pos == QPoint(400, 1180)
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -154,7 +149,6 @@ def test_placeholder_screen_is_never_adopted_while_every_output_is_gone(qapp):
     ), patch.object(QApplication, "primaryScreen", return_value=placeholder):
         assert overlay._target_screen() is None
 
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -169,7 +163,6 @@ def test_a_locked_overlay_is_click_through_on_the_fallback_platform(qapp):
         overlay.activate_layer_shell()
 
     assert regions == [None], "the locked overlay never asked for a click-through region"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -187,7 +180,6 @@ def test_an_activated_surface_reports_a_rejected_placement(qapp, caplog):
 
     assert activated is True, "the surface is mapped; only its position was refused"
     assert "margins rejected" in caplog.text
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -206,7 +198,6 @@ def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
 
     assert positioned == [True], "activation failed and nothing positioned the window"
     assert "no window handle" in caplog.text
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -253,7 +244,6 @@ def test_a_failed_activation_positions_as_an_ordinary_window(qapp):
         overlay.activate_layer_shell()
 
     assert [kind for kind, _ in moves] == ["host"], f"positioned through the wrong path: {moves}"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -282,7 +272,6 @@ def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
         )
 
     assert committed == [], "a position the window never took was saved"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -331,7 +320,6 @@ def test_a_drag_whose_update_failed_is_not_persisted(qapp):
         )
 
     assert committed == [], "a drag that never took effect was saved"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -352,7 +340,6 @@ def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
 
     assert 0 <= pos.x() <= 4096 - 1100
     assert 0 <= pos.y() <= 1152 - 170
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -379,7 +366,6 @@ def test_a_parked_position_survives_the_next_geometry_pass(qapp):
     assert overlay._config.screen_width == 2048
     assert overlay._config.screen_height == 1152
     assert reloaded == parked, f"the panel jumped from {parked} to {reloaded}"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -408,7 +394,6 @@ def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size
         pos = overlay._compute_layer_pos(1100, 140)
 
     assert 0 <= pos.x() <= 1920 - 1100, f"panel parked off screen at x={pos.x()}"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -430,7 +415,6 @@ def test_a_returning_output_is_matched_by_name_not_by_its_old_mode(qapp):
 
     assert rebuilt is True, "the returning output was rejected for changing mode"
     assert overlay._active_screen is live
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -453,6 +437,5 @@ def test_the_platform_learns_which_output_the_overlay_is_on(qapp):
         overlay.apply_config(Config())
 
     assert told, "the platform was never told which output the overlay is on"
-    overlay._render_timer.stop()
     overlay.deleteLater()
     qapp.processEvents()

@@ -7,6 +7,7 @@ real Qt event loop.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import sqlite3
 import sys
@@ -14,17 +15,25 @@ import sys
 from PyQt6.QtCore import QProcess
 from PyQt6.QtWidgets import QApplication
 
+from .async_worker import BlockingCallRunner
 from .config import Config, save_config
+from .display.coordinator import DisplayCoordinator
 from .i18n import resolve_translation_language
+from .lyrics.catalog import LyricsSourceCatalog
+from .lyrics.ownership import SourceOwnershipCoordinator
+from .lyrics.resolver import LyricsResolver
 from .overlay import LyricsOverlay
 from .platform import (
     DefaultOverlayPlatformFactory,
     LayerShellController,
     default_package_dir,
 )
-from .providers.gate import SourceGate
+from .providers.cider_api import CiderApiProvider
+from .providers.cider_client import CiderApiClient
+from .providers.cider_credentials import CiderApiTokenStore, KeyringCiderApiTokenStore
 from .providers.mpris import MprisProvider
-from .receiver import LyricsReceiver
+from .providers.mpris_session import MprisSessionError
+from .receiver import AdapterReceiver
 from .settings_dialog import SettingsDialog
 from .state import LyricsState
 from .strings import set_language
@@ -34,8 +43,19 @@ logger = logging.getLogger(__name__)
 
 
 class AppController:
-    def __init__(self, app: QApplication, config: Config) -> None:
+    def __init__(
+        self,
+        app: QApplication,
+        config: Config,
+        *,
+        cider_token_store: CiderApiTokenStore | None = None,
+    ) -> None:
         self._app = app
+        self._cider_token_store = cider_token_store if cider_token_store is not None else KeyringCiderApiTokenStore()
+        self._cider_token_worker = BlockingCallRunner("kotonoha-cider-token")
+        self._cider_token_tasks: set[asyncio.Task[None]] = set()
+        self._cider_token_save_lock = asyncio.Lock()
+        self._clear_cache_task: asyncio.Task[None] | None = None
         cli_port = app.property("cli_port")
         config = config.clamped()
         if isinstance(cli_port, int):
@@ -52,20 +72,29 @@ class AppController:
         self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
 
         self._state = LyricsState()
+        self._display = DisplayCoordinator(self._state)
         platform_name = app.platformName()
         self._platform_name = platform_name
         desktop = str(app.property("xdg_current_desktop") or "")
         self._desktop = desktop
         self._layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
         self._overlay = LyricsOverlay(self._state, config, self._layer_shell)
-        self._gate = SourceGate()
-        self._receiver = LyricsReceiver(
-            self._state,
-            port=config.port,
+        ownership = SourceOwnershipCoordinator()
+        resolver = LyricsResolver(catalog=LyricsSourceCatalog.default(ownership), cache_enabled=config.cache_enabled)
+        self._receiver = AdapterReceiver(self._display, port=config.port, ownership=ownership)
+        self._cider = CiderApiProvider(
+            display=self._display,
+            ownership=ownership,
+            client=CiderApiClient(token=config.cider_api_token),
             translation_language=resolve_translation_language(config.translation_language),
-            gate=self._gate,
+            enabled="cider" in config.lyrics_sources,
         )
-        self._mpris = MprisProvider(self._state, lyrics_sources=config.lyrics_sources, gate=self._gate)
+        self._mpris = MprisProvider(
+            self._display,
+            lyrics_sources=config.lyrics_sources,
+            ownership=ownership,
+            resolver=resolver,
+        )
         self._mpris.set_player_lock(config.player_lock)
         self._mpris.set_cache_enabled(config.cache_enabled)
         self._mpris.set_prefer_best(config.prefer_best_lyrics)
@@ -88,28 +117,97 @@ class AppController:
         self._overlay.track_offset_changed.connect(self._on_track_offset_changed)
 
     async def start(self) -> None:
+        await self._load_cider_token()
         # Promote to a layer surface BEFORE show(): once the window is mapped as a
         # normal xdg surface, LayerShellQt can no longer convert it.
         self._overlay.activate_layer_shell()
         self._overlay.show()
         self._tray.show()
-        # The Cider receiver is optional (see README): a port bind failure — a
-        # stale instance or double-launch already holding 28745 — must only
-        # disable the probe, not take down the overlay/tray that are already up.
+        await self._display.start()
+        # The generic adapter receiver is optional: a port bind failure — a stale
+        # instance or double-launch already holding 28745 — must only disable
+        # external WS adapters, not take down the overlay/tray.
         try:
             await self._receiver.start()
         except OSError as exc:
-            logger.warning("Lyrics receiver unavailable: %s", exc)
+            logger.warning("External adapter receiver unavailable: %s", exc)
+        try:
+            await self._cider.start()
+        except OSError as exc:
+            logger.warning("Cider API provider unavailable: %s", exc)
         # MPRIS is best-effort: a missing session bus / dbus must not stop the app.
         try:
             await self._mpris.start()
-        except Exception as exc:  # noqa: BLE001 - dbus may be unavailable
+        except (MprisSessionError, OSError) as exc:
             logger.warning("MPRIS provider unavailable: %s", exc)
         logger.info("Kotonoha started on port %d", self._config.port)
 
     async def stop(self) -> None:
+        await self._finish_settings_open()
         await self._mpris.stop()
+        await self._cider.stop()
         await self._receiver.stop()
+        await self._display.stop()
+        await self._finish_clear_cache()
+        await self._finish_cider_token_save()
+        self._cider_token_worker.close()
+
+    async def _finish_settings_open(self) -> None:
+        """Cancel and await settings discovery before the controller is closed."""
+        task = self._settings_open_task
+        self._settings_open_task = None
+        if task is None or task.done():
+            return
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
+
+    async def _load_cider_token(self) -> None:
+        """Load the Cider credential off the UI loop before starting the client."""
+        try:
+            token = await self._cider_token_worker.run(self._cider_token_store.load)
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Could not load the Cider API token: %s", exc)
+            token = self._config.cider_api_token
+        self._config.cider_api_token = token
+        self._cider.set_token(token)
+
+    async def _save_cider_token(self, token: str) -> None:
+        """Persist one settings change through the owned worker task."""
+        async with self._cider_token_save_lock:
+            await self._cider_token_worker.run(self._cider_token_store.save, token)
+
+    def _schedule_cider_token_save(self, token: str) -> None:
+        """Retain the credential write task until it completes or shutdown."""
+        task = asyncio.create_task(self._save_cider_token(token))
+        self._cider_token_tasks.add(task)
+        task.add_done_callback(self._cider_token_save_finished)
+
+    def _cider_token_save_finished(self, task: asyncio.Task[None]) -> None:
+        self._cider_token_tasks.discard(task)
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Could not save the Cider API token: %s", exc)
+
+    async def _finish_cider_token_save(self) -> None:
+        tasks = tuple(self._cider_token_tasks)
+        if not tasks:
+            return
+        # Do not cancel to_thread wrappers: the keyring call may still be running
+        # after cancellation, and a later token could otherwise be overwritten by
+        # an older write. The lock orders writes and gather keeps shutdown owned.
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    async def _finish_clear_cache(self) -> None:
+        task = self._clear_cache_task
+        if task is None:
+            return
+        await asyncio.gather(task, return_exceptions=True)
+        if self._clear_cache_task is task:
+            self._clear_cache_task = None
 
     # --- passthrough / lock ---
 
@@ -154,7 +252,7 @@ class AppController:
                 done.result()
             except asyncio.CancelledError:
                 return
-            except Exception as exc:  # noqa: BLE001 - surface async dialog failures
+            except (MprisSessionError, OSError, RuntimeError) as exc:
                 logger.warning("Could not open settings: %s", exc)
 
         task.add_done_callback(finished)
@@ -164,7 +262,7 @@ class AppController:
             return
         try:
             players = await self._mpris.available_players()
-        except Exception as exc:  # noqa: BLE001 - player discovery is best effort
+        except (MprisSessionError, OSError, TimeoutError) as exc:
             logger.debug("MPRIS player discovery failed: %s", exc)
             players = []
         dialog = SettingsDialog(
@@ -181,11 +279,11 @@ class AppController:
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)
         dialog.restart_requested.connect(self._restart)
-        dialog.finished.connect(lambda _: self._clear_dialog())
+        dialog.finished.connect(self._clear_dialog)
         self._settings_dialog = dialog
         dialog.show()
 
-    def _clear_dialog(self) -> None:
+    def _clear_dialog(self, _result: int | None = None) -> None:
         self._settings_dialog = None
 
     def _restart(self) -> None:
@@ -204,39 +302,49 @@ class AppController:
 
     def _apply_config(self, config: Config) -> None:
         previous_language = resolve_translation_language(self._config.translation_language)
+        previous_token = self._config.cider_api_token
         config.track_offsets = self._config.track_offsets
-        self._config = config
-        self._overlay.apply_config(config)
+        self._config = config.clamped()
+        self._overlay.apply_config(self._config)
         # Push new anchor/margins/passthrough through the layer-shell bridge.
         self._overlay.activate_layer_shell()
-        self._tray.set_passthrough_checked(config.passthrough)
-        self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
-        self._tray.set_icon_name(config.icon_name, config.accent_start)
-        self._mpris.set_lyrics_sources(config.lyrics_sources)
-        self._mpris.set_player_lock(config.player_lock)
-        self._mpris.set_cache_enabled(config.cache_enabled)
-        self._mpris.set_prefer_best(config.prefer_best_lyrics)
-        self._mpris.set_fuzzy(config.fuzzy_match)
-        set_language(config.ui_language)  # affects newly-opened dialogs; UI restart for the rest
+        self._tray.set_passthrough_checked(self._config.passthrough)
+        self._app.setWindowIcon(load_icon(self._config.window_icon_name, accent=self._config.accent_start))
+        self._tray.set_icon_name(self._config.icon_name, self._config.accent_start)
+        self._mpris.set_lyrics_sources(self._config.lyrics_sources)
+        self._cider.set_enabled("cider" in self._config.lyrics_sources)
+        self._cider.set_token(self._config.cider_api_token)
+        self._mpris.set_player_lock(self._config.player_lock)
+        self._mpris.set_cache_enabled(self._config.cache_enabled)
+        self._mpris.set_prefer_best(self._config.prefer_best_lyrics)
+        self._mpris.set_fuzzy(self._config.fuzzy_match)
+        set_language(self._config.ui_language)  # affects newly-opened dialogs; UI restart for the rest
 
-        new_language = resolve_translation_language(config.translation_language)
+        if self._config.cider_api_token != previous_token:
+            self._schedule_cider_token_save(self._config.cider_api_token)
+
+        new_language = resolve_translation_language(self._config.translation_language)
         if new_language != previous_language:
-            self._receiver.update_translation_language(new_language)
+            self._cider.set_translation_language(new_language)
 
         self._persist()
 
     def _clear_lyrics_cache(self) -> None:
+        if self._clear_cache_task is not None and not self._clear_cache_task.done():
+            return
         task = asyncio.create_task(self._mpris.clear_cache())
+        self._clear_cache_task = task
+        task.add_done_callback(self._clear_lyrics_cache_finished)
 
-        def finished(done: asyncio.Task[None]) -> None:
-            try:
-                done.result()
-            except asyncio.CancelledError:
-                return
-            except (OSError, sqlite3.Error) as exc:
-                logger.warning("Could not clear lyrics cache: %s", exc)
-
-        task.add_done_callback(finished)
+    def _clear_lyrics_cache_finished(self, task: asyncio.Task[None]) -> None:
+        if self._clear_cache_task is task:
+            self._clear_cache_task = None
+        try:
+            task.result()
+        except asyncio.CancelledError:
+            return
+        except (OSError, sqlite3.Error) as exc:
+            logger.warning("Could not clear lyrics cache: %s", exc)
 
     def _persist(self) -> None:
         try:
@@ -255,5 +363,5 @@ class AppController:
         return self._state
 
     @property
-    def receiver(self) -> LyricsReceiver:
+    def receiver(self) -> AdapterReceiver:
         return self._receiver

@@ -1,15 +1,16 @@
 # Kotonoha MPRIS + 外部歌词源设计规格
 
-本文描述当前实现。目标是在不改动 HUD 渲染、Qt bridge、时钟与卡拉 OK 组件的前提下，让任意 MPRIS 播放器可靠地使用外部定时歌词，并让 Cider WebSocket 作为可排序的实时歌词来源参与同一条解析链。
+本文描述当前实现。目标是在不改动 HUD 渲染、Qt bridge、时钟与卡拉 OK 组件的前提下，让任意 MPRIS 播放器可靠地使用外部定时歌词，并让 Cider 公共 HTTP API 作为可排序的实时歌词来源参与同一条解析链。外部播放器统一使用版本化的 `kotonoha.adapter` v1 入口，不再保留 Cider 专用旧路由。
 
 ## 1. 关键原则
 
 - 当前播放器和歌词来源是两个独立选择。即使当前播放器是 Cider，也优先按用户配置尝试网易云、lrclib 或其他外部 provider。
 - Cider 不是固定 fallback，也不因当前播放器身份自动优先；它在 `lyrics_sources` 中出现在哪里，就在哪里尝试。
-- Cider WS 提供的是当前播放位置附近的实时快照，不假定它能提供可缓存的完整带时间歌词文档。
+- Cider HTTP 一次返回当前歌曲的完整带时间歌词文档；播放位置约每秒校准一次，两次校准之间由本地 MediaClock 推进。
+- Cider 是播放器/传输适配器，不是最终歌词来源；Cider 响应中的 source.provider 会在边界层归一化为 source_id，并保留 source_name。
 - 本地缓存属于每一个网络 provider 的内部阶段，不是单独的 provider。
 - 不保存 MPRIS player、track ID、搜索词到 provider 歌曲的持久映射。
-- `overlay.py`、`karaoke_label.py`、`karaoke.py`、`native.py`、layer-shell bridge 和 Cider 插件协议保持不变。
+- `overlay.py`、`karaoke_label.py`、`karaoke.py`、`native.py` 和 layer-shell bridge 保持既有视觉/平台行为；外部插件使用 `kotonoha.adapter` v1。
 
 ## 2. 数据流
 
@@ -20,19 +21,21 @@ MPRIS Metadata/Status/Position
   TrackStabilizer (忽略空值，等待稳定组合)
             |
             v
-  LyricsResolver (严格按设置顺序)
+  PlaybackCoordinator + LyricsResolutionWorkflow
+                    |
+             LyricsResolver (source policy)
        |                     |
        v                     v
-provider 本地缓存/网络     Cider retained snapshot
+provider 本地缓存/网络     Cider HTTP candidate
        |                     |
        +----------+----------+
                   v
-             LyricsState
-                  v
-       现有 overlay / clock / karaoke
+       LyricsPresentationAdapter -> DisplayFrame
+                  |
+           QtDisplayPublisher -> LyricsState -> Overlay
 ```
 
-MPRIS 负责当前歌曲身份和外部歌词的进度。Cider 被选中时，内容和 tick 都由绑定的同一个 WS 连接负责，避免两个时钟同时驱动 HUD。
+MPRIS 负责当前歌曲身份和外部歌词的进度。Cider 被选中时，内容由同一首歌的一次 HTTP 歌词请求提供，播放位置由 Cider HTTP 的低频校准驱动，MediaClock 负责帧间插值，避免两个时钟同时驱动 HUD。
 
 ## 3. Provider 顺序
 
@@ -111,12 +114,13 @@ $XDG_CACHE_HOME/kotonoha/lyrics.sqlite3
 - 搜索结果整体匹配排序，不再直接选择第一条带 `syncedLyrics` 的记录。
 - 保存 lrclib record ID 和原始 `syncedLyrics`。
 
-### Cider WS
+### Cider HTTP API
 
-- 完整 frame 即使当前 gate 关闭也会被解析并保留，但不会发布到 HUD。
-- tick 与完整 frame 使用相同连接所有权判断；外部歌词生效时 Cider tick 不再校准时钟。
-- resolver 到达 Cider 位置时，使用当前 MPRIS 元数据匹配 retained snapshot；命中后绑定具体 client ID。
-- 绑定连接断开后，对当前歌曲重新执行完整 provider 顺序。
+- CiderApiClient 通过 Cider 的公开 HTTP API 读取 playback 和 lyrics；token 可选，空 token 不发送 apptoken。
+- /api/v2/playback 约每秒读取一次，作为 MediaClock 的校准样本；显示帧之间不请求 Cider。
+- 切歌后只请求一次 /api/v2/lyrics/current?words=true，当前响应不是目标歌曲时回退到 /api/v2/lyrics/:id。
+- source.provider 是最终歌词来源，例如 Apple Music 或其他 provider；它不被改写成 Cider。
+- HTTP 断开或歌词不存在时保留 MPRIS 的候选/回退行为；外部播放器如需推送，使用通用 adapter v1 的 `snapshot` / `clock` 消息。
 
 ## 7. MPRIS 切歌稳定化
 
@@ -136,12 +140,17 @@ title 和 artist 都为空的 `""/""` 样本永不提交，也不会搜索、写
 
 ```text
 src/kotonoha/providers/mpris_track.py  元数据解析、Observation、稳定器
-src/kotonoha/providers/mpris.py        D-Bus 采样、generation、状态所有权
-src/kotonoha/providers/gate.py         Cider retained snapshots 与连接绑定
+src/kotonoha/playback/coordinator.py  MPRIS session、订阅、poll 和稳定化生命周期
+src/kotonoha/providers/mpris.py        MPRIS facade 与配置转发
+src/kotonoha/providers/mpris_lyrics.py MPRIS lyric generation、ownership 与 timeline
+src/kotonoha/providers/cider_client.py Cider HTTP session、响应边界和可选 token
+src/kotonoha/providers/cider_api.py    Cider 低频校准、按 track generation 的歌词任务
+src/kotonoha/lyrics/ownership.py       live source facts 与 source 绑定
 src/kotonoha/lyrics/match.py           归一化、版本冲突、置信度
 src/kotonoha/lyrics/artifact.py        provider-neutral artifact
 src/kotonoha/lyrics/cache.py           provider-scoped SQLite 缓存
-src/kotonoha/lyrics/resolver.py        精确配置顺序与 in-flight 去重
+src/kotonoha/lyrics/sources.py         local/exact/network source contracts
+src/kotonoha/lyrics/resolver.py        source policy、缓存与 in-flight 去重
 src/kotonoha/lyrics/netease.py         网易云搜索与 YRC/LRC 解析
 src/kotonoha/lyrics/lrclib.py          lrclib exact/search 与排序
 ```

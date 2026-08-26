@@ -1,6 +1,4 @@
 import json
-import math
-from typing import cast
 
 import pytest
 from aiohttp import WSServerHandshakeError, web
@@ -10,173 +8,198 @@ pytest.importorskip("aiohttp")
 
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
+from kotonoha.display.coordinator import DisplayCoordinator  # noqa: E402
+from kotonoha.display.models import DisplayState  # noqa: E402
 from kotonoha.lyrics.match import TrackMetadata  # noqa: E402
-from kotonoha.providers.gate import SourceGate  # noqa: E402
-from kotonoha.receiver import CONFIG_FRAME_TYPE, WS_PATH, LyricsReceiver  # noqa: E402
+from kotonoha.lyrics.ownership import SourceOwnershipCoordinator  # noqa: E402
+from kotonoha.receiver import WS_PATH, AdapterReceiver  # noqa: E402
 from kotonoha.state import LyricsState  # noqa: E402
 
 FRAME = {
-    "lyrics": {
-        "found": True,
-        "provider": "Apple Music",
-        "timing": "Word",
-        "currentTime": 3.0,
-        "currentLine": {"index": 1, "id": "L1", "start": 2.0, "end": 4.0, "text": "hello", "translation": "hi"},
+    "protocol": "kotonoha.adapter",
+    "version": 1,
+    "type": "snapshot",
+    "adapter": "cider",
+    "sequence": 1,
+    "capturedAt": "2026-08-25T00:00:00Z",
+    "playback": {
+        "playerId": "cider",
+        "status": "Playing",
+        "positionS": 3.0,
+        "durationS": 180.0,
+        "track": {
+            "stableId": "song-1",
+            "title": "Song",
+            "rawTitle": "Song",
+            "artist": "X",
+            "album": "Album",
+            "url": None,
+            "durationS": 180.0,
+        },
     },
-    "playback": {"isPlaying": True, "nowPlayingItem": {"attributes": {"name": "Song", "artistName": "X"}}},
+    "lyrics": {
+        "source": "apple-music",
+        "songId": "song-1",
+        "timing": "Word",
+        "language": "en",
+        "title": "Song",
+        "artist": "X",
+        "album": "Album",
+        "durationS": 180.0,
+        "lines": [
+            {"index": 1, "id": "L1", "start": 2.0, "end": 4.0, "text": "hello", "translation": "hi", "words": []}
+        ],
+    },
+}
+
+CLOCK = {
+    "protocol": "kotonoha.adapter",
+    "version": 1,
+    "type": "clock",
+    "adapter": "cider",
+    "sequence": 2,
+    "capturedAt": "2026-08-25T00:00:00Z",
+    "trackRef": "cider:cider:song-1",
+    "positionS": 12.5,
+    "status": "Playing",
 }
 
 
 async def _client(state, **kwargs):
-    receiver = LyricsReceiver(state, **kwargs)
+    ownership = kwargs.pop("ownership", SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=ownership, **kwargs)
     server = TestServer(receiver.build_app())
     client = TestClient(server)
     await client.start_server()
     return client, receiver
 
 
-async def test_websocket_frame_updates_state():
+async def test_websocket_frame_updates_canonical_state():
     state = LyricsState()
     client, _ = await _client(state)
     try:
         ws = await client.ws_connect(WS_PATH)
-        await ws.receive()  # consume the config frame
         await ws.send_str(json.dumps(FRAME))
         await ws.close()
     finally:
         await client.close()
 
-    assert state.snapshot.found is True
-    assert state.snapshot.title == "Song"
-    assert state.snapshot.current is not None
-    assert state.snapshot.current.text == "hello"
+    assert state.frame.state is DisplayState.LYRICS_AVAILABLE
+    assert state.frame.track is not None
+    assert state.frame.track.title == "Song"
+    assert state.frame.current is not None
+    assert state.frame.current.text == "hello"
 
 
-async def test_config_frame_sent_on_connect():
+async def test_clock_message_updates_the_canonical_frame():
     state = LyricsState()
-    client, _ = await _client(state, translation_language="zh-Hans")
-    try:
-        ws = await client.ws_connect(WS_PATH)
-        msg = await ws.receive_json()
-        assert msg["type"] == CONFIG_FRAME_TYPE
-        assert msg["translationLanguage"] == "zh-Hans"
-        await ws.close()
-    finally:
-        await client.close()
-
-
-async def test_update_translation_language_broadcasts():
-    state = LyricsState()
-    client, receiver = await _client(state, translation_language="en")
-    try:
-        ws = await client.ws_connect(WS_PATH)
-        first = await ws.receive_json()
-        assert first["translationLanguage"] == "en"
-        receiver.update_translation_language("ja")
-        second = await ws.receive_json()
-        assert second["translationLanguage"] == "ja"
-        await ws.close()
-    finally:
-        await client.close()
-
-
-async def test_tick_frame_calibrates_clock_only():
-    state = LyricsState()
-    ticks = []
-    state.time_ticked.connect(lambda ct, ip: ticks.append((ct, ip)))
     client, _ = await _client(state)
     try:
         ws = await client.ws_connect(WS_PATH)
-        await ws.receive()  # config frame
-        await ws.send_str(json.dumps({"reason": "tick", "currentTime": 12.5, "isPlaying": True}))
-        await ws.send_str(json.dumps({"reason": "tick", "currentTime": 13.0, "isPlaying": False}))
+        await ws.send_str(json.dumps(FRAME))
+        await ws.send_str(json.dumps(CLOCK))
+        await ws.send_str(json.dumps({**CLOCK, "sequence": 3, "positionS": 13.0, "status": "Paused"}))
         await ws.close()
     finally:
         await client.close()
 
-    assert ticks == [(12.5, True), (13.0, False)]
-    assert state.snapshot.found is False  # tick never builds a snapshot
+    assert state.frame.state is DisplayState.LYRICS_AVAILABLE
+    assert state.frame.current_time == 13.0
+    assert state.frame.is_playing is False
+
+
+def test_clock_before_snapshot_is_rejected():
+    state = LyricsState()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+
+    assert receiver.ingest(json.dumps(CLOCK), client_id=20) is False
+    assert state.frame.state is DisplayState.NO_TRACK
+
+
+def test_stale_snapshot_does_not_replace_the_latest_frame():
+    state = LyricsState()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+
+    assert receiver.ingest(json.dumps(FRAME), client_id=21) is True
+    playback = FRAME["playback"]
+    if not isinstance(playback, dict):
+        raise TypeError("test frame playback must be an object")
+    stale = {
+        **FRAME,
+        "playback": {**playback, "positionS": 99.0},
+    }
+
+    assert receiver.ingest(json.dumps(stale), client_id=21) is False
+    assert state.frame.current_time == 3.0
+
+
+def test_clock_for_another_track_is_rejected_without_consuming_sequence():
+    state = LyricsState()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+
+    assert receiver.ingest(json.dumps(FRAME), client_id=22) is True
+    wrong_track = {**CLOCK, "trackRef": "cider:cider:other-song"}
+    assert receiver.ingest(json.dumps(wrong_track), client_id=22) is False
+    assert receiver.ingest(json.dumps({**CLOCK, "sequence": 2}), client_id=22) is True
+
+    assert state.frame.current_time == 12.5
+    assert state.frame.is_playing is True
 
 
 async def test_post_debug_bypass_updates_state():
     state = LyricsState()
     client, _ = await _client(state)
     try:
-        resp = await client.post(WS_PATH, data=json.dumps(FRAME))
-        assert resp.status == 204
+        response = await client.post(WS_PATH, data=json.dumps(FRAME))
+        assert response.status == 204
     finally:
         await client.close()
 
-    assert state.snapshot.title == "Song"
+    assert state.frame.track is not None
+    assert state.frame.track.title == "Song"
 
 
 async def test_post_malformed_frame_returns_400():
     state = LyricsState()
     client, _ = await _client(state)
     try:
-        resp = await client.post(WS_PATH, data="not json{")
-        assert resp.status == 400
+        response = await client.post(WS_PATH, data="not json{")
+        assert response.status == 400
     finally:
         await client.close()
 
-    assert state.snapshot.found is False
+    assert state.frame.state is DisplayState.NO_TRACK
 
 
-def test_build_app_registers_route():
-    app = LyricsReceiver(LyricsState()).build_app()
-    assert any(getattr(r.resource, "canonical", "") == WS_PATH for r in app.router.routes())
+def test_build_app_registers_generic_adapter_route():
+    app = AdapterReceiver(
+        DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator()
+    ).build_app()
+    assert any(getattr(route.resource, "canonical", "") == WS_PATH for route in app.router.routes())
 
 
 async def test_start_bind_failure_resets_runner_and_reraises(monkeypatch):
-    from aiohttp import web
-
-    async def boom(self):
+    async def boom(_site):
         raise OSError(98, "Address already in use")
 
     monkeypatch.setattr(web.TCPSite, "start", boom)
-    receiver = LyricsReceiver(LyricsState())
+    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
 
     with pytest.raises(OSError):
         await receiver.start()
 
-    # The half-created runner must be torn down so state stays consistent.
     assert receiver._runner is None
 
 
-async def test_broadcast_retains_task_and_survives_closed_socket():
-    import asyncio
-
-    class FakeWS:
-        closed = False
-
-        async def send_str(self, _text):
-            raise ConnectionResetError("socket closed mid-send")
-
-    receiver = LyricsReceiver(LyricsState())
-    receiver._clients.add(cast(web.WebSocketResponse, FakeWS()))
-
-    receiver.update_translation_language("ja")  # must not raise
-    # The send task is retained (RUF006), not fire-and-forget.
-    assert len(receiver._pending_sends) == 1
-    # It completes without propagating the connection error (suppressed).
-    await asyncio.gather(*receiver._pending_sends)
-
-
-def test_closed_gate_retains_tick_without_publishing_cider_content():
+def test_closed_gate_retains_tick_without_publishing_external_content():
     state = LyricsState()
-    ticks = []
-    state.time_ticked.connect(lambda current, playing: ticks.append((current, playing)))
-    gate = SourceGate()
+    gate = SourceOwnershipCoordinator()
     gate.select_external()
-    receiver = LyricsReceiver(state, gate=gate)
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=gate)
 
-    assert receiver._ingest(json.dumps(FRAME), client_id=10) is True
-    assert receiver._ingest(
-        json.dumps({"reason": "tick", "currentTime": 3.0, "isPlaying": True}),
-        client_id=10,
-    )
-    assert state.snapshot.found is False
-    assert ticks == []
+    assert receiver.ingest(json.dumps(FRAME), client_id=10) is True
+    assert receiver.ingest(json.dumps({**CLOCK, "positionS": 3.0}), client_id=10)
+    assert state.frame.state is DisplayState.NO_TRACK
     assert gate.current_match(TrackMetadata("Song", "X")) is not None
     timing = gate.current_timing(TrackMetadata("Song", "X"))
     assert timing is not None
@@ -184,65 +207,72 @@ def test_closed_gate_retains_tick_without_publishing_cider_content():
 
 
 async def test_a_web_page_cannot_drive_the_overlay():
-    # Binding to loopback keeps other machines out; it does not keep out a page the
-    # user happens to be visiting, which can post to 127.0.0.1 like any other URL.
-    # Measured before this check, such a POST was accepted and replaced what the
-    # overlay was showing.
     state = LyricsState()
-    receiver = LyricsReceiver(state)
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
-        frame = json.dumps({"lyrics": {"lines": [{"text": "injected", "start": 0}]}, "track": {"title": "X"}})
-
-        blocked = await client.post(WS_PATH, data=frame, headers={"Origin": "https://evil.example"})
+        blocked = await client.post(
+            WS_PATH,
+            data=json.dumps(FRAME),
+            headers={"Origin": "https://evil.example"},
+        )
         assert blocked.status == 403
-        # The status alone proves nothing about what the overlay is showing.
-        assert state.snapshot.title != "X", "a refused frame still reached the overlay"
+        assert state.frame.state is DisplayState.NO_TRACK
 
-        # The handshake is the route a browser actually takes: WebSockets honour no
-        # same-origin rule, so this is the only place a page can be turned away.
         with pytest.raises(WSServerHandshakeError) as refused:
             await client.ws_connect(WS_PATH, headers={"Origin": "https://evil.example"})
         assert refused.value.status == 403
 
-        async with client.ws_connect(WS_PATH, headers={"Origin": "http://localhost:9000"}) as socket:
-            await socket.close()
-
-        # A native client sends no Origin, or a loopback one; neither is refused.
-        for headers in ({}, {"Origin": "http://localhost:9000"}):
-            allowed = await client.post(WS_PATH, data=frame, headers=headers)
-            assert allowed.status == 204, headers
+        allowed = await client.post(WS_PATH, data=json.dumps(FRAME), headers={})
+        assert allowed.status == 204
 
 
 async def test_a_frame_that_is_not_text_is_rejected_not_a_server_error():
-    # Only a JSON parse error was converted; bytes that are not text at all escaped
-    # the handler as a 500 with a traceback.
-    receiver = LyricsReceiver(LyricsState())
+    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
         response = await client.post(WS_PATH, data=b"\xff\xfe")
+        assert response.status == 400
+
+
+async def test_non_finite_snapshot_position_is_rejected():
+    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(
+            WS_PATH,
+            data=(
+                '{"protocol":"kotonoha.adapter","version":1,"type":"snapshot",'
+                '"adapter":"cider","sequence":0,"capturedAt":"now",'
+                '"playback":{"playerId":"cider","status":"Playing",'
+                '"positionS":1e1000,"track":null},"lyrics":null}'
+            ),
+        )
 
         assert response.status == 400
 
 
-async def test_a_number_json_allows_but_arithmetic_does_not_is_dropped():
-    # JSON accepts 1e1000 and NaN. int() raised OverflowError from inside the
-    # model, and a clock calibrated with a NaN never advances again.
-    receiver = LyricsReceiver(LyricsState())
+async def test_a_clock_carrying_nan_is_rejected():
+    state = LyricsState()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
-        response = await client.post(WS_PATH, data='{"lyrics":{"currentLine":{"index":1e1000}}}')
+        response = await client.post(
+            WS_PATH,
+            data=(
+                '{"protocol":"kotonoha.adapter","version":1,"type":"clock",'
+                '"adapter":"cider","sequence":0,"capturedAt":"now",'
+                '"positionS":NaN,"status":"Playing"}'
+            ),
+        )
 
-        assert response.status in (204, 400), "an unrepresentable number reached the handler"
+        assert response.status == 400
+        assert state.frame.state is DisplayState.NO_TRACK
 
 
-async def test_a_tick_carrying_nan_does_not_stop_the_clock():
-    # The lightweight tick path skips the model's parsing, so it needed the same
-    # finiteness check: a clock calibrated with NaN never advances again.
-    receiver = LyricsReceiver(LyricsState())
+async def test_disconnect_drops_gate_client():
+    state = LyricsState()
+    gate = SourceOwnershipCoordinator()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=gate)
     async with TestClient(TestServer(receiver.build_app())) as client:
-        seen: list[float | None] = []
-        receiver._state.time_ticked.connect(lambda t, _p: seen.append(t))
+        ws = await client.ws_connect(WS_PATH)
+        await ws.send_str(json.dumps(FRAME))
+        await ws.close()
 
-        response = await client.post(WS_PATH, data='{"reason":"tick","currentTime":NaN,"isPlaying":true}')
-
-        assert response.status == 204
-        assert seen, "the tick never reached the clock at all"
-        assert all(value is None or math.isfinite(value) for value in seen), f"the clock took {seen}"
+    assert gate.current_match(TrackMetadata("Song", "X")) is None

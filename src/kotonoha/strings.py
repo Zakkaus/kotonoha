@@ -180,6 +180,18 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "歌詞ソースの優先順位：上から順に、最初に歌詞が見つかったものを使用。"
               "ドラッグで並べ替え、チェックを外すと無効。",
     },
+    "set.cider_token": {
+        "en": "Cider API token",
+        "zh-Hans": "Cider API Token",
+        "zh-Hant": "Cider API Token",
+        "ja": "Cider API トークン",
+    },
+    "set.cider_token_hint": {
+        "en": "Optional. Stored in the system keyring. Leave empty when Cider does not require authentication.",
+        "zh-Hans": "可选。Token 保存在系统密钥环中；Cider 未启用认证时留空即可。",
+        "zh-Hant": "可選。Token 保存在系統金鑰環中；Cider 未啟用驗證時留空即可。",
+        "ja": "任意。システムのキーリングに保存されます。Cider の認証が不要な場合は空欄にします。",
+    },
     "set.player": {
         "en": "MPRIS player", "zh-Hans": "MPRIS 播放器", "zh-Hant": "MPRIS 播放器", "ja": "MPRIS プレーヤー",
     },

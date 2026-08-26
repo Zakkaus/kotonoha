@@ -1,51 +1,36 @@
-"""Local WebSocket server that ingests lyric frames from the Cider probe.
-
-The Cider probe (plugins/cider/lyrics) connects as a WebSocket *client* to
-
-    ws://127.0.0.1:28745/kotonoha/cider/lyrics
-
-and pushes one JSON ``ProbePayload`` per frame (on connect, on change, and on a
-~500ms heartbeat). Each text frame is parsed into a
-:class:`~kotonoha.model.LyricsSnapshot` and written to the shared
-:class:`~kotonoha.state.LyricsState`.
-
-Runs on the shared qasync event loop — no extra threads. Bind is localhost-only
-for privacy. A single misbehaving client or malformed frame never tears down the
-server: it keeps listening so the probe can reconnect at any time.
-"""
+"""Local WebSocket server for canonical external lyric adapters."""
 
 from __future__ import annotations
 
-import asyncio
-import contextlib
-import json
 import logging
-import math
+import time
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 from aiohttp import WSMsgType, web
 
-from .model import parse_payload
-from .providers.gate import SourceGate
-from .state import LyricsState
+from .display.coordinator import DisplayCoordinator
+from .lyrics.ownership import SourceOwnershipCoordinator
+from .lyrics.protocol import AdapterClock, AdapterProtocolDecoder, AdapterProtocolError, AdapterSnapshot
 
 logger = logging.getLogger(__name__)
 
 DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 28745
-WS_PATH = "/kotonoha/cider/lyrics"
-CONFIG_FRAME_TYPE = "kotonoha/config"
+WS_PATH = "/kotonoha/adapter"
+_POST_CLIENT_ID = 0
+
+
+@dataclass
+class _AdapterSession:
+    """Ordering state for one connected adapter client."""
+
+    last_sequence: int | None = None
+    track_ref: str | None = None
 
 
 def _is_local_origin(request: web.Request) -> bool:
-    """Whether this request may drive the overlay.
-
-    Binding to loopback keeps other machines out; it does not keep out a page the
-    user happens to be visiting, which can post to 127.0.0.1 like any other URL and
-    did — measured, a cross-origin POST was accepted and replaced what the overlay
-    was showing. A native client such as the Cider plugin either sends no Origin or
-    sends a loopback one, so requiring that costs it nothing.
-    """
+    """Return whether a local adapter may submit data to the overlay."""
     origin = request.headers.get("Origin")
     if not origin:
         return True
@@ -53,71 +38,36 @@ def _is_local_origin(request: web.Request) -> bool:
     return host in {"localhost", "127.0.0.1", "::1"}
 
 
-def _coerce_float(value: object) -> float | None:
-    if isinstance(value, bool):
-        return None
-    if isinstance(value, (int, float)):
-        # The tick path does not go through the model's parsing, so it needs the
-        # same finiteness check: JSON carries NaN and infinity, and a clock
-        # calibrated with either never advances again.
-        parsed = float(value)
-        return parsed if math.isfinite(parsed) else None
-    return None
+class AdapterReceiver:
+    """Own the external adapter socket and publish canonical display frames."""
 
-
-def _coerce_bool(value: object) -> bool | None:
-    return value if isinstance(value, bool) else None
-
-
-class LyricsReceiver:
     def __init__(
         self,
-        state: LyricsState,
+        display: DisplayCoordinator,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
-        translation_language: str = "en",
-        gate: SourceGate | None = None,
+        *,
+        ownership: SourceOwnershipCoordinator,
+        decoder: AdapterProtocolDecoder | None = None,
     ) -> None:
-        self._state = state
+        self._display = display
         self._host = host
         self._port = port
-        self._translation_language = translation_language
-        self._gate = gate
+        self._ownership = ownership
+        self._decoder = decoder if decoder is not None else AdapterProtocolDecoder()
         self._clients: set[web.WebSocketResponse] = set()
+        self._sessions: dict[int, _AdapterSession] = {}
         self._runner: web.AppRunner | None = None
-        self._pending_sends: set[asyncio.Task[None]] = set()
-
-    def _config_frame(self) -> str:
-        return json.dumps({"type": CONFIG_FRAME_TYPE, "translationLanguage": self._translation_language})
-
-    def update_translation_language(self, language: str) -> None:
-        """Change the preferred language and push it to connected probes."""
-        self._translation_language = language
-        frame = self._config_frame()
-        for ws in list(self._clients):
-            if not ws.closed:
-                self._spawn(self._safe_send(ws, frame))
-
-    async def _safe_send(self, ws: web.WebSocketResponse, text: str) -> None:
-        # The socket may close between the not-closed check and the send.
-        with contextlib.suppress(ConnectionError, RuntimeError):
-            await ws.send_str(text)
-
-    def _spawn(self, coro) -> None:
-        # Retain the task and discard it on completion (RUF006) so it cannot be
-        # garbage-collected mid-flight and its exceptions are surfaced, not lost.
-        task = asyncio.create_task(coro)
-        self._pending_sends.add(task)
-        task.add_done_callback(self._pending_sends.discard)
 
     def build_app(self) -> web.Application:
+        """Build the HTTP application without starting a listener."""
         app = web.Application()
         app.router.add_get(WS_PATH, self._handle_ws)
-        # Zero-cost debug bypass: `curl -XPOST -d @frame.json ...` to inject a frame.
         app.router.add_post(WS_PATH, self._handle_post)
         return app
 
     async def start(self) -> None:
+        """Bind the local adapter endpoint and own its runner."""
         if self._runner is not None:
             return
         runner = web.AppRunner(self.build_app())
@@ -126,70 +76,84 @@ class LyricsReceiver:
         try:
             await site.start()
         except OSError:
-            # Bind failed (e.g. Errno 98, address in use). Tear the runner back
-            # down so state stays consistent and a later start() can retry.
             await runner.cleanup()
             raise
         self._runner = runner
-        logger.info("Lyrics receiver listening on ws://%s:%d%s", self._host, self._port, WS_PATH)
+        logger.info("Adapter receiver listening on ws://%s:%d%s", self._host, self._port, WS_PATH)
 
     async def stop(self) -> None:
-        for task in list(self._pending_sends):
-            task.cancel()
+        """Close all external connections and release the listening runner."""
         if self._runner is not None:
             await self._runner.cleanup()
             self._runner = None
 
-    def _ingest(self, raw_text: str, *, client_id: int = 0) -> bool:
-        """Parse one JSON frame and push it into state. Returns True on success."""
+    def ingest(self, raw_text: str, *, client_id: int) -> bool:
+        """Decode and publish one canonical adapter message."""
         try:
-            payload = json.loads(raw_text)
-        except (json.JSONDecodeError, ValueError):
-            logger.debug("Dropped non-JSON frame (%d bytes)", len(raw_text))
+            message = self._decoder.decode_text(raw_text, observed_at=time.monotonic())
+        except AdapterProtocolError as exc:
+            logger.debug("Dropped invalid adapter frame (%d bytes): %s", len(raw_text), exc)
             return False
-        # Lightweight high-frequency tick: only calibrate the clock, do not
-        # rebuild lyric content.
-        if isinstance(payload, dict) and payload.get("reason") == "tick":
-            current_time = _coerce_float(payload.get("currentTime"))
-            is_playing = _coerce_bool(payload.get("isPlaying"))
-            if self._gate is not None:
-                self._gate.observe_tick(client_id, current_time, is_playing)
-                if not self._gate.accepts(client_id):
-                    return True
-            self._state.tick(current_time, is_playing)
+
+        session = self._sessions.setdefault(client_id, _AdapterSession())
+        if session.last_sequence is not None and message.sequence <= session.last_sequence:
+            logger.debug("Dropped stale adapter sequence %d for client %s", message.sequence, client_id)
+            return False
+
+        if isinstance(message, AdapterSnapshot):
+            accepted = self._publish_snapshot(message, client_id, session)
+        elif isinstance(message, AdapterClock):
+            accepted = self._publish_clock(message, client_id, session)
+        else:
+            raise TypeError(f"unsupported adapter message type: {type(message).__name__}")
+        if accepted:
+            session.last_sequence = message.sequence
+        return accepted
+
+    def _publish_snapshot(self, message: AdapterSnapshot, client_id: int, session: _AdapterSession) -> bool:
+        session.track_ref = message.playback.track.track_ref if message.playback.track is not None else None
+        self._ownership.observe(client_id, message.playback, message.document)
+        if not self._ownership.accepts(client_id):
             return True
-        snapshot = parse_payload(payload)
-        if self._gate is not None:
-            self._gate.observe_snapshot(client_id, snapshot)
-            if not self._gate.accepts(client_id):
-                return True
-        self._state.update(snapshot)
+        self._display.publish(message.playback, message.document)
+        return True
+
+    def _publish_clock(self, message: AdapterClock, client_id: int, session: _AdapterSession) -> bool:
+        if message.track_ref != session.track_ref:
+            logger.debug("Dropped adapter clock for a different track from client %s", client_id)
+            return False
+        accepted = self._ownership.observe_clock(
+            client_id,
+            message.track_ref,
+            message.position_s,
+            message.status.value == "Playing",
+        )
+        if not accepted:
+            return False
+        if self._ownership.accepts(client_id):
+            self._display.tick(message.position_s, message.status.value == "Playing")
         return True
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         if not _is_local_origin(request):
-            # A browser sends Origin on the handshake and honours no same-origin
-            # rule for WebSockets, so this is the only place to refuse a page.
             raise web.HTTPForbidden
         ws = web.WebSocketResponse(heartbeat=30)
         await ws.prepare(request)
         client_id = id(ws)
         self._clients.add(ws)
-        logger.debug("Probe connected")
-        # Tell the probe which translation language to extract from the TTML.
-        await ws.send_str(self._config_frame())
+        logger.debug("External adapter connected")
         try:
-            async for msg in ws:
-                if msg.type == WSMsgType.TEXT:
-                    self._ingest(msg.data, client_id=client_id)
-                elif msg.type == WSMsgType.ERROR:
-                    logger.debug("WS connection error: %s", ws.exception())
+            async for message in ws:
+                if message.type == WSMsgType.TEXT:
+                    self.ingest(message.data, client_id=client_id)
+                elif message.type == WSMsgType.ERROR:
+                    logger.debug("Adapter connection error: %s", ws.exception())
                     break
         finally:
             self._clients.discard(ws)
-            if self._gate is not None:
-                self._gate.drop_client(client_id)
-        logger.debug("Probe disconnected")
+            self._sessions.pop(client_id, None)
+            self._ownership.drop_client(client_id)
+        logger.debug("External adapter disconnected")
         return ws
 
     async def _handle_post(self, request: web.Request) -> web.Response:
@@ -198,9 +162,11 @@ class LyricsReceiver:
         try:
             body = await request.text()
         except UnicodeDecodeError:
-            # Only a JSON parse error was converted; bytes that are not text at all
-            # escaped as a 500 with a traceback instead of a rejected frame.
-            logger.debug("Dropped a frame that is not UTF-8")
+            logger.debug("Dropped an adapter frame that is not UTF-8")
             return web.Response(status=400)
-        ok = self._ingest(body)
-        return web.Response(status=204 if ok else 400)
+        # POST is the local debug/integration route, so all requests intentionally
+        # share one logical client session and therefore one sequence namespace.
+        return web.Response(status=204 if self.ingest(body, client_id=_POST_CLIENT_ID) else 400)
+
+
+__all__ = ["AdapterReceiver", "DEFAULT_HOST", "DEFAULT_PORT", "WS_PATH"]

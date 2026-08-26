@@ -19,6 +19,13 @@ This file applies to the repository root and all subdirectories.
 - Do not turn a temporary workaround into a permanent design.
 - Add an abstraction only when it reduces coupling, clarifies ownership, or improves testability.
 - Update tests and documentation when behavior or public contracts change.
+- Use object-oriented implementation unless a responsibility is genuinely stateless and has no
+  meaningful object identity or lifecycle. Components with state, lifecycle, injected dependencies,
+  external boundaries, or workflow/policy ownership must be represented by classes with explicit
+  collaborators. Module-level functions are reserved for pure transformations, validators, value
+  constructors, and serialization helpers; when a modified responsibility remains procedural, record
+  why an object would not add meaning. Do not create classes merely as wrappers around unrelated
+  functions.
 
 ## Change Workflow
 
@@ -44,7 +51,7 @@ Do not develop directly on the default branch.
 - `src/kotonoha/platform/`: compositor and toolkit decisions — capability probes, the
   native bridge wrapper, and the overlay platform adapters.
 - `src/kotonoha/lyrics/`: providers, parsers, matching, and the lyrics cache.
-- `src/kotonoha/providers/`: player integrations (MPRIS) and the source gate.
+- `src/kotonoha/providers/`: player integrations (MPRIS and Cider HTTP) at external boundaries.
 - `src/kotonoha/layer_shell_bridge.cpp`: the C++ Wayland bridge, built to `libkoto-layer.so`.
 - `tests/`: Python tests for the root package.
 - `plugins/cider/lyrics/`: Cider lyrics probe plugin built with Vite and TypeScript.

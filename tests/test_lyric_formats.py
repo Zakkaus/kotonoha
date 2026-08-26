@@ -88,7 +88,7 @@ def test_translation_merging_stays_cheap_as_a_provider_sends_more_lines():
     # the providers already allow.
     import time
 
-    from kotonoha.model import LyricLine
+    from kotonoha.lyrics.models import LyricLine
 
     def pair(count: int) -> tuple[list[LyricLine], list[LyricLine]]:
         base = "".join(f"[{i // 60:02d}:{i % 60:02d}.{i % 100:02d}]line {i}\n" for i in range(count))

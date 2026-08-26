@@ -5,9 +5,17 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QListWidgetItem
+from PyQt6.QtWidgets import QApplication, QLineEdit, QListWidgetItem
 
-from kotonoha.config import Config
+from kotonoha.config import (
+    Config,
+    FxIntensity,
+    FxTransition,
+    PanelStyle,
+    PanelWidthMode,
+    ThemeMode,
+    UiLanguage,
+)
 from kotonoha.players import PlayerInfo
 from kotonoha.settings_dialog import _PAGE_FIELDS, SettingsDialog
 
@@ -28,6 +36,16 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     assert dialog.current_config().cache_enabled is True
     dialog._clear_cache.click()
     assert emitted == [True]
+    dialog.close()
+
+
+def test_cider_token_is_editable_on_sources_page(qapp):
+    dialog = SettingsDialog(Config(cider_api_token="test-token"))
+
+    assert dialog._cider_token.echoMode() == QLineEdit.EchoMode.Password
+    assert dialog.current_config().cider_api_token == "test-token"
+    dialog._cider_token.setText("new-token")
+    assert dialog.current_config().cider_api_token == "new-token"
     dialog.close()
 
 
@@ -143,7 +161,7 @@ def test_custom_accent_slot_is_reused_not_accumulated(qapp):
 
 
 def test_opacity_is_independent_per_panel_style(qapp):
-    dialog = SettingsDialog(Config(panel_style="pill", opacity=1.0, frost_opacity=0.4))
+    dialog = SettingsDialog(Config(panel_style=PanelStyle.PILL, opacity=1.0, frost_opacity=0.4))
     assert dialog._opacity.value() == 100  # shows the black panel's opacity
     dialog._panel.setCurrentIndex(dialog._panel.findData("frost"))
     assert dialog._opacity.value() == 40  # switches to the frosted panel's opacity
@@ -157,7 +175,7 @@ def test_opacity_is_independent_per_panel_style(qapp):
 
 
 def test_panel_style_has_frosted_option_and_roundtrips(qapp):
-    dialog = SettingsDialog(Config(panel_style="frost"))
+    dialog = SettingsDialog(Config(panel_style=PanelStyle.FROST))
     assert dialog._panel.count() == 4  # black / white / frosted / text
     assert dialog._panel.currentData() == "frost"  # selected by data, not index
     assert dialog.current_config().panel_style == "frost"
@@ -165,7 +183,7 @@ def test_panel_style_has_frosted_option_and_roundtrips(qapp):
 
 
 def test_white_panel_option_present_and_roundtrips(qapp):
-    dialog = SettingsDialog(Config(panel_style="white"))
+    dialog = SettingsDialog(Config(panel_style=PanelStyle.WHITE))
     assert dialog._panel.findData("white") >= 0
     assert dialog._panel.currentData() == "white"
     assert dialog.current_config().panel_style == "white"
@@ -254,12 +272,12 @@ def test_title_logo_follows_the_accent(qapp):
 def test_theme_selector_roundtrips_and_switches_palette(qapp):
     from kotonoha.settings_dialog import _PALETTES
 
-    dark = SettingsDialog(Config(theme="dark"))
+    dark = SettingsDialog(Config(theme=ThemeMode.DARK))
     assert dark._theme == "dark"
     assert cast(str, _PALETTES["dark"]["TEXT"]) in dark.styleSheet()
     assert dark.current_config().theme == "dark"
 
-    light = SettingsDialog(Config(theme="light"))
+    light = SettingsDialog(Config(theme=ThemeMode.LIGHT))
     assert light._theme == "light"
     assert cast(str, _PALETTES["light"]["TEXT"]) in light.styleSheet()
     # Switching theme on Apply re-skins the dialog live.
@@ -330,7 +348,7 @@ def test_style_picker_lists_the_familys_real_styles(qapp):
 
 
 def test_panel_width_control_enabled_only_for_fixed_mode(qapp):
-    dialog = SettingsDialog(Config(panel_width_mode="fixed", panel_width=820))
+    dialog = SettingsDialog(Config(panel_width_mode=PanelWidthMode.FIXED, panel_width=820))
     assert dialog._panel_width.isEnabled() is True
     assert dialog.current_config().panel_width == 820
     # Switching to fit-to-text disables the width value (it no longer applies).
@@ -346,7 +364,7 @@ def test_sidebar_lists_every_section_and_drives_the_stack(qapp):
     previous = current_language()
     set_language("en")
     try:
-        dialog = SettingsDialog(Config(ui_language="en"))
+        dialog = SettingsDialog(Config(ui_language=UiLanguage.EN))
         dialog.show()
         qapp.processEvents()
         qapp.processEvents()
@@ -363,7 +381,7 @@ def test_sidebar_lists_every_section_and_drives_the_stack(qapp):
 
 
 def test_language_change_reveals_restart_button_and_persists(qapp):
-    dialog = SettingsDialog(Config(ui_language="auto"))
+    dialog = SettingsDialog(Config(ui_language=UiLanguage.AUTO))
     assert dialog._restart_btn.isHidden() is True  # nothing changed yet
 
     dialog._ui_language.setCurrentIndex(dialog._ui_language.findData("ja"))
@@ -465,7 +483,7 @@ def test_reset_icon_tab_rebuilds_icon_pickers_without_doubling(qapp):
     from kotonoha import leaf_icon
 
     dialog = SettingsDialog(
-        Config(icon_name=leaf_icon.WHITE, window_icon_name=leaf_icon.BLACK, theme="light")
+        Config(icon_name=leaf_icon.WHITE, window_icon_name=leaf_icon.BLACK, theme=ThemeMode.LIGHT)
     )
     dialog._nav.setCurrentRow(1)  # Icon page owns the two icon strips
     dialog._reset_current_page()
@@ -498,7 +516,9 @@ def test_selected_icon_is_not_blue_tinted(qapp):
 
 
 def test_effects_controls_roundtrip(qapp):
-    dialog = SettingsDialog(Config(fx_animate=False, fx_glow=True, fx_word_pop=False, fx_intensity="expressive"))
+    dialog = SettingsDialog(
+        Config(fx_animate=False, fx_glow=True, fx_word_pop=False, fx_intensity=FxIntensity.EXPRESSIVE)
+    )
     assert dialog._fx_animate.isChecked() is False
     assert dialog._fx_glow.isChecked() is True
     assert dialog._fx_word_pop.isChecked() is False
@@ -524,7 +544,7 @@ def test_fuzzy_match_toggle_roundtrips(qapp):
 def test_settings_window_opacity_applies_and_roundtrips(qapp):
     # Painted-alpha, not setWindowOpacity (which the Qt Wayland plugin ignores):
     # in the light theme the card is thinned; the window fill is thinned in paintEvent.
-    dialog = SettingsDialog(Config(settings_opacity=0.8, theme="light"))
+    dialog = SettingsDialog(Config(settings_opacity=0.8, theme=ThemeMode.LIGHT))
     assert dialog._settings_opacity.value() == 80
     assert dialog._win_opacity == 0.8
     assert "rgba(255, 255, 255, 204)" in dialog.styleSheet()  # 0.8 * 255 card alpha
@@ -540,7 +560,7 @@ def test_settings_window_opacity_applies_and_roundtrips(qapp):
 def test_settings_opacity_100_is_fully_opaque_and_range_is_full(qapp):
     # 100% must be genuinely opaque (the base palette alpha is < 255, which is why a
     # "100%" window still looked see-through before), and the spin allows 0..100.
-    dialog = SettingsDialog(Config(settings_opacity=1.0, theme="dark"))
+    dialog = SettingsDialog(Config(settings_opacity=1.0, theme=ThemeMode.DARK))
     dialog.resize(200, 200)
     assert dialog._settings_opacity.minimum() == 0
     assert dialog._settings_opacity.maximum() == 100
@@ -566,7 +586,7 @@ def test_font_picker_resolves_an_absent_family_to_an_installed_one(qapp):
 
 
 def test_transition_style_roundtrips(qapp):
-    dialog = SettingsDialog(Config(fx_transition="zoom"))
+    dialog = SettingsDialog(Config(fx_transition=FxTransition.ZOOM))
     assert dialog._fx_transition.currentData() == "zoom"
     dialog._fx_transition.setCurrentIndex(dialog._fx_transition.findData("slide"))
     assert dialog.current_config().fx_transition == "slide"
@@ -574,7 +594,7 @@ def test_transition_style_roundtrips(qapp):
 
 
 def test_reset_effects_tab_also_resets_the_transition_style(qapp):
-    dialog = SettingsDialog(Config(fx_transition="zoom"))
+    dialog = SettingsDialog(Config(fx_transition=FxTransition.ZOOM))
     dialog._nav.setCurrentRow(4)  # 0 General,1 Icon,2 Text,3 Panel,4 Effects
     dialog._reset_current_page()
     assert dialog.current_config().fx_transition == Config().fx_transition  # "rise"
@@ -660,7 +680,9 @@ def test_the_player_dto_is_exported_by_the_module_that_defines_it():
     from kotonoha import players
 
     assert players.__all__ == ["PlayerInfo"]
-    assert "PlayerInfo" not in getattr(__import__("kotonoha.model", fromlist=["model"]), "__all__", [])
+    from kotonoha.players import PlayerInfo
+
+    assert PlayerInfo.__module__ == "kotonoha.players"
 
 
 def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:

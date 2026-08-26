@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import os
 import sqlite3
@@ -10,9 +9,10 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from ..model import LyricLine
+from ..async_worker import BlockingCallRunner
 from .artifact import LyricsArtifact
 from .match import Candidate, MatchConfidence, MatchEvidence, TrackMetadata, evaluate_match
+from .models import LyricLine
 from .titles import NORMALIZER_VERSION
 
 CACHE_SCHEMA_VERSION = 1
@@ -49,6 +49,11 @@ class LyricsCache:
     def __init__(self, path: Path | None = None, *, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
         self._path = path or cache_path()
         self._max_entries = max(1, max_entries)
+        self._worker = BlockingCallRunner("kotonoha-lyrics-cache")
+
+    def close(self) -> None:
+        """Release the cache worker; an already-running SQLite call may finish."""
+        self._worker.close()
 
     async def lookup(
         self,
@@ -56,17 +61,17 @@ class LyricsCache:
         track: TrackMetadata,
         parser: PayloadParser,
     ) -> LyricsArtifact | None:
-        return await asyncio.to_thread(self._lookup_sync, provider, track, parser)
+        return await self._worker.run(self._lookup_sync, provider, track, parser)
 
     async def store(self, artifact: LyricsArtifact) -> None:
         if artifact.confidence is MatchConfidence.HIGH:
-            await asyncio.to_thread(self._store_sync, artifact)
+            await self._worker.run(self._store_sync, artifact)
 
     async def clear(self) -> None:
-        await asyncio.to_thread(self._clear_sync)
+        await self._worker.run(self._clear_sync)
 
     async def count(self) -> int:
-        return await asyncio.to_thread(self._count_sync)
+        return await self._worker.run(self._count_sync)
 
     def _connect(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)

@@ -4,7 +4,7 @@ from kotonoha.lyrics import netease
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.cache import LyricsCache
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
-from kotonoha.model import LyricLine
+from kotonoha.lyrics.models import LyricLine
 
 
 def artifact(

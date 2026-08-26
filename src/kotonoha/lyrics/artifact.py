@@ -4,8 +4,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..model import LyricLine
 from .match import Candidate, MatchConfidence
+from .models import LyricLine
 
 
 @dataclass(frozen=True)

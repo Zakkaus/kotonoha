@@ -5,7 +5,7 @@ from __future__ import annotations
 import re
 import zlib
 
-from ..model import LyricLine, LyricWord
+from .models import LyricLine, LyricWord
 from .payload import decompress_capped
 
 KRC_MAGIC = b"krc1"

@@ -1,5 +1,11 @@
 # Kotonoha 桌面歌词浮窗 — 设计规格 (Spec v0.1)
 
+> **当前实现说明（Phase 2）**：本文中早期的 Cider WebSocket/TypeScript 探针段落仅是历史设计记录，
+> 不是当前协议或启动要求。当前 Python 主链路直接使用 Cider 公共 HTTP API：
+> 每首歌请求一次完整歌词时间轴，播放位置约每秒校准一次，帧间由本地 MediaClock 插值；Cider
+> API token 可选，在 Settings -> Sources -> Cider API token 中设置，并保存到系统密钥环。最终歌词 provider 以 Cider
+> 响应的 source.provider 为准，不把 transport/player 名称当作 provider。
+
 > 一个运行在 Linux Wayland 桌面上的现代化、半透明、可穿透的歌词浮窗。
 > 复用 BiliHUD 的 `layer-shell-qt` 技术栈，把"弹幕 HUD"换成"逐字卡拉 OK 歌词 HUD"。
 
@@ -13,12 +19,12 @@
 - 支持 **Apple Music TTML 逐字（word-by-word）卡拉 OK 高亮**，外加翻译行。
 - 在 Wayland (`wlr-layer-shell`) 下浮于**全屏应用之上**（看视频 / 玩游戏时也能看歌词）。
 - 支持**鼠标穿透（click-through）**：歌词不挡操作。
-- 歌词数据来自已有的 Cider 探针插件（`plugins/cider/lyrics`），通过本地 HTTP 推送。
+- 歌词数据来自 Cider 公共 HTTP API；外部播放器推送统一使用 `kotonoha.adapter` v1 的 generic `snapshot` / `clock` 消息。
 
 ### 1.2 暂不做（v0.1 之外）
 
 - 不内置音乐播放器、不抓取专辑封面渲染背景（可作为后续增强）。
-- 不做多播放器后端（仅 Cider 一个 provider，但**架构上预留** provider 抽象）。
+- 不内置音乐播放器；MPRIS 负责播放器接入，Cider HTTP 是一个可选的播放器/歌词适配器，架构上预留其他播放器。
 - 不做歌词编辑/上传。
 
 ### 1.3 设计原则（继承自 `AGENTS.md`）
@@ -37,18 +43,36 @@
 |---|---|---|
 | GUI | **PyQt6** | 相同 |
 | 异步集成 | **qasync** | 相同 |
-| 本地传输 | **aiohttp WebSocket**（服务端） | 相同库；BiliHUD 用 aiohttp 做 Mirror，这里用其 WS 做 receiver |
+| Cider 接入 | **aiohttp HTTP client**；generic adapter receiver | 公开 HTTP API 是当前 Cider 主链路；外部播放器使用版本化 adapter v1 |
 | Wayland 浮窗 | **layer-shell-qt**（C++ 桥 + ctypes） | **直接移植** `layer_shell_bridge.cpp` |
 | 构建 | **scikit-build-core + CMake** | CMake 负责 native 构建和 wheel 安装布局 |
 | 包管理 | **uv** | 相同 |
-| 歌词来源 | Cider TS 探针插件（已存在） | Kotonoha 独有 |
+| 歌词来源 | Cider HTTP 返回的最终 provider + Netease/lrclib 等 | provider 身份在响应边界归一化 |
 
 > 关键约束（同 BiliHUD README）：浮于全屏之上依赖 compositor 的 `wlr-layer-shell`。
 > KDE Plasma / KWin 与 wlroots 系支持；**GNOME / Mutter 不支持** → 回退为普通置顶窗口。
 
 ---
 
-## 3. 系统架构与数据流
+## 3. 系统架构与数据流（当前）
+
+当前主链路将播放器事实、歌词 source 和展示投影分层：
+
+```text
+MPRIS -> PlaybackCoordinator -> PlaybackObservation
+                                  |
+Cider HTTP / source adapters -> LyricsDocument
+                                  |
+              LyricsPresentationAdapter -> DisplayFrame
+                                  |
+                    QtDisplayPublisher -> LyricsState -> Overlay
+```
+
+外部播放器若不能使用 Cider HTTP，则连接 `ws://127.0.0.1:28745/kotonoha/adapter`，发送
+`kotonoha.adapter` v1 的完整 `snapshot`，并可用独立 `clock` 消息校准播放位置。adapter 只发送
+完整播放事实和完整歌词文档；当前行、上下文行、interlude 与逐字投影全部由 Kotonoha 生成。
+
+> 下方的旧 WebSocket/TS 探针图、旧字段和旧 `LyricsSnapshot` 定义保留作历史记录，不是当前实现契约。
 
 ```
 ┌─────────────────┐   WebSocket (持久连接)        ┌──────────────────────────┐
@@ -74,7 +98,9 @@
                                                    └──────────────────────────┘
 ```
 
-**为什么用 WebSocket（而非定时 POST）**：当前探针是每 1s 盲推一次全量 snapshot，**切行最高有 ~1s 延迟**——对歌词体验很糟。WS 改为**事件驱动**：
+**历史兼容方案说明**：以下 WebSocket 设计记录的是旧探针路径。当前 Cider 主链路使用公开 HTTP API，
+每首歌读取一次完整歌词时间轴，并以约 1s 的 playback 校准驱动本地 MediaClock；WS 仍可作为未来
+外部播放器 adapter 的兼容入口。
 
 - 真正发生变化时立刻推（切行 / 播放暂停 / seek / 换歌）→ 切行近乎零延迟；
 - 低频**心跳**（~500ms）只带 `currentTime` 做漂移校正；
@@ -88,7 +114,15 @@
 
 ---
 
-## 4. 数据契约（来自 Cider 探针 `types.ts`）
+## 4. 当前数据契约（`kotonoha.adapter` v1）
+
+Python 入口由 `lyrics.protocol.AdapterProtocolDecoder` 严格解析 `snapshot` / `clock` 两类消息。
+`snapshot.playback` 是 normalized playback observation，`snapshot.lyrics` 是完整的 `LyricsDocument`
+输入；`lyrics.source` 是最终歌词来源的稳定 id，`sourceName` 只用于保留显示名称。旧的
+`found`、`provider`、`currentLine`、`previousLine`、`nextLine`、`aroundLines` 和 `reason` 不属于当前
+wire contract。
+
+### 4.1 历史数据契约（仅供追溯）
 
 接收端 endpoint（传输从 HTTP POST 改为 WebSocket）：
 
@@ -152,9 +186,12 @@ src/kotonoha/
 │   └── overlay_contracts.py # 能力值对象与工具无关的窗口契约
 ├── layer_shell_bridge.cpp   # C++ 桥（移植自 bilihud，改 scope="kotonoha"）
 ├── build_bridge.sh          # 构建脚本（移植；产物 libkoto-layer.so）
-├── model.py                 # 上述 dataclass + payload 解析（纯函数，易测）
-├── state.py                 # LyricsState：持有快照，发 pyqtSignal(snapshot_changed)
-├── receiver.py              # LyricsReceiver：aiohttp app，把 payload 灌进 state
+├── display/                 # DisplayFrame、presentation、唯一 Qt publisher
+├── playback/                # PlaybackCoordinator 与 normalized playback facts
+├── lyrics/protocol.py       # adapter v1 snapshot/clock boundary decoder
+├── lyrics/sources.py        # local/exact/network source contracts
+├── state.py                 # LyricsState：持有 DisplayFrame，发 frame_changed
+├── receiver.py              # AdapterReceiver：aiohttp app，把 adapter message 灌进 frame path
 ├── overlay.py               # LyricsOverlay(QWidget)：透明窗口 + layer-shell + 逐字渲染
 ├── karaoke_label.py         # KaraokeLabel：逐字渐变高亮的自绘 QWidget
 ├── tray.py                  # 托盘菜单：穿透开关 / 锁定位置 / 设置 / 退出
@@ -198,13 +235,13 @@ src/kotonoha/
 
 ---
 
-## 7. 接收服务（aiohttp WebSocket）
+## 7. 外部 adapter 接收服务（aiohttp WebSocket）
 
 ### 7.1 服务端（Kotonoha）
 
 ```python
 # receiver.py
-class LyricsReceiver:
+class AdapterReceiver:
     def __init__(self, state: LyricsState, host="127.0.0.1", port=28745): ...
     async def start(self) -> None:   # aiohttp.web.AppRunner + TCPSite
     async def stop(self) -> None:
@@ -213,28 +250,27 @@ class LyricsReceiver:
         await ws.prepare(request)
         async for msg in ws:                      # 持续读帧
             if msg.type == web.WSMsgType.TEXT:
-                snapshot = parse_payload(json.loads(msg.data))  # model.py 纯函数
-                self.state.update(snapshot)                     # 触发 pyqtSignal
+                message = decoder.decode_text(msg.data, observed_at=time.monotonic())
+                publish(message)
         return ws
 ```
 
-- 路由：`GET /kotonoha/cider/lyrics`（WS upgrade）。
+- 路由：`GET /kotonoha/adapter`（WS upgrade），同时保留 POST 调试入口。
 - 仅监听 `127.0.0.1`（本机，隐私）。
 - 端口可在 config 覆盖（默认 `28745`，对齐探针默认 `CIDER_LYRICS_PROBE_PORT`）。
 - 用 `qasync` 事件循环承载 aiohttp，**与 Qt 同循环**，无需额外线程。
 - 容错：单个客户端断开/坏帧不影响服务端；服务端长期 `listen`，等探针随时重连。
 - （可选）保留一个 `POST` 调试路由，便于用 curl 灌测试帧——不是主路径。
 
-### 7.2 客户端（Cider 探针，需改造）
+### 7.2 客户端（可选外部 adapter）
 
-把 `main.ts` 里"`setInterval` + `fetch POST`"换成 WS 客户端：
+外部 adapter 通过 WebSocket 发送 generic v1 消息：
 
-- 维护一个到 `ws://127.0.0.1:28745/...` 的连接；
-- `onopen` → 立即发一帧完整 snapshot（`reason: "open"`），并启动心跳定时器（~500ms，`reason: "heartbeat"`）；
-- 在播放状态变化点（切行、播放/暂停、seek、换歌）**事件驱动**地发 `reason: "change"`；
-- `onclose / onerror` → **指数退避重连**（如 0.5s→1s→2s→…上限 ~5s），Kotonoha 没开时安静重试；
-- 受影响文件：`plugins/cider/lyrics/src/main.ts`、`src/probe/types.ts`（`ProbeConfig.endpoint` 语义改为 ws URL）；`scripts/receive.mjs` 调试接收器一并改成 WS（或保留 HTTP 调试旁路）。
-- 探针的 payload 构造（`createProbePayload` / `probe/*`）**无需改动**，复用现有逻辑。
+- 连接 `ws://127.0.0.1:28745/kotonoha/adapter`；
+- 连接建立和 track/document 变化时发送完整 `snapshot`；
+- 播放位置变化可发送只含 `positionS`、`status` 和 `trackRef` 的 `clock`；
+- `onclose / onerror` 可使用指数退避重连，接收端不依赖任何 Cider 专用字段；
+- Cider 插件只是一个可选 adapter producer，Cider HTTP 路径不依赖它。
 
 ---
 
@@ -288,9 +324,10 @@ class LyricsReceiver:
 - **外观**：字号、不透明度、背板样式（玻璃面板 / 纯文字）
 - **歌词**：逐字高亮开关、显示翻译、**翻译语言**（自动跟随系统 / 简中 / 繁中 / EN / JA / …）
 - **位置**：顶部/底部、距边缘、水平偏移、默认穿透
-- **连接**：WebSocket 端口（改后需重启 + 同步探针）
+- **连接**：adapter 端口（改后需重启 + 同步外部 adapter）
 
-**双语 / 翻译语言**：Apple Music TTML 内含多语言翻译（`<translation xml:lang>`）。Kotonoha 把首选语言（默认由 `QLocale.system()` 推断，见 `i18n.py`）通过 WS **控制帧** `{"type":"kotonoha/config","translationLanguage":"zh-Hans"}` 推给探针；探针据此从 TTML 抽取对应译文（`setPreferredTranslationLanguage` 会清缓存触发重解析）。设置里改语言即时广播给已连接探针。
+**双语 / 翻译语言**：Apple Music TTML 内含多语言翻译（`<translation xml:lang>`）。adapter 在
+`snapshot.lyrics.lines[].translation` 中发送已经选定的译文；当前 receiver 不接受配置控制帧。
 
 - **config.py**：`~/.config/kotonoha/config.json`（XDG_CONFIG_HOME），字段：
   `port(28745), anchor_top(默认 true), margin_edge, margin_x, font_size, opacity, show_translation(默认 true), translation_language(默认 "auto"), accent_start/end/sweep(默认粉色), passthrough(默认 true), karaoke(默认 true), panel_style(pill/text)`。
@@ -325,10 +362,10 @@ dependencies = ["PyQt6", "qasync", "aiohttp"]
 
 沿用 BiliHUD 的"纯逻辑可测"策略，放在 `tests/`：
 
-- `test_model.py`：payload → `LyricsSnapshot` 解析（含字段缺失、`timing != Word`、空 words、脏数据）。
+- `test_lyrics_protocol.py`：adapter v1 payload → normalized playback/document 解析（含坏字段、预算和旧 payload 拒绝）。
 - `test_platform_detect.py`：`should_disable_layer_shell` / `find_layer_shell_library` 降级判定（移植 BiliHUD 同名测试）。
-- `test_receiver.py`：用 `aiohttp` 测试客户端 POST 一个 payload，断言 state 收到对应快照、返回 204。
-- `test_state.py`：信号在快照变化时发射、相同快照不重复发射的语义。
+- `test_receiver.py`：用 `aiohttp` 测试客户端 POST 一个 adapter v1 payload，断言 state 收到对应 frame、返回 204。
+- `test_state.py`：信号在 frame 变化时发射、相同 frame 不重复发射的语义。
 - `test_karaoke.py`：给定 `current_time` 和 words，计算"已唱进度/当前词索引/词内进度"的纯函数正确（高亮渲染的算术部分抽成纯函数测）。
 
 GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函数。

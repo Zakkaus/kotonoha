@@ -3,8 +3,8 @@
 A frameless, translucent, top-most window that floats above fullscreen apps via
 the Wayland layer-shell bridge (with graceful fallback). It shows the previous
 line, the current line with a karaoke sweep, an optional translation, and the
-next line. A ~60fps timer advances the local media clock so the sweep stays
-smooth between probe heartbeats.
+next line. The application display coordinator supplies the current media time;
+the widget only applies presentation settings and paints it.
 """
 
 from __future__ import annotations
@@ -32,13 +32,13 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from .clock import MediaClock
 from .config import TRACK_OFFSET_STEP_MS, Config, set_track_offset, track_identity_key
+from .display.models import EMPTY_FRAME, DisplayFrame, DisplayState
 from .icons import earlier_icon, later_icon, lock_icon, settings_icon
 from .karaoke import interlude_text
 from .karaoke_label import KaraokeLabel
 from .lyrics.hanzi_fold import convert_script
-from .model import EMPTY_SNAPSHOT, Interlude, LyricLine, LyricsSnapshot
+from .lyrics.models import LyricLine
 from .platform import (
     DefaultOverlayPlatformFactory,
     LayerShellController,
@@ -54,7 +54,6 @@ from .strings import t
 
 logger = logging.getLogger(__name__)
 
-RENDER_INTERVAL_MS = 16  # ~60fps
 CONTROL_ICON_COLOR = "#9AA0A6"  # soft grey so the lock/gear don't glare against the panel
 #: The marker stands in for a lyric, so it is drawn under the lyric size — but it
 #: still has to read as part of the same panel, which at 0.42 it did not: it sat
@@ -102,7 +101,7 @@ class LyricsOverlay(QWidget):
         super().__init__()
         self._state = state
         self._config = config
-        self._clock = MediaClock()
+        self._frame = EMPTY_FRAME
         self._passthrough = config.passthrough
         self._layer_pos = QPoint()  # screen-local top-left of the surface
         self._active_screen = None
@@ -112,10 +111,10 @@ class LyricsOverlay(QWidget):
         self._drag_applied = True
         self._drag_local = QPoint()
         self._track_key = ""
-        # The wait currently on screen; None whenever a line is being sung.
-        self._interlude: Interlude | None = None
-        #: What the marker last read, so the layout is rebuilt only when it changes.
+        # Cache only the rendered marker text; interlude timing itself belongs to
+        # DisplayFrame and is never inferred by this widget.
         self._interlude_text = ""
+        self._interlude_range: tuple[float, float] | None = None
         self._feedback_timer = QTimer(self)
         self._feedback_timer.setSingleShot(True)
         self._feedback_timer.timeout.connect(self._restore_after_offset_feedback)
@@ -156,19 +155,13 @@ class LyricsOverlay(QWidget):
         self._build_ui()
         self.apply_config(config)
 
-        self._state.snapshot_changed.connect(self._on_snapshot)
-        self._state.time_ticked.connect(self._on_tick)
+        self._state.frame_changed.connect(self._on_frame)
         if isinstance(app, QGuiApplication):
             app.screenAdded.connect(self._on_screen_added)
             app.screenRemoved.connect(self._on_screen_removed)
         self._platform.set_output_handler(self._restore_output)
 
-        self._render_timer = QTimer(self)
-        self._render_timer.setInterval(RENDER_INTERVAL_MS)
-        self._render_timer.timeout.connect(self._render_tick)
-        self._render_timer.start()
-
-        self._on_snapshot(self._state.snapshot)
+        self._on_frame(self._state.frame)
 
     # --- UI ---
 
@@ -585,47 +578,39 @@ class LyricsOverlay(QWidget):
         if handle is not None:
             handle.setScreen(screen)
 
-    # --- snapshot handling ---
+    # --- frame handling ---
 
-    def _on_tick(self, current_time: float | None, is_playing: bool | None) -> None:
-        # High-frequency calibration from the audio element. Forward motion decides
-        # play state, so a missing flag is fine.
-        if current_time is not None:
-            self._clock.sync(current_time, is_playing if isinstance(is_playing, bool) else True)
-
-    def _on_snapshot(self, snapshot: LyricsSnapshot) -> None:
-        # Baseline clock calibration from the full frame, so the sweep works even
-        # before/without the high-frequency tick (e.g. an un-upgraded probe). The
-        # tick, when present, just calibrates more often; small disagreements
-        # between the two time sources are absorbed by the clock's smoothing.
-        if snapshot.current_time is not None:
-            self._clock.sync(snapshot.current_time, snapshot.is_playing)
-
-        if snapshot.found and snapshot.current is None and snapshot.interlude is not None:
-            self._show_interlude(snapshot)
+    def _on_frame(self, frame: DisplayFrame) -> None:
+        self._frame = frame
+        has_lyrics = frame.state is DisplayState.LYRICS_AVAILABLE and frame.document is not None
+        if has_lyrics and frame.current is None and frame.interlude is not None:
+            self._show_interlude(frame)
             self._refresh_input_region()
             return
 
-        if self._interlude is not None:
-            self._interlude = None
+        if self._interlude_text:
+            self._interlude_text = ""
+            self._interlude_range = None
             self._current.set_scale(1.0)
-        if not snapshot.found or snapshot.current is None:
-            self._show_empty(snapshot)
+        if not has_lyrics or frame.current is None:
+            self._show_empty(frame)
             self._refresh_input_region()
             return
 
         self._container.setVisible(True)
-        self._track_key = track_identity_key(snapshot.title or "", snapshot.artist or "", snapshot.duration_s)
-        current = self._convert_line(snapshot.current)
-        assert current is not None  # snapshot.current is non-None here (checked above)
-        previous = self._convert_line(snapshot.previous)
-        next_line = self._convert_line(snapshot.next)
+        document = frame.document
+        self._set_track_key_from_frame(frame)
+        current = self._convert_line(frame.current)
+        if current is None:
+            self._show_empty(frame)
+            self._refresh_input_region()
+            return
+        previous = self._convert_line(frame.previous)
+        next_line = self._convert_line(frame.next)
         self._set_context_text(self._prev_label, previous.text if previous else "")
         self._set_context_text(self._next_label, next_line.text if next_line else "")
-        # The snapshot says the timing exists; the setting says whether to use it.
-        # Only the snapshot was consulted, so "Word-by-word highlight" had no
-        # effect at all — it saved, it translated, and it changed nothing.
-        self._current.set_line(current, snapshot.word_karaoke and self._config.karaoke)
+        word_mode = document is not None and document.has_word_timing and current.has_word_timing
+        self._current.set_line(current, word_mode and self._config.karaoke)
 
         if self._config.show_translation and current.translation:
             # Reuse the current line's time range so the translation sweeps in sync.
@@ -635,7 +620,38 @@ class LyricsOverlay(QWidget):
         else:
             self._translation.set_line(None, False)
             self._translation.setVisible(False)
+        media_time = self._media_time(frame.current_time)
+        self._current.set_media_time(media_time)
+        self._translation.set_media_time(media_time)
         self._refresh_input_region()
+
+    def _refresh_media_time(self) -> None:
+        """Reapply a changed display offset without replacing the rendered line."""
+        media_time = self._media_time(self._frame.current_time)
+        self._current.set_media_time(media_time)
+        self._translation.set_media_time(media_time)
+
+    def _media_time(self, current_time: float | None) -> float | None:
+        """Apply user-configured lyric latency to an application-owned time."""
+        if current_time is None:
+            return None
+        offset = self._config.track_offsets.get(self._track_key, 0)
+        return current_time + (self._config.lead_ms + offset) / 1000.0
+
+    def _set_track_key(self, title: str, artist: str, duration: float | None) -> None:
+        """Set the presentation offset key for the frame currently being drawn."""
+        self._track_key = track_identity_key(title, artist, duration)
+
+    def _set_track_key_from_frame(self, frame: DisplayFrame) -> None:
+        """Derive the presentation offset key from a normalized display frame."""
+        track = frame.track
+        document = frame.document
+        title_value = track.title if track is not None else document.title if document is not None else None
+        artist_value = track.artist if track is not None else document.artist if document is not None else None
+        duration = track.duration_s if track is not None else document.duration_s if document is not None else None
+        title = title_value if title_value is not None else ""
+        artist = artist_value if artist_value is not None else ""
+        self._set_track_key(title, artist, duration)
 
     def _convert_line(self, line: LyricLine | None) -> LyricLine | None:
         """Convert a line's displayed text to the configured lyric script (簡/繁).
@@ -653,44 +669,35 @@ class LyricsOverlay(QWidget):
             words=words,
         )
 
-    def _show_interlude(self, snapshot: LyricsSnapshot) -> None:
+    def _show_interlude(self, frame: DisplayFrame) -> None:
         """Stand in for the line while an intro or a break is playing.
 
         The surrounding lines stay put: the panel is mid-song, and collapsing it to
         the idle state would read as though playback had stopped.
         """
-        self._interlude = snapshot.interlude
-        self._interlude_text = ""
         # A marker stands in for the words; drawn at the lyric size it dwarfs them.
         self._current.set_scale(INTERLUDE_SCALE)
         self._container.setVisible(True)
-        previous = self._convert_line(snapshot.previous)
-        next_line = self._convert_line(snapshot.next)
+        self._set_track_key_from_frame(frame)
+        previous = self._convert_line(frame.previous)
+        next_line = self._convert_line(frame.next)
         self._set_context_text(self._prev_label, previous.text if previous else "")
         self._set_context_text(self._next_label, next_line.text if next_line else "")
         self._translation.set_line(None, False)
         self._translation.setVisible(False)
-        self._paint_interlude(snapshot.current_time or 0.0)
-
-    def _paint_interlude(self, position: float) -> None:
-        """Redraw the marker for where the wait has got to.
-
-        The marker is handed to the sweep as a line spanning the wait, so the accent
-        runs across it exactly as it runs across a sung line — the wait shows its own
-        progress in the same language as the rest of the panel. Only the text is
-        rebuilt, and only when it changes: the sweep itself is a per-frame paint.
-        """
-        interlude = self._interlude
+        interlude = frame.interlude
         if interlude is None:
             return
+        position = self._media_time(frame.current_time) or 0.0
         text = interlude_text(
             interlude,
             position,
             style=self._config.interlude_style,
             countdown=self._config.interlude_countdown,
         )
-        if text != self._interlude_text:
+        if (interlude.start, interlude.end) != self._interlude_range or text != self._interlude_text:
             self._interlude_text = text
+            self._interlude_range = (interlude.start, interlude.end)
             self._current.set_line(
                 LyricLine(
                     index=0, id="interlude", start=interlude.start, end=interlude.end,
@@ -700,36 +707,29 @@ class LyricsOverlay(QWidget):
             )
         self._current.set_media_time(position)
 
-    def _show_empty(self, snapshot: LyricsSnapshot) -> None:
+    def _show_empty(self, frame: DisplayFrame) -> None:
         self._track_key = ""
         self._prev_label.setText("")
         self._next_label.setText("")
         # No translation line while idle; the title carries the whole message.
         self._translation.set_line(None, False)
         self._translation.setVisible(False)
-        if snapshot.title:
-            artist = f" — {snapshot.artist}" if snapshot.artist else ""
+        track = frame.track
+        document = frame.document
+        title = track.title if track is not None else document.title if document is not None else None
+        artist_name = track.artist if track is not None else document.artist if document is not None else None
+        if title:
+            artist = f" — {artist_name}" if artist_name else ""
             # Show the now-playing title in the main line at full size (it used to
             # go in the tiny translation label, which read as uncomfortably small).
-            text = convert_script(f"♪ {snapshot.title}{artist}", self._config.lyrics_script)
+            text = convert_script(f"♪ {title}{artist}", self._config.lyrics_script)
         else:
             # Nothing playing: a default line so the panel isn't a blank box.
             text = t("overlay.idle")
         # end far in the future so it stays un-swept (plain) while idle.
         title_line = LyricLine(index=0, id="title", start=0.0, end=1e9, text=text, translation="", words=())
         self._current.set_line(title_line, False)
-
-    def _render_tick(self) -> None:
-        t = self._clock.now()
-        if t is not None:
-            offset = self._config.track_offsets.get(self._track_key, 0)
-            t += (self._config.lead_ms + offset) / 1000.0  # global latency plus recording-specific correction
-        if self._interlude is not None:
-            if t is not None:
-                self._paint_interlude(t)
-            return
-        self._current.set_media_time(t)
-        self._translation.set_media_time(t)
+        self._current.set_media_time(None)
 
     # --- layer shell / placement ---
 
@@ -834,7 +834,7 @@ class LyricsOverlay(QWidget):
         offset = set_track_offset(self._config, self._track_key, current + delta_ms)
         self.track_offset_changed.emit(self._track_key, offset)
         self._show_offset_feedback(offset)
-        self._render_tick()
+        self._refresh_media_time()
 
     def _restore_after_offset_feedback(self) -> None:
         """Put the lyric back after the offset readout.
@@ -842,7 +842,7 @@ class LyricsOverlay(QWidget):
         A bound method, not a lambda: PyQt holds the receiver weakly for a bound
         method, so the connection dies with the widget. A lambda is held strongly
         and keeps firing into a deleted C++ object, which segfaults."""
-        self._on_snapshot(self._state.snapshot)
+        self._on_frame(self._state.frame)
 
     def _show_offset_feedback(self, offset_ms: int) -> None:
         line = LyricLine(0, "offset-feedback", 0.0, 1e9, t("overlay.offset.value").format(offset=offset_ms), "", ())
@@ -865,7 +865,7 @@ class LyricsOverlay(QWidget):
     def eventFilter(self, a0: QObject | None, a1: QEvent | None) -> bool:
         # The container resizes as the pill/lyric changes size; keep the input
         # region matched to it. This fixes the initially oversized region before
-        # the first snapshot shrinks the pill to its real size.
+        # the first frame shrinks the pill to its real size.
         if a0 is self._container and a1 is not None:
             if a1.type() in {QEvent.Type.Move, QEvent.Type.Resize}:
                 # The rounded panel antialiases one pixel beyond the container's
@@ -902,7 +902,6 @@ class LyricsOverlay(QWidget):
             self._drag_moved = False
             self._drag_applied = True
             self._drag_local = local
-            self._render_timer.stop()  # pause the sweep so it isn't repainted mid-drag
             a0.accept()
         else:
             super().mousePressEvent(a0)
@@ -946,7 +945,6 @@ class LyricsOverlay(QWidget):
             self._drag_moved = False
             self._drag_applied = True
             self._platform.end_drag()
-            self._render_timer.start()  # resume the sweep
             if moved and applied and self._platform.capabilities.client_positioning:
                 self._commit_drag_position(a0.position().toPoint() if a0 is not None else None)
             elif moved:
@@ -1126,5 +1124,4 @@ class LyricsOverlay(QWidget):
         return max(0, min(255, round(255 * opacity)))
 
     def reset(self) -> None:
-        self._clock.reset()
-        self._on_snapshot(EMPTY_SNAPSHOT)
+        self._on_frame(EMPTY_FRAME)

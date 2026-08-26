@@ -17,11 +17,12 @@ from dataclasses import dataclass
 
 import aiohttp
 
-from ..model import LyricLine
 from .artifact import LyricsArtifact
+from .http import LyricsSession
 from .krc_parser import parse_krc
 from .lrc_parser import parse_lrc
 from .match import Candidate, MatchConfidence, TrackMetadata, query_variants, ranked_matches
+from .models import LyricLine
 from .payload import read_json_capped
 
 logger = logging.getLogger(__name__)
@@ -71,7 +72,7 @@ def _records(data: object) -> list[Record]:
     return records
 
 
-async def search(session: aiohttp.ClientSession, keyword: str) -> list[Record]:
+async def search(session: LyricsSession, keyword: str) -> list[Record]:
     params = {"ver": "1", "man": "yes", "client": "pc", "keyword": keyword}
     async with session.get(SEARCH_URL, params=params, headers=HEADERS, timeout=TIMEOUT) as response:
         response.raise_for_status()
@@ -79,7 +80,7 @@ async def search(session: aiohttp.ClientSession, keyword: str) -> list[Record]:
     return _records(data)
 
 
-async def _download_content(session: aiohttp.ClientSession, record: Record, fmt: str) -> bytes:
+async def _download_content(session: LyricsSession, record: Record, fmt: str) -> bytes:
     params = {
         "ver": "1",
         "client": "pc",
@@ -102,12 +103,12 @@ async def _download_content(session: aiohttp.ClientSession, record: Record, fmt:
         return b""
 
 
-async def download_lrc(session: aiohttp.ClientSession, record: Record) -> str:
+async def download_lrc(session: LyricsSession, record: Record) -> str:
     body = await _download_content(session, record, "lrc")
     return body.decode("utf-8", "replace")
 
 
-async def download_krc(session: aiohttp.ClientSession, record: Record) -> bytes:
+async def download_krc(session: LyricsSession, record: Record) -> bytes:
     return await _download_content(session, record, "krc")
 
 
@@ -142,7 +143,7 @@ def _query_keywords(track: TrackMetadata, fuzzy: bool) -> tuple[str, ...]:
 
 
 async def fetch_artifact(
-    session: aiohttp.ClientSession,
+    session: LyricsSession,
     track: TrackMetadata,
     *,
     fuzzy: bool = False,

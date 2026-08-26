@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import math
 import re
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from ..lyrics.match import TrackMetadata
 from ..lyrics.titles import clean_title, performing_artist, recover_artist
@@ -76,7 +76,7 @@ def _clean_title(title: str, artist: str = "") -> str:
     return cleaned.strip() or title.strip()
 
 
-def _as_text(value: Any) -> str:
+def _as_text(value: object) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, (list, tuple)):
@@ -84,7 +84,7 @@ def _as_text(value: Any) -> str:
     return ""
 
 
-def _length_seconds(value: Any) -> float | None:
+def _length_seconds(value: object) -> float | None:
     if not isinstance(value, (int, float)) or isinstance(value, bool):
         return None
     length_us = float(value)
@@ -201,7 +201,7 @@ class TrackInfo:
         return self.track_id, self.title, self.artist, self.album
 
 
-def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
+def parse_metadata(raw: Mapping[str, object]) -> TrackInfo:
     length_s = _length_seconds(raw.get("mpris:length"))
     reported = _as_text(raw.get("xesam:title"))
     artist = recover_artist(reported, performing_artist(_as_text(raw.get("xesam:artist"))))
@@ -216,7 +216,7 @@ def parse_metadata(raw: dict[str, Any]) -> TrackInfo:
     )
 
 
-def unwrap(metadata: object) -> dict[str, Any]:
+def unwrap(metadata: object) -> dict[str, object]:
     if not isinstance(metadata, dict):
         return {}
     return {

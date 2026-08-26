@@ -13,6 +13,17 @@ def _imports(path: Path) -> tuple[ast.Import | ast.ImportFrom, ...]:
     return tuple(node for node in ast.walk(tree) if isinstance(node, (ast.Import, ast.ImportFrom)))
 
 
+def _module_names(path: Path) -> set[str]:
+    """Return absolute and relative import spellings used by one module."""
+    names: set[str] = set()
+    for node in _imports(path):
+        if isinstance(node, ast.Import):
+            names.update(alias.name for alias in node.names)
+        elif node.module is not None:
+            names.add("." * node.level + node.module)
+    return names
+
+
 #: Modules outside the platform package that may still name the concrete bridge.
 #: controller.py is the composition root and is meant to; overlay.py builds its own
 #: default when none is passed, which is the one place the contract does not yet
@@ -120,3 +131,91 @@ def test_the_matcher_holds_no_platform_grammar():
     match_source = (SOURCE_ROOT / "lyrics" / "match.py").read_text(encoding="utf-8")
 
     assert "re.compile" not in match_source, "a grammar rule has drifted back into the matcher"
+
+
+def test_lyrics_contract_modules_are_toolkit_and_transport_neutral():
+    """Domain/source contracts must not acquire Qt, aiohttp, or display imports."""
+    contract_paths = (
+        SOURCE_ROOT / "lyrics" / "models.py",
+        SOURCE_ROOT / "lyrics" / "ownership.py",
+        SOURCE_ROOT / "lyrics" / "sources.py",
+        SOURCE_ROOT / "lyrics" / "workflow.py",
+        SOURCE_ROOT / "lyrics" / "live_source.py",
+        SOURCE_ROOT / "playback" / "models.py",
+    )
+    forbidden = ("PyQt6", "aiohttp", "display", "QtDisplayPublisher")
+    violations = [
+        f"{path.name}: {module}"
+        for path in contract_paths
+        for module in _module_names(path)
+        if any(part in module for part in forbidden)
+    ]
+    assert not violations, "feature contracts must not depend on UI or concrete transports: " + ", ".join(violations)
+
+
+def test_display_publisher_has_one_application_owner():
+    """Provider and receiver adapters may not construct their own Qt publisher."""
+    owners: list[str] = []
+    for path in _python_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "QtDisplayPublisher":
+                owners.append(path.relative_to(SOURCE_ROOT).as_posix())
+    assert owners == ["display/coordinator.py"]
+
+
+def test_provider_boundaries_do_not_retain_legacy_display_or_gate_contracts():
+    """Player adapters publish through application ports and source ownership."""
+    forbidden = {"LyricsState", "LyricsSnapshot", "SourceGate", "QtDisplayPublisher"}
+    violations: list[str] = []
+    for name in ("mpris.py", "mpris_lyrics.py", "cider_api.py"):
+        path = SOURCE_ROOT / "providers" / name
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8"))):
+            if isinstance(node, ast.Name) and node.id in forbidden:
+                violations.append(f"{name}: {node.id}")
+            if isinstance(node, ast.Attribute) and node.attr in forbidden:
+                violations.append(f"{name}: {node.attr}")
+    assert not violations, "provider boundaries retain legacy contracts: " + ", ".join(violations)
+
+
+def test_playback_application_boundary_does_not_expose_dbus_dynamic_values():
+    """D-Bus variants must be normalized before reaching playback coordination."""
+    path = SOURCE_ROOT / "playback" / "coordinator.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    dynamic_names = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "Any"]
+    assert not dynamic_names, "playback coordination must use typed property-change values"
+
+
+def test_large_ui_modules_are_explicitly_scoped():
+    """Keep the two legacy Qt roots visible until their ownership split lands.
+
+    These are deliberate exceptions, not a general size waiver: both classes are
+    single Qt roots whose event/paint callbacks and staged widget state must share
+    one QObject owner. A new oversized module, or a new nested oversized module,
+    fails this gate until it gets an explicit responsibility boundary.
+    """
+    approved = {
+        "overlay.py": "single QWidget owns Qt paint/event overrides and platform callbacks",
+        "settings_dialog.py": "single QDialog owns page widgets and staged form state",
+    }
+    offenders: list[str] = []
+    for path in SOURCE_ROOT.rglob("*.py"):
+        lines = len(path.read_text(encoding="utf-8").splitlines())
+        relative = path.relative_to(SOURCE_ROOT).as_posix()
+        if lines > 800 and relative not in approved:
+            offenders.append(f"{relative} ({lines} lines)")
+    assert all(reason for reason in approved.values())
+    assert not offenders, "split oversized modules by responsibility: " + ", ".join(offenders)
+
+
+def test_application_code_does_not_swallow_unknown_failures():
+    """Broad exception handlers must not become an application control path."""
+    violations: list[str] = []
+    for path in _python_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ExceptHandler):
+                continue
+            if isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"}:
+                violations.append(path.relative_to(SOURCE_ROOT).as_posix())
+    assert not violations, "catch expected boundary failures explicitly: " + ", ".join(violations)

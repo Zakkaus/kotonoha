@@ -45,15 +45,17 @@ from behavior_runtime_corpus import (
 )
 
 from kotonoha.clock import MediaClock
+from kotonoha.display.models import DisplayState
 from kotonoha.lyrics.krc_parser import parse_krc
 from kotonoha.lyrics.lrc_parser import parse_lrc
 from kotonoha.lyrics.match import best_match
-from kotonoha.lyrics.select import build_snapshot
+from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
+from kotonoha.lyrics.select import build_frame
 from kotonoha.lyrics.titles import clean_title, recover_artist, split_title
 from kotonoha.lyrics.yrc_parser import parse_yrc
-from kotonoha.model import LyricLine
 from kotonoha.platform.overlay_contracts import OverlayOperationResult
-from kotonoha.providers.gate import SourceGate
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus
 from kotonoha.providers.mpris_track import lyrics_lookup_reason
 
 
@@ -107,18 +109,22 @@ def _match_projection(case: MatchInput) -> MatchOutput:
 
 
 def _display_projection(case: DisplayInput) -> DisplayOutput:
-    snapshot = build_snapshot(
-        list(case.lines),
-        case.position,
-        provider="corpus",
+    document = LyricsDocument(
+        "corpus",
         song_id="corpus-song",
         title="Corpus",
         artist="Tester",
-        is_playing=True,
         duration_s=case.duration_s,
+        timing=TimingKind.LINE if case.lines else None,
+        lines=tuple(case.lines),
     )
-    interlude = None if snapshot.interlude is None else (snapshot.interlude.start, snapshot.interlude.end)
-    return DisplayOutput(snapshot.found, None if snapshot.current is None else snapshot.current.text, interlude)
+    frame = build_frame(document, case.position, is_playing=True)
+    interlude = None if frame.interlude is None else (frame.interlude.start, frame.interlude.end)
+    return DisplayOutput(
+        frame.state is DisplayState.LYRICS_AVAILABLE,
+        None if frame.current is None else frame.current.text,
+        interlude,
+    )
 
 
 def _lookup_projection(case: LookupCase) -> str | None:
@@ -126,12 +132,30 @@ def _lookup_projection(case: LookupCase) -> str | None:
 
 
 def _gate_projection(case: GateInput) -> GateOutput:
-    gate = SourceGate()
+    gate = SourceOwnershipCoordinator()
+    track_refs: dict[int | str, str | None] = {}
     for event in case.events:
         if isinstance(event, GateSnapshotInput):
-            gate.observe_snapshot(event.client_id, event.snapshot)
+            frame = event.frame
+            track = frame.track
+            observation = PlaybackObservation(
+                "cider",
+                str(event.client_id),
+                track,
+                PlaybackStatus.PLAYING,
+                0.0,
+                track.duration_s if track is not None else None,
+                0.0,
+            )
+            track_refs[event.client_id] = track.track_ref if track is not None else None
+            gate.observe(event.client_id, observation, frame.document)
         elif isinstance(event, GateTickInput):
-            gate.observe_tick(event.client_id, event.current_time, event.is_playing)
+            gate.observe_clock(
+                event.client_id,
+                track_refs.get(event.client_id),
+                event.current_time,
+                event.is_playing,
+            )
         else:
             raise TypeError(f"unsupported gate event: {event!r}")
 
@@ -147,7 +171,7 @@ def _gate_projection(case: GateInput) -> GateOutput:
         None if match is None else match.confidence.value,
         None if timing is None else timing.client_id,
         None if timing is None else timing.current_time,
-        gate.accept_ws,
+        gate.accepts(0),
     )
 
 

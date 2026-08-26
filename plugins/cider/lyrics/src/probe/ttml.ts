@@ -130,9 +130,7 @@ export function parseAppleMusicTtml(ttml: string, options: ParseOptions = {}): P
       (durationSeconds === null || line.rawEnd <= durationSeconds + 10);
 
     return {
-      // Position within this filtered array — NOT line.index (the pre-filter DOM
-      // <p> position), which no longer lines up once any <p> is dropped and made
-      // withCurrentLine pick the wrong previous/next line.
+      // Position within this filtered array, not the pre-filter DOM <p> position.
       index,
       id: line.id,
       start: line.start!,
@@ -148,12 +146,4 @@ export function parseAppleMusicTtml(ttml: string, options: ParseOptions = {}): P
     language: xmlAttribute(documentRef.documentElement, "lang") || null,
     lines,
   };
-}
-
-export function findCurrentLine(lines: TimedLyricLine[], currentTime: number | null | undefined): TimedLyricLine | null {
-  if (typeof currentTime !== "number" || !Number.isFinite(currentTime)) {
-    return null;
-  }
-
-  return lines.find((line) => line.start <= currentTime && currentTime < line.end) ?? null;
 }

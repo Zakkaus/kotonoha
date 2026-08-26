@@ -1,16 +1,19 @@
 import { probeAppleMusicLyrics } from "./appleMusicLyrics";
 import { probePlayback } from "./playback";
-import type { ProbePayload } from "./types";
+import type { AdapterSnapshot } from "./types";
 
 export async function createProbePayload(options: {
   globals: any;
   version: string;
-}): Promise<ProbePayload> {
+  sequence: number;
+}): Promise<AdapterSnapshot> {
   return {
-    source: "kotonoha-cider-lyrics",
-    version: options.version,
+    protocol: "kotonoha.adapter",
+    version: 1,
+    type: "snapshot",
+    adapter: "cider",
+    sequence: options.sequence,
     capturedAt: new Date().toISOString(),
-    locationHref: options.globals.location?.href ?? "",
     playback: probePlayback(options.globals),
     lyrics: await probeAppleMusicLyrics(options.globals),
   };

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import re
 
-from ..model import LyricLine, LyricWord
+from .models import LyricLine, LyricWord
 
 # Milliseconds within one song: eight digits is over a day, and an unbounded run
 # reaches the division below as an int too large to convert to a float, which

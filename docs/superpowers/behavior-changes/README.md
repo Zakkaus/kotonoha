@@ -25,3 +25,5 @@
 - [用户确认歌词](2026-08-23-manual-lyrics-selection.md)
 - [歌词解析展示状态](2026-08-23-display-resolution-states.md)
 - [Cider clock policy](2026-08-23-clock-policy.md)
+- [统一歌词 adapter protocol](2026-08-25-unified-adapter-protocol.md)
+- [Cider HTTP adapter](2026-08-25-cider-http-adapter.md)

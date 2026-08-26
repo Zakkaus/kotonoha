@@ -3,6 +3,7 @@
 import pytest
 from dbus_fast import Variant
 
+from kotonoha.playback.models import MprisPropertyChange
 from kotonoha.providers.mpris_session import MprisSession
 
 
@@ -98,3 +99,47 @@ def test_a_property_reads_the_same_wrapped_or_not():
 
 async def test_the_identity_of_an_unsubscribed_session_is_empty():
     assert await MprisSession().identity() == ""
+
+
+async def test_property_signals_are_normalized_before_reaching_application():
+    class _SignalProps:
+        def __init__(self) -> None:
+            self.callback = None
+
+        def on_properties_changed(self, callback) -> None:
+            self.callback = callback
+
+        def off_properties_changed(self, callback) -> None:
+            assert callback is self.callback
+            self.callback = None
+
+    class _SignalBus:
+        def __init__(self, props) -> None:
+            self.props = props
+
+        def get_proxy_object(self, _name, _path, _introspection):
+            return self
+
+        def get_interface(self, name):
+            assert name == "org.freedesktop.DBus.Properties"
+            return self.props
+
+    props = _SignalProps()
+    received: list[MprisPropertyChange] = []
+    session = MprisSession(bus=_SignalBus(props))
+
+    await session.subscribe("org.mpris.MediaPlayer2.test", received.append)
+    assert props.callback is not None
+    props.callback(
+        "org.mpris.MediaPlayer2.Player",
+        {"PlaybackStatus": Variant("s", "Playing")},
+        ["Position"],
+    )
+
+    assert received == [
+        MprisPropertyChange(
+            "org.mpris.MediaPlayer2.Player",
+            {"PlaybackStatus": "Playing"},
+            ("Position",),
+        )
+    ]

@@ -1,6 +1,6 @@
 # Kotonoha 架构分层与重构实施计划
 
-> **状态：计划草案，尚未开始代码迁移**
+> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3 的时间轴基础已开始，Phase 4/5 尚未开始**
 >
 > 这份计划服务于仓库作者的长期重构。它先固定行为和边界，再迁移实现；不接受“发现一个 case 就在现有协调器加一个 if”作为完成方式。
 
@@ -150,9 +150,9 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 | `controller.py` | 应用组合和 workflow wiring | `app/application_controller.py`、`app/services.py` 及各 coordinator | controller 不再拥有 MPRIS、歌词解析、Overlay 或 Settings policy |
 | `providers/mpris*.py`、`players.py` | Playback feature adapter/contracts | `playback/` | D-Bus/raw metadata 只在 adapter 内解析；poll/subscription task 归 `app/playback_coordinator.py` |
 | `providers/player_selection.py` | Playback selection policy | `playback/player_selection.py` | runtime 和 Settings 共用同一 typed descriptor/policy |
-| `providers/gate.py`、`receiver.py` | Cider adapter + source ownership workflow | `lyrics/cider/`、`app/source_gate.py` | WebSocket/HTTP payload 与 Cider snapshot 不越过 adapter；active source 由 app 决定 |
+| `providers/gate.py`、`receiver.py` | Cider adapter + source ownership workflow | `lyrics/ownership.py`、`receiver.py` | legacy gate 已删除；WebSocket/HTTP payload 先归一化，active source 由 ownership coordinator 决定 |
 | `platform/qt_host.py` | Qt WindowHost presentation adapter | `ui/window_host.py` | Qt widget/native handle translation 不进入 app 或 feature contract |
-| `lyrics/*.py` | Lyrics feature contracts、parsers 和 adapters | `lyrics/models.py`、`lyrics/title_grammar.py`、`lyrics/matching.py`、`lyrics/parsers/`、`lyrics/sources/` | provider 细节留在 lyrics feature，不再依赖 root `model.py` |
+| `lyrics/*.py` | Lyrics feature contracts、parsers 和 adapters | `lyrics/models.py`、`lyrics/title_grammar.py`、`lyrics/matching.py`、`lyrics/parsers/`、`lyrics/sources.py`、`lyrics/network_sources.py`、`lyrics/live_source.py` | provider 细节留在 lyrics feature；source contract 不依赖 display 或 concrete HTTP client |
 | `model.py` | 按语义拆分的 feature values | `lyrics/models.py`、`playback/models.py`、`display/models.py`、`lyrics/cider/` | 不保留一个跨 feature 的万能 model module |
 | `clock.py`、`karaoke.py` | Playback observation / display rules | `playback/clock.py`、`display/timeline.py`、`display/karaoke.py` | 纯规则留在 owner feature，时间源选择和发布由 app coordinator 负责 |
 | `overlay.py` | Overlay application workflow + Qt presentation | `app/overlay_coordinator.py`、`ui/overlay/`、`platform/` | QWidget 只渲染 `DisplayFrame`、翻译输入和显示平台结果 |
@@ -216,59 +216,148 @@ test、语义 grammar/parser rule 的正负 corpus、differential comparator、`
 
 **目的**：先建立独立于 Qt、D-Bus、HTTP 和文件系统的目标契约，再决定现有实现如何接入。
 
-- [ ] 在 owner feature 中新建值对象：`playback.models` 放 `PlayerId`、`TrackGeneration`、`RawTrackObservation`、`TrackIdentity`，`lyrics.models` 放 `SourceId`、`ProviderSongId` 和歌词文档类型。
-- [ ] 在 `lyrics` 中新建 `MatchEvidence`、`MatchConfidence`、`ResolutionPolicy`、`SourceResult`、`ResolutionDecision` 及 invariant validator。
-- [ ] 在 `display.models` 中新建 `DisplayState`、`DisplayFrame` 和 display diagnostics；在 `platform.overlay_contracts` 中新建 `SurfaceState`、`DragState` 和 operation result。
-- [ ] 在 workflow 或 feature 边界旁定义命名 Protocol；Protocol 只描述稳定业务契约，不暴露 `Any`、Qt、D-Bus 或 aiohttp 类型，不建立通用 `ports/` 包。
-- [ ] 将 Config 内部字符串 mode 收敛成 Enum/value object，保留 JSON serializer 的字符串格式。
-- [ ] 加 architecture tests：feature contracts 禁止第三方 import，`app` workflow 禁止具体 adapter/UI，`ui` 禁止 native bridge；capability success/failure invariant 必须成立。
-- [ ] 加等价性门禁：grammar、parser、matcher、resolver、display 和 platform 相关变更必须运行 corpus；禁止通过修改 expected 或读取源代码绕过。
+- [x] 在 owner feature 中新建值对象：`playback.models` 放 `TrackIdentity`、`PlaybackObservation` 和 playback status，`lyrics.models` 放 canonical lyric document 类型。
+- [x] 在 `lyrics` 中新建 `MatchEvidence`、`MatchConfidence`、`ResolutionDecision` 及 invariant validator。
+- [x] 在 `display.models` 中新建 `DisplayState`、`DisplayFrame` 和 display diagnostics；platform operation result 仍由 Phase 4 收口。
+- [x] 在 workflow 或 feature 边界旁定义命名 Protocol；Protocol 只描述稳定业务契约，不暴露 `Any`、Qt、D-Bus 或 aiohttp 类型，不建立通用 `ports/` 包。
+- [x] 将 Config 内部有限 mode 收敛成 Enum/value object，保留 JSON serializer 的字符串格式。
+- [x] 加 architecture tests：feature contracts 禁止第三方 import、provider 不得写 display state、唯一 publisher、D-Bus 动态值不得越过 adapter；capability success/failure invariant 继续由 Phase 4 补齐。
+- [x] 加等价性门禁：grammar、parser、matcher、resolver、display 和 platform 相关变更运行 typed corpus；禁止通过修改 expected 或读取源代码绕过。
+
+**执行对账（2026-08-26）**：上面标记为完成的 contract、Config mode、resolver/workflow 类型和第一批
+architecture/corpus 门禁已经落地。Phase 1 仍保持未闭合，剩余重点是完整的 application capability
+契约、platform operation-result invariant 和 display/platform 的独立 corpus 入口；它们由 Phase 4-6
+继续完成。
 
 **退出条件**：新类型可以被测试和文档引用；各 owner feature 与 `app` capability 有独立测试；`ty` 在新边界上没有错误；没有通过 suppression 解决类型错误。
 
-### Phase 2：重建播放观察与歌词解析链
+### Phase 2：统一歌词接入与展示协议（#14）
 
-**目的**：先切断最频繁 case 的源头：播放器观察和歌词 workflow。
+**目的**：完成 #14 的准确歌词入口，同时建立播放器适配器、歌词来源和展示层之间的稳定边界。
+本阶段不是把 `MprisProvider` 和 `LyricsResolver` 搬到两个新目录，而是先把两条输入链路收敛到同一份
+规范化歌词文档和展示投影。
 
-#### 2A. MPRIS playback adapter
+**实现形状**：有状态、持有资源、拥有任务或协调 workflow 的责任必须由对象承载，并通过构造函数注入
+协作者。具体 adapter 不继承 `Protocol`，使用 structural typing；纯值对象、纯时间轴计算、边界校验和
+序列化可以保持函数或不可变 `dataclass`，因为它们没有独立生命周期或资源 owner。
 
-- [ ] 将 `playback/mpris_session.py` 的动态访问集中在 adapter，输出 `playback.models.PlayerSample`。
-- [ ] deadline、D-Bus exception、empty metadata、invalid Variant 在 adapter 内转为 `BoundaryResult`。
-- [ ] adapter 不返回 raw player object；`PlayerSelector` 只接受 `PlayerDescriptor`。
-- [ ] `PlayerSelectionPolicy` 同时服务 runtime 和 Settings rows。
+**当前进度（2026-08-27）**：canonical playback/lyrics/display model、Python v1 wire decoder、MPRIS
+normalized observation、generation-owned resolution decision、统一 presentation projector 和 Qt
+compatibility publisher 已落地。Cider 已改为直接适配公开 HTTP API：播放状态约每 1 秒校准一次，切歌时
+只拉取一次完整歌词时间轴，帧间位置由本地 `MediaClock` 推进；token 是可选依赖，空值不发送
+`apptoken`。`source.provider` 在 Cider 边界归一化为稳定 `source_id`，并保留原始名称作为
+`source_name`。`PlaybackCoordinator` 独立拥有 MPRIS session、订阅、poll task 和 track stabilization；
+`MprisLyricsCoordinator` 独立拥有歌词 generation/task，`MprisTimeline` 独立拥有累计位置校准；
+`LyricsResolver` 只通过 typed source contract 工作，`LiveLyricsSource` 与 network/local source 使用同一协议，
+`DisplayCoordinator` 是唯一 Qt publisher，Overlay 只消费 `DisplayFrame`。MPRIS 外部/local/network
+结果现在保留同一个 canonical `LyricsDocument`，不会把 `MPRIS:<provider>` 伪装成最终歌词来源；注入
+自定义 resolver 时必须显式提供与 live source 共享的 `SourceOwnershipCoordinator`。
+`LyricsSourceResult` 额外携带 `LyricsSourceKind`，由 workflow 传递 live/network/local 角色；MPRIS
+不再通过具体 source id 判断 ownership。resolver 的共享 in-flight 请求由显式 `cancel_inflight()` 路径清理。
 
-#### 2B. PlaybackCoordinator
+- `PlaybackCoordinator`：拥有 MPRIS session、订阅、poll task、player selection 和 track stabilization，并向 provider 输出 normalized playback observation。
+- `CiderApiPort` / `CiderApiClient` / `CiderPlaybackResponseAdapter`：provider 只依赖窄的 async capability；具体 HTTP
+  session、可选 token、响应 envelope 和播放事实由 client adapter 持有。
+- `CiderLyricsResponseAdapter`：把 Cider 歌词/翻译响应转换成最终 provider 明确的 canonical `LyricsDocument`。
+- `CiderApiProvider`：拥有 Cider HTTP 轮询、按 track generation 的单次歌词任务、取消和统一展示发布。
+- `AdapterReceiver` / `AdapterProtocolDecoder`：拥有 generic `kotonoha.adapter` v1 的 snapshot/clock wire boundary；不接受旧 Cider WS 字段。
+- `DisplayCoordinator` / `LyricsPresentationAdapter`：统一把 normalized playback/document 投影为 `DisplayFrame`，不直接暴露 Qt publisher 给 adapter。
+- `LyricsResolutionWorkflow`：拥有 source plan、generation、in-flight tasks、取消和 resolution decision。
+- `LyricsPresentationAdapter`：拥有 document/clock 到 `DisplayFrame` 的展示投影；Qt 只消费 frame。
+- `QtDisplayPublisher`：唯一 publisher，把 `DisplayFrame` 写入当前 `LyricsState`，Overlay 直接消费 frame。
 
-- [ ] 将 stabilizer 作为 `playback` feature 的纯规则；将 poll/subscription/task owner 放到 `app/playback_coordinator.py`。
-- [ ] 一个 committed identity 只产生一个 generation；generation 变更时由 workflow owner 取消旧 load。
-- [ ] position 读取失败不得阻止 metadata commit；clock 使用独立 observation。
-- [ ] provider hint 从 raw metadata 一次生成，不能在 title cleaning 后重新猜。
+#### 2A. Canonical contracts
 
-#### 2C. LyricsResolutionWorkflow
+- [x] 由 `MprisPlaybackAdapter` 和未来 adapter 共同使用 `playback.models` 的 `TrackIdentity`、
+  `PlaybackObservation` 和强类型 playback status。
+  保留播放器原始 title、track id、URL、player identity 等 hint 证据，normalized lookup view 不能覆盖 raw view。
+- [x] 在 `lyrics.models` 中定义 `LyricDocument`、`LyricLine`、`LyricWord` 和来源/匹配证据；解析器和
+  provider 只输出 document，不输出当前行或 Qt state。
+- [x] 在 `display.models` 中定义 `DisplayState`、`DisplayFrame` 和 diagnostics。current/previous/next、
+  interlude、word progress 都是 Kotonoha 的投影结果，不属于外部播放器协议。
+- [x] 删除 root `model.py` 和 legacy `LyricsSnapshot` 输入；adapter v1 只接受 normalized playback/document。
 
-- [ ] 将 `resolve_hint`、`_resolve_best`、`_resolve_sequential` 收进 `app/lyrics_workflow.py` 的显式 `SourcePlan` 执行器。
-- [ ] 用户确认歌词、local sidecar、embedded、exact hint、Cider、network source 的 precedence 由 plan 测试覆盖。
-- [ ] 新旧 source workflow 对同一 typed request 做 canonical comparison；请求超时、失败 reason、source 顺序和 stale generation 都属于等价输出。
-- [ ] `lyrics/sources/` 的 network provider 统一实现命名的 source capability；HTTP/body/parser/cache 细节留在 lyrics adapter。
-- [ ] 将 cache hit、network hit、miss、unavailable、failure、rejected 转为 `SourceResult`。
-- [ ] shared in-flight task 的 owner 放在 `app/lyrics_workflow.py`；`cancel_inflight` 不再作为 concrete resolver 的隐藏能力。
-- [ ] 只有 high-confidence artifact 写入 cache；negative cache 只记录真实 miss，不记录 unreachable/failure。
+#### 2B. Versioned external adapter protocol
 
-**退出条件**：歌词行为 golden scenarios 全部通过；现有 provider adapter 可以逐个接入 source capability；MPRIS coordinator 不再直接调用 network provider 或写 lyric state。
+- [x] 由 `AdapterProtocolDecoder` 持有版本化、来源中立的 adapter message decoder；generic WS 入口至少区分
+  `snapshot`、`clock`，并以显式 message kind 表示字段语义。
+- [x] `CiderApiClient` 在 HTTP boundary 校验 response envelope、错误码、响应大小和可选 `apptoken`，并把
+  `/playback`、`/lyrics/current`、`/lyrics/:id` 解析成 canonical facts/document。
+- [x] `LyricsPresentationAdapter` 让 MPRIS、Cider HTTP 和未来播放器 adapter 都只进入 normalized
+  `PlaybackObservation` / `LyricDocument`；adapter 不得直接写 `LyricsState`。
+- [x] legacy Cider WS、`currentLine` 等旧字段和旧 receiver 路由已删除；外部播放器统一使用 generic adapter v1。
+- [x] receiver 在 wire boundary 验证 protocol/version、finite number、track reference、timed line invariant
+  和 payload budget；坏 frame 只能成为明确的 rejected/miss。
+
+#### 2C. #14 source adapters
+
+- [x] MPRIS adapter 一次保存 raw metadata 和 `LyricsHint`，支持播放器精确 provider id、`file://` 路径、
+  sidecar 和 embedded lyrics；exact hint 失败或 provider 未启用时回退配置的 source plan。
+- [x] Cider HTTP 和 MPRIS canonical path 都输出同一个 `LyricsDocument` / `DisplayFrame` contract；Cider
+  response 的最终 provider 身份与 Cider transport/player 身份分开。
+- [x] local、exact-id 和 network provider 收敛到同一个 lyrics source contract，输出 `LyricsSourceResult`；source 不决定展示 precedence 之外的 UI 状态。
+- [x] sidecar/embedded/parser 的既有预算、正负 grammar case 和 provider matching corpus 继续作为迁移门禁。
+- [x] `ordered_first` / `best_confidence` 作为显式 resolution policy 保留；默认路径先保证 `ordered_first`，
+  不因协议迁移删除现有 `prefer_best_lyrics` 能力。
+
+#### 2D. One resolution and display path
+
+- [x] `LyricsResolutionWorkflow` 只发布带 generation 的 `ResolutionDecision`；MPRIS owner 对迟到结果执行 generation
+  检查，不能更新当前 document、Cider ownership 或 display state。
+- [x] `LyricsPresentationAdapter` 让新旧入口都通过同一个 `LyricsDocument -> DisplayFrame` projector；迁移期间只允许一个 compatibility
+  publisher 写现有 Qt `LyricsState`。
+- [x] Overlay 直接消费 `DisplayFrame`；`TimelineEngine` 已独立拥有 clock observation 和高频推进，Qt renderer
+  重组与 platform lifecycle 仍留在后续 phase，避免把 #14 与 UI/platform 迁移混在一起。
+
+#### 2E. 结构收口与生命周期 owner
+
+- [x] `LyricsSourceResult` 只携带 canonical `LyricsDocument`；network source、live source、local/exact source
+  均通过同一 `LyricsSource` contract，并显式携带 source kind；resolver 不再按 `cider` 写特殊分支或修改
+  display ownership。
+- [x] concrete aiohttp 只存在于 HTTP/provider adapter 边界；workflow、resolver 和 source contract 只接受
+  `LyricsSession`。
+- [x] `SourceOwnershipCoordinator` 替代 legacy `providers/gate.py`，统一管理 external/live/standalone ownership、
+  snapshot revision、clock 与 disconnect。
+- [x] receiver 严格执行 per-client sequence 单调递增、snapshot-before-clock 和 trackRef 一致性；拒绝的 clock
+  不消耗 sequence。
+- [x] `PlaybackCoordinator`、`MprisLyricsCoordinator`、`MprisTimeline` 和 `DisplayCoordinator` 分别拥有
+  MPRIS poll、歌词 generation、位置校准和 Qt publishing；架构测试锁定依赖方向及唯一 publisher。
+- [x] resolver 的共享网络任务有独立取消入口；MPRIS stop 先结束 workflow，再回收 resolver in-flight 请求，避免
+  shielded lookup 在 provider 停止后继续运行。
+
+**Phase 2 收口对账（2026-08-27）**：Cider provider 现在依赖窄的 `CiderApiPort`，具体 HTTP client
+只在 composition root 创建；被 disable 或切换翻译取消的歌词任务仍由 provider 持有，并在关闭 HTTP
+session 前完成等待和异常检查。`main._run` 把 startup 放入同一 `try/finally`，启动部分失败也会进入
+controller cleanup。展示层删除了没有独立策略的 `LyricsIngressCoordinator` 转发模块，normalized
+playback/document 直接进入 `LyricsPresentationAdapter`。这些行为由 provider cancellation、startup
+failure 和 display boundary tests 覆盖；Overlay/platform/Settings 的剩余边界仍属于后续 phase。
+
+**本阶段不做**：新增无来源依据的播放器识别表、重写 Cider transport 的重连策略、cache schema/TTL 新策略、
+Display/Overlay 视觉变化、platform surface lifecycle、Settings persistence、完整 DisplayEngine/word mapping
+或 translation merge。每一项若改变用户可见行为，必须另写 `BehaviorChangeRecord`。
+
+**退出条件**：MPRIS 和 Cider HTTP 都能产生同一种 normalized playback/document 输入；#14 的 exact id、sidecar、
+embedded 和 fallback 场景通过同一 source contract；展示 frame 只在 Kotonoha 内生成；旧 `LyricsSnapshot` 和
+Cider 专用 WS 路由均已删除；所有 generation、payload budget、parser 和 cancellation golden scenarios 通过。
+当前验证：Python 全量 `743 passed, 2 skipped`，`ruff check .`、`ty check`、架构/worker 门禁、
+`git diff --check` 和 `uv build` 通过。Cider 插件的 `pnpm test` / `pnpm build` 因当前环境没有 `pnpm`
+未执行；这不影响 Python 包的门禁结论，但仍是提交前的环境验证缺口。
 
 ### Phase 3：重建时间轴和展示模型
 
 **目的**：把 #38/#46/#56/#58/#59/#62/#64 的展示行为从 QWidget 和 MPRIS 协调器中收回到纯规则。
 
-- [ ] 新建 `TimelineEngine`：接收 `LyricDocument`、clock observation、per-track offset、playback status。
+- [x] 新建 `TimelineEngine`：接收 normalized playback observation/status，负责 per-track clock anchor 和高频推进；
+  lyric document 投影继续由 `LyricsPresentationAdapter` 持有。
 - [ ] 新建 `DisplayEngine`：输出 `DisplayFrame`，显式区分 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；
   当前行、transition 和 interlude 作为 frame 内容或时间轴结果，不建立 `Empty` 或 `Finished` 状态。
 - [ ] word highlight 使用 document 中的 word spans 和最终 text mapping；不假设 words 之间有空格。
 - [ ] translation merge 变成 document index/transform；保持 #58 的复杂度改进并用性能测试守住。
 - [ ] interlude detector、countdown、font fit 的输入输出独立测试；字体尺寸测量留在 `ui` adapter，但 fit policy 不留在 MPRIS。
 - [ ] `DisplayFrame` 迁移必须通过 display corpus；比较 state、上下文行、word progress、diagnostic，不比较 QWidget 私有字段。
-- [ ] `MediaClock` 只提供 clock observation；source selection 和 pause/resume policy 由 `ClockCoordinator` 决定。
-- [ ] `ui/overlay/` 改为接收 `DisplayFrame`，不再从 `LyricsSnapshot` 自己推导 provider/interlude/timing policy。
+- [x] `MediaClock` 只提供 clock observation；source selection 不在 `MediaClock` 内，暂停/恢复由
+  `TimelineEngine` 根据 normalized playback status 同步。
+- [x] `ui/overlay/` 改为接收 `DisplayFrame`，不再从 `LyricsSnapshot` 自己推导 provider/interlude/timing policy。
 
 **退出条件**：可以不用 Qt 运行完整 display/timeline 测试；Overlay 只渲染 frame；lyrics provider 与 display policy 不再互相导入。
 
@@ -303,11 +392,12 @@ test、语义 grammar/parser rule 的正负 corpus、differential comparator、`
 
 ### Phase 6：删除被替代路径、收紧质量门禁
 
-- [ ] 删除现有 `MprisProvider` 中已经迁移到新 owner 的 resolver/clock/display/platform policy 分支。
+- [x] 删除现有 `MprisProvider` 中已经迁移到新 owner 的 resolver/clock/display policy 分支；剩余 facade 只负责 wiring 和配置转发。
 - [ ] 删除 `lyrics/matching.py` 对 `lyrics/title_grammar.py` 私有 helper 的依赖，改为公开 feature result。
 - [ ] 合并 `config/store.py` 与 `lyrics/sources/local.py` 重复的 bounded regular-file reader，删除重复边界实现。
 - [ ] 删除临时 compatibility exports/fallback，并为每个删除记录对应迁移完成条件。
-- [ ] 逐步增加 Ruff/ty/architecture checks：feature contract Any、dynamic access、dependency direction、task ownership、public annotations。
+- [x] 逐步增加 Ruff/ty/architecture checks：feature contract transport imports、provider/display direction、
+  unique publisher、D-Bus dynamic values、oversized module scope、broad exception handlers 和 public annotations。
 - [ ] 完整验证 Python 3.11-3.15 CI、offscreen Qt、Cider test/build、`uv build`、live compositor opt-in。
 - [ ] 更新仓库规范、运行文档和开发规则，使文档描述目标架构、边界和验证命令。
 
