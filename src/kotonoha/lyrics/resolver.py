@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import sqlite3
 import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, TypeAlias
 
 from .artifact import LyricsArtifact
-from .cache import LyricsCache
+from .cache import LyricsCache, LyricsCacheError
 from .catalog import LyricsSourceCatalog
 from .hint import LyricsHint
 from .http import LyricsSession
@@ -33,6 +32,8 @@ _CONF_RANK = {MatchConfidence.NONE: 0, MatchConfidence.MEDIUM: 1, MatchConfidenc
 
 
 class CacheLike(Protocol):
+    def start(self) -> None: ...
+
     async def lookup(
         self,
         provider: str,
@@ -85,6 +86,16 @@ class LyricsResolver:
         self._negative_ttl = negative_ttl
         self._negative_until: dict[tuple[str, TrackKey], float] = {}
         self._inflight: dict[RequestKey, asyncio.Task[ResolverLookup]] = {}
+
+    def start(self) -> None:
+        """Reopen resolver-owned workers after a previous close.
+
+        Lookup policy remains in memory; only the cache and local-source workers
+        need to be reopened. The method is synchronous because no I/O occurs
+        until the next lookup.
+        """
+        self._cache.start()
+        self._catalog.start()
 
     @property
     def live_source_id(self) -> str:
@@ -140,7 +151,7 @@ class LyricsResolver:
                 await task
             except asyncio.CancelledError:
                 continue
-            except (LyricsSourceError, OSError, sqlite3.Error, TimeoutError, ValueError) as exc:
+            except (LyricsSourceError, LyricsCacheError, TimeoutError, ValueError) as exc:
                 logger.debug("lyrics resolver task ended during shutdown: %s", exc)
 
     async def close(self) -> None:
@@ -202,7 +213,7 @@ class LyricsResolver:
             if self._cache_enabled and parser is not None:
                 try:
                     cached = await self._cache.lookup(source, track, parser)
-                except (OSError, sqlite3.Error) as exc:
+                except LyricsCacheError as exc:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                 else:
                     if cached is not None:
@@ -228,7 +239,7 @@ class LyricsResolver:
             if self._cache_enabled and result.cache_artifact is not None:
                 try:
                     await self._cache.store(result.cache_artifact)
-                except (OSError, sqlite3.Error) as exc:
+                except LyricsCacheError as exc:
                     logger.warning("%s lyrics cache write failed: %s", source, exc)
             return result
         return None
@@ -255,7 +266,7 @@ class LyricsResolver:
         if self._cache_enabled and result.cache_artifact is not None:
             try:
                 await self._cache.store(result.cache_artifact)
-            except (OSError, sqlite3.Error) as exc:
+            except LyricsCacheError as exc:
                 logger.warning("%s lyrics cache write failed: %s", source, exc)
         return result
 
@@ -290,7 +301,7 @@ class LyricsResolver:
             elif self._cache_enabled:
                 try:
                     cached = await self._cache.lookup(source, track, parser)
-                except (OSError, sqlite3.Error) as exc:
+                except LyricsCacheError as exc:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                     cached = None
                 if cached is not None:

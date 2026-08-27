@@ -9,7 +9,7 @@ import time
 from typing import Protocol
 
 from ..display.coordinator import DisplayCoordinator
-from ..display.models import DisplayState
+from ..display.models import ResolutionState
 from ..lyrics.cider_api import CiderLyricsPayloadError
 from ..lyrics.models import LyricsDocument
 from ..lyrics.ownership import SourceOwnershipCoordinator
@@ -118,6 +118,7 @@ class CiderApiProvider:
         self._document = None
         self._generation += 1
         self._cancel_current_lyrics()
+        self._ownership.clear_client(CIDER_API_CLIENT_ID)
 
     async def _run(self) -> None:
         try:
@@ -160,11 +161,12 @@ class CiderApiProvider:
             and self._lyrics_task is not None
             and not self._lyrics_task.done()
         )
-        self._publish(
-            observation,
-            self._document,
-            state=DisplayState.RESOLVING if resolving else None,
+        resolution = (
+            ResolutionState.RESOLVING
+            if resolving
+            else ResolutionState.from_facts(observation, self._document)
         )
+        self._publish(observation, self._document, resolution)
 
     async def _load_lyrics(self, observation: PlaybackObservation, generation: int) -> None:
         track = observation.track
@@ -192,15 +194,14 @@ class CiderApiProvider:
         self._publish(
             self._observation,
             document,
-            state=DisplayState.LYRICS_AVAILABLE if document is not None else DisplayState.LYRICS_NOT_FOUND,
+            ResolutionState.AVAILABLE if document is not None else ResolutionState.NOT_FOUND,
         )
 
     def _publish(
         self,
         observation: PlaybackObservation,
         document: LyricsDocument | None,
-        *,
-        state: DisplayState | None = None,
+        resolution: ResolutionState,
     ) -> None:
         """Publish one canonical frame and retain it as a source candidate."""
         self._ownership.observe(CIDER_API_CLIENT_ID, observation, document)
@@ -212,7 +213,7 @@ class CiderApiProvider:
             observation.status is PlaybackStatus.PLAYING,
         )
         if self._ownership.accepts(CIDER_API_CLIENT_ID):
-            self._display.publish(observation, document, state=state)
+            self._display.publish_resolution(observation, document, resolution)
 
     async def _cancel_lyrics(self) -> None:
         self._cancel_current_lyrics()

@@ -101,6 +101,22 @@ async def test_the_identity_of_an_unsubscribed_session_is_empty():
     assert await MprisSession().identity() == ""
 
 
+@pytest.mark.asyncio
+async def test_connect_is_idempotent_for_an_injected_bus(monkeypatch):
+    from dbus_fast import aio as dbus_aio
+
+    def unexpected_connection(*_args, **_kwargs):
+        raise AssertionError("an already connected session must not create a new bus")
+
+    monkeypatch.setattr(dbus_aio, "MessageBus", unexpected_connection)
+    bus = _Bus(_Props(Variant("s", "Player")))
+    session = MprisSession(bus=bus)
+
+    await session.connect()
+
+    assert session.connected is True
+
+
 async def test_property_signals_are_normalized_before_reaching_application():
     class _SignalProps:
         def __init__(self) -> None:

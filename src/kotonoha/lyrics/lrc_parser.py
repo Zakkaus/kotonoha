@@ -7,10 +7,9 @@ Netease ``tlyric`` (also LRC) onto the main lines by timestamp.
 from __future__ import annotations
 
 import re
-from bisect import bisect_left
-from dataclasses import replace
 
 from .models import LyricLine
+from .translation import TranslationMerger
 
 # [mm:ss], [mm:ss.xx] or [mm:ss.xxx]; a line may carry several time tags.
 _TIME = re.compile(r"\[(\d{1,2}):(\d{1,2})(?:[.:](\d{1,3}))?\]")
@@ -69,28 +68,5 @@ def parse_lrc(text: str) -> list[LyricLine]:
 
 
 def merge_translation(base: list[LyricLine], translation: list[LyricLine], tolerance: float = 0.4) -> list[LyricLine]:
-    """Attach each translation line to the base line with the nearest start time."""
-    if not translation:
-        return base
-    # Both tracks come from a provider and their lengths are its choice, so the
-    # nearest line is found by binary search over a sorted copy rather than by
-    # scanning the whole translation for every base line. Measured on the previous
-    # pass, 500 lines took 8 ms, 2000 took 112 ms and 8000 took 985 ms — a second
-    # of synchronous work on the loop that also drives the UI, for a response well
-    # inside the size the providers already allow.
-    ordered = sorted(translation, key=lambda item: item.start)
-    starts = [item.start for item in ordered]
-    out: list[LyricLine] = []
-    for line in base:
-        index = bisect_left(starts, line.start)
-        best_text: str | None = None
-        best_delta = tolerance
-        # The nearest start is one of the two neighbours the search lands between.
-        for neighbour in (index - 1, index):
-            if 0 <= neighbour < len(ordered):
-                delta = abs(starts[neighbour] - line.start)
-                if delta <= best_delta:
-                    best_delta = delta
-                    best_text = ordered[neighbour].text
-        out.append(replace(line, translation=best_text) if best_text else line)
-    return out
+    """Compatibility wrapper for timestamp alignment."""
+    return list(TranslationMerger(tolerance).merge_by_timestamp(base, translation))

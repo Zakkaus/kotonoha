@@ -14,6 +14,11 @@ This file applies to the repository root and all subdirectories.
 
 - Understand the existing code, tests, build configuration, and runtime before changing them.
 - Prefer small, verifiable, reversible changes.
+- Prefer object-oriented design for stateful application, domain, infrastructure, and
+  presentation behavior. Use module-level functions only for genuinely stateless
+  transformations, constants, typed boundary helpers, or another case where an
+  object would add no ownership, invariant, or testability; when the choice is
+  unclear, use an object with explicit dependencies and lifecycle.
 - Never overwrite, revert, or clean up changes that belong to the user.
 - Avoid unrelated refactors, formatting changes, and dependency upgrades.
 - Do not turn a temporary workaround into a permanent design.

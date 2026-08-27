@@ -1,13 +1,13 @@
 """Timeline selectors and canonical display-frame projection."""
 
 # TODO(phase-6): remove this compatibility module after all callers migrate to
-# ``display.presentation`` and ``display.timeline`` directly.
+# ``display.presentation`` and ``display.rules`` directly.
 
 from __future__ import annotations
 
-from ..display.models import DisplayFrame, DisplayState
-from ..display.presentation import LyricsPresentationAdapter
-from ..display.timeline import (
+from ..display.models import DisplayFrame
+from ..display.presentation import DisplayEngine
+from ..display.rules import (
     find_current_index,
     in_interlude,
     interlude_at,
@@ -35,13 +35,11 @@ def build_frame(
     *,
     track: TrackIdentity | None = None,
     is_playing: bool,
-    state: DisplayState | None = None,
 ) -> DisplayFrame:
     """Project one document through the shared presentation adapter."""
-    return LyricsPresentationAdapter().project(
+    return DisplayEngine().project(
         document,
         position,
         track=track,
         is_playing=is_playing,
-        state=state,
     )

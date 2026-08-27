@@ -92,6 +92,8 @@ class ResolverPort(WorkflowResolverPort, Protocol):
     @property
     def live_source_id(self) -> str: ...
 
+    def start(self) -> None: ...
+
     def reset_memory(self) -> None: ...
 
     def set_cache_enabled(self, enabled: bool, /) -> None: ...
@@ -127,12 +129,17 @@ class LyricsResolutionWorkflow:
         hint: LyricsHint | None = None,
     ) -> ResolutionDecision:
         """Resolve one generation, falling back from an exact hint when needed."""
+        cancelled: list[asyncio.Task[ResolutionDecision]] = []
         for active_generation, active_task in tuple(self._tasks.items()):
             if active_generation < generation and not active_task.done():
                 active_task.cancel()
+                cancelled.append(active_task)
         previous = self._tasks.get(generation)
         if previous is not None and not previous.done():
             previous.cancel()
+            cancelled.append(previous)
+        if cancelled:
+            await asyncio.gather(*cancelled, return_exceptions=True)
         task = asyncio.create_task(self._resolve_once(session, track, plan, generation, hint))
         self._tasks[generation] = task
         try:

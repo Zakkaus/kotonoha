@@ -9,7 +9,6 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
-import sqlite3
 import sys
 
 from PyQt6.QtCore import QProcess
@@ -18,7 +17,14 @@ from PyQt6.QtWidgets import QApplication
 from .async_worker import BlockingCallRunner
 from .config import Config, save_config
 from .display.coordinator import DisplayCoordinator
+from .display.models import (
+    DisplayOptions,
+    DisplayScript,
+    InterludeCountdown,
+    InterludeMarkerStyle,
+)
 from .i18n import resolve_translation_language
+from .lyrics.cache import LyricsCacheError
 from .lyrics.catalog import LyricsSourceCatalog
 from .lyrics.ownership import SourceOwnershipCoordinator
 from .lyrics.resolver import LyricsResolver
@@ -40,6 +46,17 @@ from .strings import set_language
 from .tray import KotonohaTray, load_icon
 
 logger = logging.getLogger(__name__)
+
+
+def _display_options(config: Config) -> DisplayOptions:
+    """Translate persisted settings into an immutable display-domain snapshot."""
+    return DisplayOptions(
+        lead_ms=config.lead_ms,
+        track_offsets_ms=dict(config.track_offsets),
+        lyrics_script=DisplayScript(config.lyrics_script.value),
+        interlude_style=InterludeMarkerStyle(config.interlude_style.value),
+        interlude_countdown=InterludeCountdown(config.interlude_countdown.value),
+    )
 
 
 class AppController:
@@ -72,7 +89,7 @@ class AppController:
         self._app.setWindowIcon(load_icon(config.window_icon_name, accent=config.accent_start))
 
         self._state = LyricsState()
-        self._display = DisplayCoordinator(self._state)
+        self._display = DisplayCoordinator(self._state, options=_display_options(config))
         platform_name = app.platformName()
         self._platform_name = platform_name
         desktop = str(app.property("xdg_current_desktop") or "")
@@ -231,6 +248,7 @@ class AppController:
 
     def _on_track_offset_changed(self, key: str, offset_ms: int) -> None:
         self._config.track_offsets[key] = offset_ms
+        self._display.set_options(_display_options(self._config))
         self._persist()
 
     # --- settings ---
@@ -305,6 +323,7 @@ class AppController:
         previous_token = self._config.cider_api_token
         config.track_offsets = self._config.track_offsets
         self._config = config.clamped()
+        self._display.set_options(_display_options(self._config))
         self._overlay.apply_config(self._config)
         # Push new anchor/margins/passthrough through the layer-shell bridge.
         self._overlay.activate_layer_shell()
@@ -343,7 +362,7 @@ class AppController:
             task.result()
         except asyncio.CancelledError:
             return
-        except (OSError, sqlite3.Error) as exc:
+        except LyricsCacheError as exc:
             logger.warning("Could not clear lyrics cache: %s", exc)
 
     def _persist(self) -> None:

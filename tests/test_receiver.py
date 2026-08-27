@@ -76,6 +76,8 @@ async def _client(state, **kwargs):
 
 async def test_websocket_frame_updates_canonical_state():
     state = LyricsState()
+    frames = []
+    state.frame_changed.connect(frames.append)
     client, _ = await _client(state)
     try:
         ws = await client.ws_connect(WS_PATH)
@@ -84,15 +86,18 @@ async def test_websocket_frame_updates_canonical_state():
     finally:
         await client.close()
 
-    assert state.frame.state is DisplayState.LYRICS_AVAILABLE
-    assert state.frame.track is not None
-    assert state.frame.track.title == "Song"
-    assert state.frame.current is not None
-    assert state.frame.current.text == "hello"
+    published = next(frame for frame in frames if frame.state is DisplayState.LYRICS_AVAILABLE)
+    assert published.track is not None
+    assert published.track.title == "Song"
+    assert published.current is not None
+    assert published.current.text == "hello"
+    assert state.frame.state is DisplayState.NO_TRACK
 
 
 async def test_clock_message_updates_the_canonical_frame():
     state = LyricsState()
+    frames = []
+    state.frame_changed.connect(frames.append)
     client, _ = await _client(state)
     try:
         ws = await client.ws_connect(WS_PATH)
@@ -103,9 +108,10 @@ async def test_clock_message_updates_the_canonical_frame():
     finally:
         await client.close()
 
-    assert state.frame.state is DisplayState.LYRICS_AVAILABLE
-    assert state.frame.current_time == 13.0
-    assert state.frame.is_playing is False
+    updated = next(frame for frame in reversed(frames) if frame.current_time == 13.0)
+    assert updated.state is DisplayState.LYRICS_AVAILABLE
+    assert updated.is_playing is False
+    assert state.frame.state is DisplayState.NO_TRACK
 
 
 def test_clock_before_snapshot_is_rejected():
@@ -157,6 +163,22 @@ async def test_post_debug_bypass_updates_state():
 
     assert state.frame.track is not None
     assert state.frame.track.title == "Song"
+
+
+async def test_stop_clears_post_session_and_resets_its_sequence_namespace():
+    state = LyricsState()
+    ownership = SourceOwnershipCoordinator()
+    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=ownership)
+
+    assert receiver.ingest(json.dumps(FRAME), client_id=0) is True
+    assert ownership.current_match(TrackMetadata("Song", "X")) is not None
+    assert state.frame.state is DisplayState.LYRICS_AVAILABLE
+
+    await receiver.stop()
+
+    assert ownership.current_match(TrackMetadata("Song", "X")) is None
+    assert state.frame.state is DisplayState.NO_TRACK
+    assert receiver.ingest(json.dumps(FRAME), client_id=0) is True
 
 
 async def test_post_malformed_frame_returns_400():
@@ -276,3 +298,4 @@ async def test_disconnect_drops_gate_client():
         await ws.close()
 
     assert gate.current_match(TrackMetadata("Song", "X")) is None
+    assert state.frame.state is DisplayState.NO_TRACK

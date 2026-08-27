@@ -13,10 +13,11 @@ import aiohttp
 
 from .artifact import LyricsArtifact
 from .http import LyricsSession
-from .lrc_parser import merge_translation, parse_lrc
+from .lrc_parser import parse_lrc
 from .match import TrackMetadata
 from .models import LyricLine
 from .payload import read_capped
+from .translation import TranslationMerger
 
 LYRIC_URL = "https://c.y.qq.com/lyric/fcgi-bin/fcg_query_lyric_new.fcg"
 DETAIL_URL = "https://u.y.qq.com/cgi-bin/musicu.fcg"
@@ -37,7 +38,7 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
     """Return timed lines from a stored payload, merging any translation track."""
     lyric = parse_lrc(payload.get("lyric", ""))
     translation = parse_lrc(payload.get("trans", ""))
-    return tuple(merge_translation(lyric, translation) if translation else lyric)
+    return TranslationMerger().merge_by_timestamp(lyric, translation) if translation else tuple(lyric)
 
 
 def parse_response(body: str) -> dict[str, str]:

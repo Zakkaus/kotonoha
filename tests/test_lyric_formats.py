@@ -5,8 +5,12 @@ must always yield the same lines, including for the malformed and hostile inputs
 real catalogue serves.
 """
 
+import pytest
+
 from kotonoha.lyrics.krc_parser import parse_krc
 from kotonoha.lyrics.lrc_parser import merge_translation, parse_lrc
+from kotonoha.lyrics.models import LyricLine, LyricsDocument
+from kotonoha.lyrics.translation import TranslationMerger
 from kotonoha.lyrics.yrc_parser import parse_yrc
 
 YRC_SAMPLE = (
@@ -67,6 +71,54 @@ def test_merge_translation_out_of_tolerance_left_blank():
     base = parse_lrc("[00:01.00]hello\n")
     trans = parse_lrc("[00:09.00]too far\n")
     assert merge_translation(base, trans)[0].translation == ""
+
+
+def test_translation_transform_exposes_timestamp_and_positional_alignment():
+    base = parse_lrc("[00:01.00]hello\n[00:05.00]world\n")
+    translated = parse_lrc("[00:01.05]你好\n[00:05.10]世界\n")
+    document = LyricsDocument("test", lines=tuple(base))
+    merger = TranslationMerger()
+
+    timestamp = merger.merge_by_timestamp(base, translated)
+    positional = merger.merge_by_index(document, ("你好", "世界"))
+
+    assert [line.translation for line in timestamp] == ["你好", "世界"]
+    assert [line.translation for line in positional.lines] == ["你好", "世界"]
+    assert all(line.translation == "" for line in document.lines)
+
+
+def test_translation_transform_rejects_invalid_tolerance():
+    import math
+
+    with pytest.raises(ValueError, match="tolerance"):
+        TranslationMerger(-0.1)
+    with pytest.raises(ValueError, match="tolerance"):
+        TranslationMerger(math.inf)
+
+
+def test_translation_transform_is_deterministic_for_unsorted_duplicates_and_mismatch():
+    base = (
+        LyricLine(0, "b0", 1.0, 2.0, "one", ""),
+        LyricLine(1, "b1", 5.0, 6.0, "two", ""),
+        LyricLine(2, "b2", 9.0, 10.0, "three", ""),
+    )
+    translation = (
+        LyricLine(0, "t2", 5.1, 6.0, "two translated", ""),
+        LyricLine(1, "t0-second", 1.1, 2.0, "duplicate later", ""),
+        LyricLine(2, "t0-first", 1.1, 2.0, "duplicate first", ""),
+    )
+
+    merged = TranslationMerger().merge_by_timestamp(base, translation)
+
+    assert [line.translation for line in merged] == ["duplicate later", "two translated", ""]
+
+
+def test_translation_transform_respects_exact_tolerance_boundary():
+    base = (LyricLine(0, "base", 1.0, 2.0, "one", ""),)
+    translation = (LyricLine(0, "translation", 1.4, 2.0, "included", ""),)
+
+    assert TranslationMerger(0.4).merge_by_timestamp(base, translation)[0].translation == "included"
+    assert TranslationMerger(0.39).merge_by_timestamp(base, translation)[0].translation == ""
 
 
 def test_a_yrc_timestamp_too_large_for_a_float_skips_its_line():

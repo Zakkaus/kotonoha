@@ -1,8 +1,10 @@
 import sqlite3
 
+import pytest
+
 from kotonoha.lyrics import netease
 from kotonoha.lyrics.artifact import LyricsArtifact
-from kotonoha.lyrics.cache import LyricsCache
+from kotonoha.lyrics.cache import LyricsCache, LyricsCacheError
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
 from kotonoha.lyrics.models import LyricLine
 
@@ -84,3 +86,14 @@ async def test_clear_and_lru_pruning(tmp_path):
     assert await cache.count() == 2
     await cache.clear()
     assert await cache.count() == 0
+
+
+async def test_storage_failures_are_normalized_at_the_cache_boundary(tmp_path):
+    path = tmp_path / "cache-directory"
+    path.mkdir()
+    cache = LyricsCache(path)
+    try:
+        with pytest.raises(LyricsCacheError):
+            await cache.lookup("netease", TrackMetadata("Song", "Artist"), netease.parse_payload)
+    finally:
+        cache.close()

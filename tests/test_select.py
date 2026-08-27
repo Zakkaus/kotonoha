@@ -243,7 +243,9 @@ def test_a_line_stops_sweeping_when_it_has_plainly_been_sung():
 
     assert swept.current is not None
     assert swept.current.text == "before the pause"
-    assert swept.current.end - swept.current.start <= 5.0  # not the 9.6s to the next line
+    assert swept.current.end == pytest.approx(21.6)  # canonical source span is unchanged
+    assert swept.line_progress is not None
+    assert swept.line_progress.fraction == pytest.approx((13.0 - 12.0) / 4.8)
 
 
 def test_word_timings_say_exactly_when_a_line_stops():
@@ -258,7 +260,9 @@ def test_word_timings_say_exactly_when_a_line_stops():
     )
 
     assert snapshot.current is not None
-    assert snapshot.current.end == 1.4
+    assert snapshot.current.end == 9.0  # the canonical line is not shortened for painting
+    assert snapshot.word_progress is not None
+    assert snapshot.word_progress.fractions == pytest.approx((1.0 / 1.4,))
 
 
 def test_an_ordinary_line_keeps_its_own_end():

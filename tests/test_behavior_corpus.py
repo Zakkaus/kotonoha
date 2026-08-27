@@ -45,7 +45,6 @@ from behavior_runtime_corpus import (
 )
 
 from kotonoha.clock import MediaClock
-from kotonoha.display.models import DisplayState
 from kotonoha.lyrics.krc_parser import parse_krc
 from kotonoha.lyrics.lrc_parser import parse_lrc
 from kotonoha.lyrics.match import best_match
@@ -115,15 +114,24 @@ def _display_projection(case: DisplayInput) -> DisplayOutput:
         title="Corpus",
         artist="Tester",
         duration_s=case.duration_s,
-        timing=TimingKind.LINE if case.lines else None,
+        timing=(
+            TimingKind.WORD
+            if any(line.has_word_timing for line in case.lines)
+            else TimingKind.LINE
+            if case.lines
+            else None
+        ),
         lines=tuple(case.lines),
     )
     frame = build_frame(document, case.position, is_playing=True)
     interlude = None if frame.interlude is None else (frame.interlude.start, frame.interlude.end)
     return DisplayOutput(
-        frame.state is DisplayState.LYRICS_AVAILABLE,
+        frame.state.value,
         None if frame.current is None else frame.current.text,
         interlude,
+        None if frame.line_progress is None else frame.line_progress.fraction,
+        None if frame.word_progress is None else frame.word_progress.fractions,
+        None if frame.diagnostic is None else frame.diagnostic.code,
     )
 
 

@@ -20,7 +20,8 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-from .karaoke import line_progress, word_fill_fraction
+from .display.layout import FontFitPolicy
+from .display.models import LineProgress, WordProgress
 from .lyrics.models import LyricLine
 
 UNSUNG_COLOR = QColor(255, 255, 255, 95)
@@ -28,6 +29,7 @@ SHADOW_COLOR = QColor(0, 0, 0, 170)
 SHADOW_OFFSET = 1.5
 REVEAL_RISE_PX = 9.0
 REVEAL_DURATION_MS = 320
+_FONT_FIT_POLICY = FontFitPolicy()
 # Line-change transition styles (chosen in Settings). "rise" is the calm default;
 # the others trade the small upward rise for a pure fade, a larger slide, or a
 # gentle zoom. "none" is expressed by the fx_animate master switch being off.
@@ -80,6 +82,8 @@ class KaraokeLabel(QWidget):
         super().__init__(parent)
         self._line: LyricLine | None = None
         self._word_mode = False
+        self._line_progress: LineProgress | None = None
+        self._word_progress: WordProgress | None = None
         self._media_time: float | None = None
         self._font = QFont()
         #: The font as configured. ``_font`` is this at the current scale, so a
@@ -166,6 +170,12 @@ class KaraokeLabel(QWidget):
         if new_id is not None and new_id != prev_id:
             self._start_reveal()
         self.updateGeometry()
+        self.update()
+
+    def set_progress(self, line_progress: LineProgress | None, word_progress: WordProgress | None) -> None:
+        """Accept semantic progress calculated by DisplayEngine."""
+        self._line_progress = line_progress
+        self._word_progress = word_progress
         self.update()
 
     def _rebuild_layout(self) -> None:
@@ -273,19 +283,24 @@ class KaraokeLabel(QWidget):
         word widths (no per-frame text measurement).
         """
         line = self._line
-        if line is None or self._media_time is None:
+        if line is None:
             return text_left, None
-        t = self._media_time
-
         if not self._word_mode:
-            return text_left + total_width * line_progress(line, t), None
+            progress = self._line_progress
+            fraction = progress.fraction if progress is not None and progress.line_id == line.id else 0.0
+            return text_left + total_width * fraction, None
 
+        progress = self._word_progress
         sung = text_left
         for i, word in enumerate(line.words):
             cursor = text_left + (self._word_offsets[i] if i < len(self._word_offsets) else 0.0)
             w = self._word_widths[i] if i < len(self._word_widths) else 0.0
             if word.start is not None and word.end is not None:
-                frac = word_fill_fraction(word, t)
+                frac = (
+                    progress.fractions[i]
+                    if progress is not None and progress.line_id == line.id and i < len(progress.fractions)
+                    else 0.0
+                )
                 if 0.0 < frac < 1.0:
                     edge = cursor + w * frac
                     return edge, (cursor, edge)
@@ -360,7 +375,8 @@ class KaraokeLabel(QWidget):
         # Sweep position relative to the text start (measure with text_left = 0).
         sweep_rel, active_rel = self._compute_sweep(0.0, total_width)
 
-        if total_width <= avail:
+        fit = _FONT_FIT_POLICY.decide(total_width, avail)
+        if fit.fits:
             text_left = (avail - total_width) / 2.0  # fits -> centered
         elif self._is_title():
             # Long now-playing title: no sweep to follow, so ping-pong the whole name.

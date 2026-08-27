@@ -142,6 +142,10 @@ class LocalLyricsSource:
         self._embedded = embedded if embedded is not None else EmbeddedLyricsSource()
         self._worker = BlockingCallRunner("kotonoha-local-lyrics")
 
+    def start(self) -> None:
+        """Reopen the local reader worker after a previous provider shutdown."""
+        self._worker.reopen()
+
     def close(self) -> None:
         """Release the local-file worker without blocking the event loop."""
         self._worker.close()

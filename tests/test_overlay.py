@@ -8,8 +8,18 @@ from overlay_helpers import UnavailableController
 from PyQt6.QtCore import QEvent, QPointF, QRect, Qt
 from PyQt6.QtGui import QMouseEvent
 
-from kotonoha.config import Config, FxIntensity, LyricsScript, PanelStyle, PanelWidthMode
-from kotonoha.display.models import EMPTY_FRAME, DisplayFrame, DisplayState, Interlude
+from kotonoha.config import Config, FxIntensity, PanelStyle, PanelWidthMode
+from kotonoha.display.models import (
+    EMPTY_FRAME,
+    DisplayFrame,
+    DisplayOptions,
+    DisplayScript,
+    DisplayState,
+    Interlude,
+    LineProgress,
+    WordProgress,
+)
+from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
 from kotonoha.overlay import LyricsOverlay
 from kotonoha.playback.models import TrackIdentity
@@ -67,6 +77,17 @@ def display_frame(
         if track is None
         else DisplayState.LYRICS_NOT_FOUND
     )
+    translation = None
+    if current is not None and current.translation:
+        translation = LyricLine(
+            current.index,
+            current.id,
+            current.start,
+            current.end,
+            current.translation,
+            "",
+            (),
+        )
     return DisplayFrame(
         state,
         track=track,
@@ -75,6 +96,7 @@ def display_frame(
         is_playing=is_playing,
         previous=previous,
         current=current,
+        translation=translation,
         next=next,
         around=around,
         interlude=interlude,
@@ -265,7 +287,10 @@ def test_untimed_word_does_not_freeze_sweep(qapp):
         words=(LyricWord(None, None, "?"), LyricWord(1.0, 2.0, "word")),
     )
     label.set_line(line, True)
-    label.set_media_time(1.5)  # halfway through the *timed* word
+    label.set_progress(
+        LineProgress("L", 0.5),
+        WordProgress("L", (0.0, 0.5), 1),
+    )
 
     sweep_x, active = label._compute_sweep(0.0, label._total_w)
 
@@ -294,18 +319,16 @@ def test_panel_visibility_follows_style_not_lock(qapp):
 def test_lyric_script_converts_displayed_line(qapp):
 
     line = LyricLine(0, "L", 0.0, 3.0, "简体字", translation="翻译", words=(LyricWord(0.0, 1.0, "简"),))
-    converted = LyricsOverlay(
-        LyricsState(), Config(lyrics_script=LyricsScript.ZH_HANT), UnavailableController()
+    document = LyricsDocument("test", timing=TimingKind.WORD, lines=(line,))
+    converted = DisplayEngine(
+        DisplayOptions(lyrics_script=DisplayScript.ZH_HANT)
     )
-    out = converted._convert_line(line)
+    out = converted.project(document, 0.5, track=None, is_playing=True).current
     assert out is not None
     assert out.text == "簡體字"  # display converted to Traditional
     assert out.words[0].text == "簡"  # words converted too (for the karaoke sweep)
-    off = LyricsOverlay(LyricsState(), Config(lyrics_script=LyricsScript.OFF), UnavailableController())
-    assert off._convert_line(line) is line  # untouched when disabled
-    for overlay in (converted, off):
-        overlay.deleteLater()
-    qapp.processEvents()
+    off = DisplayEngine(DisplayOptions(lyrics_script=DisplayScript.OFF))
+    assert off.project(document, 0.5, track=None, is_playing=True).current is line
 
 
 def test_accent_tinted_black_panel_uses_accent_hue(qapp):
@@ -400,11 +423,8 @@ def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
         current=LyricLine(0, "line", 0.0, 4.0, "line", "", ()), current_time=1.0, is_playing=True,
     )
     overlay._on_frame(snapshot)
-    before = overlay._current._media_time
-    assert before is not None
     overlay._earlier_btn.click()
     assert overlay._config.track_offsets[overlay._track_key] == 50
-    assert overlay._current._media_time == pytest.approx(before + 0.05)
     assert overlay._current.text == "Sync offset: +50 ms"
     overlay.set_passthrough(True)
     assert overlay._earlier_btn.isHidden() is True
@@ -415,11 +435,15 @@ def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
 
 def test_track_without_offset_uses_global_lead(qapp):
     overlay = LyricsOverlay(LyricsState(), Config(lead_ms=120), UnavailableController())
-    overlay._on_frame(display_frame(
-        has_lyrics=True, title="Song", artist="Artist",
-        current=LyricLine(0, "line", 0.0, 4.0, "line", "", ()), current_time=1.0, is_playing=True,
-    ))
-    assert overlay._current._media_time == pytest.approx(1.12)
+    document = LyricsDocument(
+        "test",
+        timing=TimingKind.LINE,
+        title="Song",
+        artist="Artist",
+        lines=(LyricLine(0, "line", 0.0, 4.0, "line", "", ()),),
+    )
+    frame = DisplayEngine(DisplayOptions(lead_ms=120)).project(document, 1.0, track=None, is_playing=True)
+    assert frame.current_time == pytest.approx(1.12)
     overlay.deleteLater()
     qapp.processEvents()
 

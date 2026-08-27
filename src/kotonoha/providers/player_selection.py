@@ -50,6 +50,11 @@ class PlayerSelector:
         #: When each player was first seen playing, used for the recency margin.
         self.playing_since: dict[str, float] = {}
 
+    def reset(self) -> None:
+        """Forget player selection history while retaining the configured lock."""
+        self.current_name = None
+        self.playing_since.clear()
+
     def forget_absent(self, present: set[str]) -> None:
         """Drop the history of players that are no longer on the bus."""
         for name in tuple(self.playing_since):

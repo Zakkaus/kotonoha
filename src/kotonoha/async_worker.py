@@ -94,5 +94,15 @@ class BlockingCallRunner:
         if executor is not None:
             executor.shutdown(wait=False, cancel_futures=True)
 
+    def reopen(self) -> None:
+        """Allow a stopped owner to create a fresh executor on its next call.
+
+        The worker deliberately detaches the old executor during ``close`` so
+        shutdown never blocks the event loop. Reopening does not revive that
+        executor; it only clears the lifecycle guard and lets the next call
+        allocate a new one.
+        """
+        self._closed = False
+
 
 __all__ = ["BlockingCallRunner", "DEFAULT_BLOCKING_CALL_TIMEOUT_S"]

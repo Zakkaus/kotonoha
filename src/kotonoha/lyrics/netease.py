@@ -10,7 +10,7 @@ import aiohttp
 
 from .artifact import LyricsArtifact
 from .http import LyricsSession
-from .lrc_parser import merge_translation, parse_lrc
+from .lrc_parser import parse_lrc
 from .match import (
     Candidate,
     MatchConfidence,
@@ -23,6 +23,7 @@ from .match import (
 )
 from .models import LyricLine
 from .payload import read_json_capped
+from .translation import TranslationMerger
 from .yrc_parser import parse_yrc
 
 logger = logging.getLogger(__name__)
@@ -111,7 +112,7 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
     yrc_lines = parse_yrc(payload.get("yrc", ""))
     base = yrc_lines or parse_lrc(payload.get("lrc", ""))
     translation = parse_lrc(payload.get("tlyric", ""))
-    return tuple(merge_translation(base, translation) if translation else base)
+    return TranslationMerger().merge_by_timestamp(base, translation) if translation else tuple(base)
 
 
 async def _artifact_for_match(

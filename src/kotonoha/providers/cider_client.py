@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import math
 from collections.abc import Mapping
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from typing import Final
 from urllib.parse import quote
 
@@ -13,6 +13,8 @@ import aiohttp
 
 from ..lyrics.cider_api import CiderLyricsPayloadError, CiderLyricsResponseAdapter
 from ..lyrics.models import LyricsDocument
+from ..lyrics.payload import read_capped
+from ..lyrics.translation import TranslationMerger
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 DEFAULT_CIDER_API_URL: Final[str] = "http://127.0.0.1:10767"
@@ -212,8 +214,11 @@ class CiderApiClient:
             headers["apptoken"] = self._token
         try:
             async with session.get(f"{self._base_url}{path}", params=params, headers=headers) as response:
-                raw = await response.content.read(MAX_CIDER_RESPONSE_BYTES + 1)
                 status = response.status
+                try:
+                    raw = await read_capped(response, "Cider API", max_bytes=MAX_CIDER_RESPONSE_BYTES)
+                except ValueError as exc:
+                    raise CiderApiError(str(exc), status=status) from exc
         except (aiohttp.ClientError, TimeoutError) as exc:
             raise CiderApiError("Cider API request failed") from exc
         if len(raw) > MAX_CIDER_RESPONSE_BYTES:
@@ -236,13 +241,7 @@ class CiderApiClient:
 
 def _with_translations(document: LyricsDocument, translations: tuple[str, ...]) -> LyricsDocument:
     """Attach line-ordered translations without changing source timing."""
-    lines = tuple(
-        replace(line, translation=translations[index])
-        if index < len(translations)
-        else line
-        for index, line in enumerate(document.lines)
-    )
-    return replace(document, lines=lines)
+    return TranslationMerger().merge_by_index(document, translations)
 
 
 def _mapping(value: object, field: str) -> Mapping[str, object]:

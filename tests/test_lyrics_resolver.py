@@ -1,7 +1,6 @@
 import asyncio
 import contextlib
 import logging
-import sqlite3
 from pathlib import Path
 from typing import cast
 
@@ -9,6 +8,7 @@ import pytest
 
 from kotonoha.lyrics import netease, qqmusic
 from kotonoha.lyrics.artifact import LyricsArtifact
+from kotonoha.lyrics.cache import LyricsCacheError
 from kotonoha.lyrics.catalog import LyricsSourceCatalog
 from kotonoha.lyrics.hint import LyricsHint
 from kotonoha.lyrics.http import LyricsSession
@@ -52,6 +52,9 @@ class FakeCache:
         self.calls = calls
         self.hits = hits or {}
         self.lookup_error = lookup_error
+
+    def start(self):
+        self.calls.append("start")
 
     async def lookup(self, provider, _track, _parser):
         self.calls.append(f"cache:{provider}")
@@ -330,7 +333,7 @@ async def test_cache_disabled_skips_reads_and_writes():
 
 async def test_cache_failure_does_not_block_same_provider_network():
     calls = []
-    cache = FakeCache(calls, lookup_error=sqlite3.OperationalError("locked"))
+    cache = FakeCache(calls, lookup_error=LyricsCacheError("locked"))
     resolver = resolver_with_fakes(calls, cache=cache, network_hits={"netease": artifact()})
 
     result = await resolver.resolve(SESSION, TRACK, ["netease"])

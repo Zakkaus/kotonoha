@@ -6,9 +6,9 @@ from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
 from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.lyrics.sources import LyricsSourceResult
 from kotonoha.lyrics.workflow import ResolverLookup, ResolverPort
-from kotonoha.playback.coordinator import PlaybackCoordinator, PlaybackSample
 from kotonoha.playback.models import MprisPlayerPort, PlaybackObservation, PlaybackStatus, TrackIdentity
 from kotonoha.providers.mpris_lyrics import MprisLyricsCoordinator
+from kotonoha.providers.mpris_playback import MprisPlaybackCoordinator, PlaybackSample
 from kotonoha.providers.mpris_track import TrackCommit, TrackInfo, parse_metadata
 from kotonoha.state import LyricsState
 
@@ -45,6 +45,7 @@ class FakeSession:
 
     async def connect(self) -> None:
         self.connected = True
+        self.closed = False
 
     def close(self) -> None:
         self.closed = True
@@ -84,6 +85,9 @@ class RecordingResolver:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.block = False
+
+    def start(self) -> None:
+        return None
 
     async def resolve(self, _session, track, _sources, /):
         self.tracks.append(track)
@@ -163,7 +167,7 @@ async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
     session = FakeSession(player)
     commits = []
     samples: list[PlaybackSample] = []
-    coordinator = PlaybackCoordinator(
+    coordinator = MprisPlaybackCoordinator(
         session=session,
         on_sample=samples.append,
         on_commit=commits.append,
@@ -182,7 +186,7 @@ async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
 
 async def test_playback_coordinator_closes_its_session_and_poll_task():
     session = FakeSession(None)
-    coordinator = PlaybackCoordinator(session=session, poll_interval=0.01)
+    coordinator = MprisPlaybackCoordinator(session=session, poll_interval=0.01)
 
     await coordinator.start()
     await asyncio.sleep(0)
@@ -192,9 +196,22 @@ async def test_playback_coordinator_closes_its_session_and_poll_task():
     assert session.closed is True
 
 
+async def test_playback_coordinator_can_restart_after_stop():
+    session = FakeSession(None)
+    coordinator = MprisPlaybackCoordinator(session=session, poll_interval=0.01)
+
+    await coordinator.start()
+    await coordinator.stop()
+    assert session.closed is True
+
+    await coordinator.start()
+    assert session.closed is False
+    await coordinator.stop()
+
+
 async def test_playback_coordinator_reports_no_player():
     calls: list[float] = []
-    coordinator = PlaybackCoordinator(session=FakeSession(None), on_no_player=calls.append)
+    coordinator = MprisPlaybackCoordinator(session=FakeSession(None), on_no_player=calls.append)
 
     await coordinator.poll_once(now=4.0)
 
@@ -261,6 +278,51 @@ async def test_external_result_is_projected_to_the_canonical_frame():
     assert state.frame.document.song_id == "provider-song-1"
     assert state.frame.document.language == "en"
     assert state.frame.current is not None
+
+
+async def test_mpris_no_lyrics_resolution_publishes_not_found_state():
+    state = LyricsState()
+    coordinator = lyrics_coordinator(
+        DisplayCoordinator(state),
+        resolver=RecordingResolver(),
+        ownership=SourceOwnershipCoordinator(),
+    )
+
+    coordinator.on_playback_commit(track_commit(1))
+    assert coordinator.load_task is not None
+    await coordinator.load_task
+
+    assert state.frame.state is DisplayState.LYRICS_NOT_FOUND
+    assert state.frame.track is not None
+    assert state.frame.document is None
+
+
+async def test_mpris_resolution_keeps_a_paused_playback_observation():
+    state = LyricsState()
+    coordinator = lyrics_coordinator(
+        DisplayCoordinator(state),
+        resolver=RecordingResolver(),
+        ownership=SourceOwnershipCoordinator(),
+    )
+    commit = track_commit(1)
+    coordinator.on_playback_commit(commit)
+    observation = PlaybackObservation(
+        "mpris",
+        "org.mpris.MediaPlayer2.test",
+        TrackIdentity("mpris", "org.mpris.MediaPlayer2.test", title="Song", artist="Artist"),
+        PlaybackStatus.PAUSED,
+        4.0,
+        180.0,
+        1.0,
+    )
+    coordinator.on_playback_sample(PlaybackSample(observation, commit.info, False, None))
+
+    assert coordinator.load_task is not None
+    await coordinator.load_task
+
+    assert state.frame.state is DisplayState.LYRICS_NOT_FOUND
+    assert state.frame.is_playing is False
+    assert state.frame.current_time == 4.0
 
 
 async def test_cider_frame_can_take_over_after_a_late_external_miss():

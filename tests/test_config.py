@@ -310,6 +310,20 @@ def test_a_config_that_is_not_utf8_does_not_end_startup(tmp_path):
     assert (tmp_path / "config.json.corrupt").exists(), "the unreadable file was not kept"
 
 
+def test_an_oversized_but_valid_json_config_is_not_accepted(tmp_path, monkeypatch):
+    # A byte cap must reject a complete object followed by enough whitespace to
+    # make the file oversized. Reading only the first cap bytes could otherwise
+    # mistake that truncated prefix for a valid JSON document.
+    import kotonoha.config_store as config_store
+
+    monkeypatch.setattr(config_store, "MAX_CONFIG_BYTES", 16)
+    path = tmp_path / "config.json"
+    path.write_bytes(b'{"port": 1234}' + b" " * 8)
+
+    assert load_config(path) == Config()
+    assert path.exists(), "an oversized file should be left intact for inspection"
+
+
 def test_a_pipe_at_the_config_path_does_not_block_startup(tmp_path):
     import os
     import threading

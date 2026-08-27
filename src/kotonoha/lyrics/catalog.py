@@ -74,6 +74,10 @@ class LyricsSourceCatalog:
         """Release workers owned by local/exact source adapters."""
         self._local_source.close()
 
+    def start(self) -> None:
+        """Reopen workers owned by local/exact source adapters."""
+        self._local_source.start()
+
 
 def _default_network_sources() -> dict[str, LyricsSource]:
     """Create network adapters without starting any I/O."""

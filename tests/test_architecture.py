@@ -24,11 +24,42 @@ def _module_names(path: Path) -> set[str]:
     return names
 
 
-#: Modules outside the platform package that may still name the concrete bridge.
-#: controller.py is the composition root and is meant to; overlay.py builds its own
-#: default when none is passed, which is the one place the contract does not yet
-#: reach and is recorded here rather than left to pass unnoticed.
-_BRIDGE_NAMERS = {"controller.py", "overlay.py"}
+def _module_name(path: Path) -> str:
+    """Return the package module name represented by a source path."""
+    parts = list(path.relative_to(SOURCE_ROOT).with_suffix("").parts)
+    if parts[-1] == "__init__":
+        parts.pop()
+    return ".".join(("kotonoha", *parts))
+
+
+def _absolute_imports(path: Path) -> set[str]:
+    """Resolve AST import nodes enough to enforce package dependency direction."""
+    module_parts = _module_name(path).split(".")
+    package_parts = module_parts[:-1]
+    resolved: set[str] = set()
+    for node in _imports(path):
+        if isinstance(node, ast.Import):
+            resolved.update(alias.name for alias in node.names)
+            continue
+        if node.level == 0:
+            base = [] if node.module is None else node.module.split(".")
+        else:
+            root_length = len(package_parts) - (node.level - 1)
+            if root_length < 0:
+                continue
+            base = package_parts[:root_length]
+            if node.module is not None:
+                base.extend(node.module.split("."))
+        if node.module is None:
+            resolved.update(".".join((*base, alias.name)) for alias in node.names)
+        else:
+            resolved.add(".".join(base))
+    return resolved
+
+
+#: The composition root is the only module outside the platform package allowed to
+#: name the concrete bridge. Overlay defaults are built by the platform factory.
+_BRIDGE_NAMERS = {"controller.py"}
 
 #: The concrete native bridge, however it is spelled at the import site.
 _BRIDGE_SYMBOLS = {"LayerShellController"}
@@ -39,8 +70,8 @@ def test_ui_does_not_reach_the_native_bridge():
 
     Rejecting `platform.native` alone left the boundary open: `platform/__init__.py`
     re-exports LayerShellController, so `from .platform import LayerShellController`
-    hands a UI module the concrete bridge while the old check passed. The remaining
-    two call sites are listed above, so this test says what is actually held.
+    hands a UI module the concrete bridge while the old check passed. The sole
+    remaining call site is the composition root listed above.
     """
     violations = []
     for path in _python_modules():
@@ -178,33 +209,75 @@ def test_provider_boundaries_do_not_retain_legacy_display_or_gate_contracts():
     assert not violations, "provider boundaries retain legacy contracts: " + ", ".join(violations)
 
 
+def test_timeline_engine_is_clock_only():
+    """Timeline state must not import lyric policy or presentation modules."""
+    path = SOURCE_ROOT / "display" / "timeline.py"
+    forbidden = ("lyrics", "rules", "presentation", "PyQt6")
+    violations = [module for module in _module_names(path) if any(part in module for part in forbidden)]
+    assert not violations, "TimelineEngine must own clock state only: " + ", ".join(sorted(violations))
+
+
+def test_display_engine_is_the_single_policy_owner():
+    """The display policy class must have one concrete definition."""
+    owners: list[str] = []
+    for path in _python_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        if any(isinstance(node, ast.ClassDef) and node.name == "DisplayEngine" for node in ast.walk(tree)):
+            owners.append(path.relative_to(SOURCE_ROOT).as_posix())
+    assert owners == ["display/presentation.py"]
+
+
+def test_overlay_consumes_display_progress_without_owning_display_policy():
+    """The Qt renderer may paint progress but may not select or calculate it."""
+    path = SOURCE_ROOT / "overlay.py"
+    forbidden_modules = ("display.karaoke", "display.rules", "display.presentation", "lyrics.select")
+    imported = _module_names(path)
+    assert not any(any(part in module for part in forbidden_modules) for module in imported), imported
+
+    forbidden_names = {
+        "active_word_index",
+        "find_current_index",
+        "in_interlude",
+        "interlude_at",
+        "interlude_text",
+        "line_fill_fraction",
+        "line_progress",
+        "word_fill_fraction",
+        "word_fill_fractions",
+    }
+    names = {
+        node.id
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert not names.intersection(forbidden_names)
+
+
 def test_playback_application_boundary_does_not_expose_dbus_dynamic_values():
     """D-Bus variants must be normalized before reaching playback coordination."""
-    path = SOURCE_ROOT / "playback" / "coordinator.py"
+    path = SOURCE_ROOT / "providers" / "mpris_playback.py"
     tree = ast.parse(path.read_text(encoding="utf-8"))
     dynamic_names = [node for node in ast.walk(tree) if isinstance(node, ast.Name) and node.id == "Any"]
     assert not dynamic_names, "playback coordination must use typed property-change values"
 
 
-def test_large_ui_modules_are_explicitly_scoped():
-    """Keep the two legacy Qt roots visible until their ownership split lands.
+def test_playback_domain_does_not_depend_on_player_adapters():
+    """Neutral playback models cannot import a concrete provider package."""
+    violations = []
+    for path in (SOURCE_ROOT / "playback").rglob("*.py"):
+        for imported in _absolute_imports(path):
+            if imported == "kotonoha.providers" or imported.startswith("kotonoha.providers."):
+                violations.append(f"{path.relative_to(SOURCE_ROOT)} -> {imported}")
+    assert not violations, "playback domain depends on provider adapters: " + ", ".join(violations)
 
-    These are deliberate exceptions, not a general size waiver: both classes are
-    single Qt roots whose event/paint callbacks and staged widget state must share
-    one QObject owner. A new oversized module, or a new nested oversized module,
-    fails this gate until it gets an explicit responsibility boundary.
-    """
-    approved = {
-        "overlay.py": "single QWidget owns Qt paint/event overrides and platform callbacks",
-        "settings_dialog.py": "single QDialog owns page widgets and staged form state",
-    }
+
+def test_large_ui_modules_are_explicitly_scoped():
     offenders: list[str] = []
     for path in SOURCE_ROOT.rglob("*.py"):
         lines = len(path.read_text(encoding="utf-8").splitlines())
         relative = path.relative_to(SOURCE_ROOT).as_posix()
-        if lines > 800 and relative not in approved:
+        if lines > 800:
             offenders.append(f"{relative} ({lines} lines)")
-    assert all(reason for reason in approved.values())
     assert not offenders, "split oversized modules by responsibility: " + ", ".join(offenders)
 
 

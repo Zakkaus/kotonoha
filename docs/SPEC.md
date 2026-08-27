@@ -1,10 +1,12 @@
 # Kotonoha 桌面歌词浮窗 — 设计规格 (Spec v0.1)
 
-> **当前实现说明（Phase 2）**：本文中早期的 Cider WebSocket/TypeScript 探针段落仅是历史设计记录，
+> **当前实现说明（Phase 3）**：本文中早期的 Cider WebSocket/TypeScript 探针段落仅是历史设计记录，
 > 不是当前协议或启动要求。当前 Python 主链路直接使用 Cider 公共 HTTP API：
 > 每首歌请求一次完整歌词时间轴，播放位置约每秒校准一次，帧间由本地 MediaClock 插值；Cider
 > API token 可选，在 Settings -> Sources -> Cider API token 中设置，并保存到系统密钥环。最终歌词 provider 以 Cider
-> 响应的 source.provider 为准，不把 transport/player 名称当作 provider。
+> 响应的 source.provider 为准，不把 transport/player 名称当作 provider。完整输入由
+> `DisplayInput` 携带 `PlaybackObservation`、`ResolutionState`、歌词文档和不可变显示选项，
+> `DisplayEngine` 生成带语义进度的 `DisplayFrame`，Overlay 不重新计算歌词时间。
 
 > 一个运行在 Linux Wayland 桌面上的现代化、半透明、可穿透的歌词浮窗。
 > 复用 BiliHUD 的 `layer-shell-qt` 技术栈，把"弹幕 HUD"换成"逐字卡拉 OK 歌词 HUD"。
@@ -59,20 +61,35 @@
 当前主链路将播放器事实、歌词 source 和展示投影分层：
 
 ```text
-MPRIS -> PlaybackCoordinator -> PlaybackObservation
-                                  |
-Cider HTTP / source adapters -> LyricsDocument
-                                  |
-              LyricsPresentationAdapter -> DisplayFrame
-                                  |
+MPRIS -> MprisPlaybackCoordinator -> PlaybackSample
+                                      |
+                         MprisLyricsCoordinator
+                           /       |        \
+                          /        |         \
+       MprisResolutionSession  live source   MprisDisplayBinding
+                |              ownership             |
+        LyricsResolutionWorkflow                      |
+                |                                      |
+        LyricsResolver / source contracts               |
+                \____________ LyricsDocument __________/
+                                      |
+                    DisplayCoordinator -> DisplayEngine
+                                      |
                     QtDisplayPublisher -> LyricsState -> Overlay
 ```
 
 外部播放器若不能使用 Cider HTTP，则连接 `ws://127.0.0.1:28745/kotonoha/adapter`，发送
 `kotonoha.adapter` v1 的完整 `snapshot`，并可用独立 `clock` 消息校准播放位置。adapter 只发送
-完整播放事实和完整歌词文档；当前行、上下文行、interlude 与逐字投影全部由 Kotonoha 生成。
+完整播放事实和完整歌词文档；`AdapterProtocolDecoder` 在边界层解析并交给
+`SourceOwnershipCoordinator`，当前行、上下文行、interlude 与逐字投影全部由 Kotonoha 生成。
+
+`CiderApiProvider` 是并列的实时播放器/歌词适配器：它通过 `CiderApiClient` 产生同一套
+`PlaybackObservation`、`LyricsDocument` 和 source ownership facts。Cider 响应里的
+`source.provider` 只决定歌词最终来源身份，不会被改写成 transport 名称 `cider`。
 
 > 下方的旧 WebSocket/TS 探针图、旧字段和旧 `LyricsSnapshot` 定义保留作历史记录，不是当前实现契约。
+> 从“4.1 历史数据契约”开始直到“7.2 历史客户端”均为旧探针方案；当前实现只使用上面的
+> `kotonoha.adapter` v1 receiver 和 Cider 公共 HTTP API。
 
 ```
 ┌─────────────────┐   WebSocket (持久连接)        ┌──────────────────────────┐
@@ -98,7 +115,7 @@ Cider HTTP / source adapters -> LyricsDocument
                                                    └──────────────────────────┘
 ```
 
-**历史兼容方案说明**：以下 WebSocket 设计记录的是旧探针路径。当前 Cider 主链路使用公开 HTTP API，
+**历史兼容方案说明**：下方 WebSocket 图记录的是已经移除的 Cider 专用探针路径。当前 Cider 主链路使用公开 HTTP API，
 每首歌读取一次完整歌词时间轴，并以约 1s 的 playback 校准驱动本地 MediaClock；WS 仍可作为未来
 外部播放器 adapter 的兼容入口。
 
@@ -108,9 +125,9 @@ Cider HTTP / source adapters -> LyricsDocument
 - 持久连接，无连接抖动；双向，Kotonoha 可回发 `resync` / `ack`。
 - **代价**：探针侧需要"带退避的重连"逻辑（Kotonoha 可能后启动或重启）——见 §7.2，属标准实现。
 
-**关键点**：探针**已经做了时间对齐**——payload 直接给出 `currentLine / previousLine / nextLine / aroundLines` 和 `currentTime`。Kotonoha 不需要自己跑播放进度定时器去找当前行，只需：
-1. 收到帧 → 更新 state；
-2. 在两次心跳之间，用本地单调时钟从最近一次 `currentTime` 推进，在 `currentLine.words[]` 上做**逐字进度插值**实现卡拉 OK 扫光（唯一需要本地高频刷新的部分，~60fps QTimer；播放暂停时停表）。
+**历史关键点**：旧探针**已经做了时间对齐**——payload 直接给出 `currentLine / previousLine / nextLine / aroundLines` 和 `currentTime`。这段行为只描述旧实现；当前 generic adapter 不上传当前行投影，`DisplayEngine` 根据完整文档生成它：
+1. 规范化输入 → `DisplayInput` → `DisplayEngine` → `DisplayFrame`；
+2. `TimelineEngine` 在两次校准之间用本地单调时钟推进，返回的 `LineProgress` / `WordProgress` 由 `KaraokeLabel` 映射到像素（播放暂停时停表）。
 
 ---
 
@@ -179,20 +196,38 @@ src/kotonoha/
 ├── __init__.py
 ├── __main__.py
 ├── main.py                  # entry_point: 装配 QApplication + qasync 事件循环
-├── config.py                # 读写 ~/.config/kotonoha/config.json（XDG）
+├── config.py                # 配置模型、验证与兼容入口
+├── config_store.py          # XDG 路径、受限读取与原子写入
 ├── platform/                # 平台判定归属处（Issue #16 的分层约束）
 │   ├── detect.py            # layer-shell .so 定位/降级判定（原 lyrics_loader.py）
 │   ├── native.py            # libkoto-layer.so 的 ctypes 包装
 │   └── overlay_contracts.py # 能力值对象与工具无关的窗口契约
 ├── layer_shell_bridge.cpp   # C++ 桥（移植自 bilihud，改 scope="kotonoha"）
 ├── build_bridge.sh          # 构建脚本（移植；产物 libkoto-layer.so）
-├── display/                 # DisplayFrame、presentation、唯一 Qt publisher
-├── playback/                # PlaybackCoordinator 与 normalized playback facts
+├── display/                 # DisplayInput、DisplayEngine、时间/布局策略、唯一 Qt publisher
+│   ├── models.py            # DisplayInput、DisplayFrame、resolution/progress values
+│   ├── presentation.py      # DisplayEngine：唯一展示策略 owner
+│   ├── timeline.py          # TimelineEngine：只负责 MediaClock observation
+│   ├── rules.py             # current/interlude/sweep 纯规则
+│   ├── karaoke.py           # line/word/interlude progress 纯规则
+│   ├── layout.py            # 无 Qt 的字体/宽度 fit policy
+│   └── publisher.py         # 唯一 DisplayFrame -> Qt state publisher
+├── playback/models.py       # normalized playback facts 与播放器端口
+├── providers/mpris_playback.py      # MPRIS session、选择、poll 和稳定化生命周期
+├── providers/mpris_resolution.py    # MPRIS 歌词解析会话与 resolver 生命周期
+├── providers/mpris_display.py       # MPRIS sample 到 display/timeline 的绑定
+├── providers/mpris.py               # MPRIS facade 与配置转发
+├── providers/cider_client.py        # Cider HTTP session、响应边界和可选 token
+├── providers/cider_api.py           # Cider 低频校准与按 track generation 的歌词任务
+├── lyrics/translation.py    # timestamp/positional translation transforms
 ├── lyrics/protocol.py       # adapter v1 snapshot/clock boundary decoder
 ├── lyrics/sources.py        # local/exact/network source contracts
 ├── state.py                 # LyricsState：持有 DisplayFrame，发 frame_changed
 ├── receiver.py              # AdapterReceiver：aiohttp app，把 adapter message 灌进 frame path
-├── overlay.py               # LyricsOverlay(QWidget)：透明窗口 + layer-shell + 逐字渲染
+├── overlay.py               # LyricsOverlay(QWidget)：透明窗口与歌词绘制
+├── overlay_surface.py       # layer-shell surface、geometry、output 与 drag 生命周期
+├── overlay_chrome.py        # overlay 控件、图标和可见性
+├── overlay_style.py         # overlay appearance/font fallback
 ├── karaoke_label.py         # KaraokeLabel：逐字渐变高亮的自绘 QWidget
 ├── tray.py                  # 托盘菜单：穿透开关 / 锁定位置 / 设置 / 退出
 ├── settings_dialog.py       # 设置对话框（字体、位置、不透明度、是否双语）
@@ -200,7 +235,8 @@ src/kotonoha/
     └── icon.png
 ```
 
-**可测试性**：`model.py`（解析）、`platform/detect.py`（降级判定）、`state.py`（信号语义）做成纯逻辑、不依赖显示，可在无 GUI 的 CI 里跑（与 BiliHUD 的 `test_danmaku_format.py` / `test_layer_shell_loader.py` 同思路）。
+**可测试性**：protocol、display 规则/时间轴、translation transform、`platform/detect.py`（降级判定）和
+`state.py`（信号语义）做成纯逻辑、不依赖显示，可在无 GUI 的 CI 里跑。Qt 只负责字体测量、像素布局和绘制。
 
 ---
 
@@ -270,6 +306,8 @@ class AdapterReceiver:
 - 连接建立和 track/document 变化时发送完整 `snapshot`；
 - 播放位置变化可发送只含 `positionS`、`status` 和 `trackRef` 的 `clock`；
 - `onclose / onerror` 可使用指数退避重连，接收端不依赖任何 Cider 专用字段；
+- WebSocket adapter 断开时，接收端丢弃该连接的 candidate；如果它仍是当前展示拥有者，
+  会发布明确的 `NoTrack`，避免歌词残留在浮窗中；MPRIS 已接管时不会覆盖 MPRIS 展示；
 - Cider 插件只是一个可选 adapter producer，Cider HTTP 路径不依赖它。
 
 ---
@@ -302,8 +340,8 @@ class AdapterReceiver:
 - **顶部居中三行布局（默认）**：浮窗锚定屏幕**顶部居中**，自上而下：上一行（暗淡小字）/ 当前行（大字 + 逐字高亮）/ **翻译行（默认显示，双语）** / 下一行（暗淡小字）。
 - **逐字卡拉 OK 高亮**（`KaraokeLabel`，自绘）：
   - 已唱过的词 = 亮色（粉色渐变填充），未唱 = 半透明白（如 `rgba(255,255,255,90)`）；
-  - 当前正在唱的词用 `current_time` 在 `word.start→word.end` 间做**线性进度**，以"扫光/渐变裁切"方式从左到右填充（`QLinearGradient` + clip）；
-  - 平滑由本地 ~60fps `QTimer` 插值驱动，不依赖网络推送频率。
+  - 当前正在唱的词使用 `DisplayFrame.word_progress` 的语义进度，以"扫光/渐变裁切"方式从左到右填充（`QLinearGradient` + clip）；
+  - 平滑由 `DisplayCoordinator` 的本地 ~60fps 时钟推进驱动，不依赖网络推送频率。
 - **品牌强调色 = 粉色**：默认热粉渐变 **`#FF4FA3 → #FF8FCB`**（已唱词的填充与发光主色），当前词扫光高亮用更亮的 `#FF6EC7`。可在设置里换色。
 - **入场/切行动画**：切到下一行时做轻微淡入 + 上移（`QPropertyAnimation`，~180ms），现代且不喧宾夺主。
 - **字号/字重**：当前行 `font-weight: 800`、字号设置可调（默认 ~22px）；上下行 ~14px、alpha 较低。
@@ -372,7 +410,9 @@ GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函
 
 ---
 
-## 13. 实施里程碑
+## 13. 原始产品实施里程碑
+
+以下里程碑保留为产品开发历史；其中早期的 WS 探针描述不覆盖当前 Phase 2/3 的 adapter v1 和 Cider HTTP 实现。
 
 1. **M0 — 项目脚手架对齐**：升级 `pyproject.toml`（build hook + 依赖）、建包结构、移植 `build_bridge.sh` + `layer_shell_bridge.cpp`（改 scope/产物名）、`platform/detect.py` + 测试。
 2. **M1 — 数据链路打通（WS）**：`model.py` 解析 + `state.py` + `receiver.py`（aiohttp WS 服务端）；**改造探针 `main.ts` 为 WS 客户端**（连接/全量同步/心跳/退避重连）；端到端 smoke：探针推送能进 state（先 print，不画 UI）。

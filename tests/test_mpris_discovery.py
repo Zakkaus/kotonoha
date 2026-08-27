@@ -6,7 +6,7 @@ tests, and what happens to a track once a player is chosen has another file.
 """
 
 
-from kotonoha.playback.coordinator import PlaybackCoordinator
+from kotonoha.providers.mpris_playback import MprisPlaybackCoordinator
 from kotonoha.providers.mpris_session import MprisSession
 from kotonoha.providers.mpris_track import TrackInfo
 from kotonoha.providers.player_selection import RECENT_PLAYER_MARGIN
@@ -66,7 +66,7 @@ class _FakeSession:
 
 def _coordinator(players, *, lock=""):
     """players: {bus_name: (player_obj, status, TrackInfo)}."""
-    coordinator = PlaybackCoordinator(session=_FakeSession(players))
+    coordinator = MprisPlaybackCoordinator(session=_FakeSession(players))
     coordinator.set_player_lock(lock)
     return coordinator
 async def test_coordinator_prefers_complete_metadata_over_alphabetical():
@@ -250,7 +250,7 @@ async def test_coordinator_available_players_reports_track_status_and_automatic_
             "Mozilla Firefox", "Stopped", idle_metadata
         ),
     }
-    coordinator = PlaybackCoordinator(session=MprisSession(bus=_DiscoveryBus(players)))
+    coordinator = MprisPlaybackCoordinator(session=MprisSession(bus=_DiscoveryBus(players)))
 
     result = await coordinator.available_players()
 
@@ -272,7 +272,7 @@ async def test_coordinator_picker_marks_the_player_the_poll_would_follow():
         ),
     }
 
-    coordinator = PlaybackCoordinator(session=MprisSession(bus=_DiscoveryBus(players)))
+    coordinator = MprisPlaybackCoordinator(session=MprisSession(bus=_DiscoveryBus(players)))
 
     result = await coordinator.available_players()
 

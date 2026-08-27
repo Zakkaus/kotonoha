@@ -81,6 +81,8 @@ class MprisSession:
         return self._bus is not None
 
     async def connect(self) -> None:
+        if self._bus is not None:
+            return
         try:
             from dbus_fast.aio import MessageBus
             from dbus_fast.constants import BusType

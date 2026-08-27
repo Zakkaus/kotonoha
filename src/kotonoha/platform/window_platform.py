@@ -166,6 +166,11 @@ class DefaultOverlayPlatformFactory:
             _GenericFallbackProvider(self._controller),
         )
 
+    @property
+    def controller(self) -> LayerShellBridge:
+        """Return the bridge retained by the factory for the selected adapters."""
+        return self._controller
+
     def __call__(self, host: WindowHost) -> OverlayPlatform:
         platform_name = self._platform_name or QGuiApplication.platformName()
         desktop = self._current_desktop_value or self._current_desktop()

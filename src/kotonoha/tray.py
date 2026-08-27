@@ -126,6 +126,8 @@ class KotonohaTray(QSystemTrayIcon):
     ) -> None:
         super().__init__(parent)
         self._on_toggle_passthrough = on_toggle_passthrough
+        self._on_open_settings = on_open_settings
+        self._on_quit = on_quit
         self.setIcon(load_icon(icon_name, accent=accent))
         self.setToolTip(t("tray.tooltip"))
 
@@ -140,15 +142,25 @@ class KotonohaTray(QSystemTrayIcon):
         menu.addSeparator()
 
         settings_action = QAction(t("tray.settings"), menu)
-        settings_action.triggered.connect(lambda: on_open_settings())
+        settings_action.triggered.connect(self._open_settings)
         menu.addAction(settings_action)
 
         quit_action = QAction(t("tray.quit"), menu)
-        quit_action.triggered.connect(lambda: on_quit())
+        quit_action.triggered.connect(self._quit)
         menu.addAction(quit_action)
 
         self.setContextMenu(menu)
         self.activated.connect(self._on_activated)
+
+    def _open_settings(self, checked: bool = False) -> None:
+        """Forward the menu action through a bound receiver-owned slot."""
+        del checked
+        self._on_open_settings()
+
+    def _quit(self, checked: bool = False) -> None:
+        """Forward the quit action through a bound receiver-owned slot."""
+        del checked
+        self._on_quit()
 
     def _on_activated(self, reason: QSystemTrayIcon.ActivationReason) -> None:
         # Left-click toggles the lock — the quick unlock affordance for a

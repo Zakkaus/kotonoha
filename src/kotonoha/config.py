@@ -7,21 +7,24 @@ back to defaults, so config files survive version upgrades.
 
 from __future__ import annotations
 
-import json
 import logging
-import os
-import stat
-import tempfile
 from collections.abc import Mapping
 from dataclasses import asdict, dataclass, field, fields
 from enum import StrEnum
 from pathlib import Path
-from typing import Any, Final, TypeVar
+from typing import Any, TypeVar
+
+from . import config_store
+
+APP_DIR_NAME = config_store.APP_DIR_NAME
+CONFIG_FILE_NAME = config_store.CONFIG_FILE_NAME
+MAX_CONFIG_BYTES = config_store.MAX_CONFIG_BYTES
+ConfigStore = config_store.ConfigStore
+_read_config_bytes = config_store._read_config_bytes
+config_dir = config_store.config_dir
+config_path = config_store.config_path
 
 logger = logging.getLogger(__name__)
-
-APP_DIR_NAME = "kotonoha"
-CONFIG_FILE_NAME = "config.json"
 
 # Lyric sources in priority order; first one with lyrics for the song wins.
 # "cider" = lyrics exposed by Cider's public API.
@@ -287,122 +290,14 @@ _ENUM_FIELDS = frozenset(
 )
 
 
-def config_dir() -> Path:
-    base = os.environ.get("XDG_CONFIG_HOME") or os.path.join(os.path.expanduser("~"), ".config")
-    return Path(base) / APP_DIR_NAME
-
-
-def config_path() -> Path:
-    return config_dir() / CONFIG_FILE_NAME
-
-
-#: A settings file is a few kilobytes. The read is bounded because this path is
-#: reachable by anything with write access to the user's config directory.
-MAX_CONFIG_BYTES: Final[int] = 4 * 1024 * 1024
-
-
-def _read_config_bytes(target: Path) -> bytes | None:
-    """Return the file's bytes, or None when there is nothing usable to read.
-
-    Opened non-blocking and checked through the descriptor: this runs on the
-    startup path, and a FIFO left at the config path blocked it forever while a
-    non-regular file would have been followed wherever it led.
-    """
-    try:
-        descriptor = os.open(target, os.O_RDONLY | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        logger.warning("Could not read config %s: %s", target, exc)
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            logger.warning("Config %s is not an ordinary file; using defaults", target)
-            return None
-        chunks: list[bytes] = []
-        remaining = MAX_CONFIG_BYTES
-        while remaining > 0:
-            chunk = os.read(descriptor, min(remaining, 1 << 16))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-    except OSError as exc:
-        logger.warning("Could not read config %s: %s", target, exc)
-        return None
-    finally:
-        os.close(descriptor)
-    return b"".join(chunks)
-
-
 def load_config(path: Path | None = None) -> Config:
-    """Return the stored configuration, or defaults when there is none to trust.
-
-    Never raises: this runs before there is any window to report a problem in, so
-    a missing, unreadable, non-regular or unparseable file yields defaults instead
-    of ending startup. A file that exists but cannot be understood is moved to
-    ``<name>.corrupt`` first, so the values in it survive the next save.
-    """
-    target = path or config_path()
-    data = _read_config_bytes(target)
-    if data is None:
-        return Config()
-    try:
-        raw = data.decode("utf-8")
-    except UnicodeDecodeError:
-        # Left to escape, this ended startup: the file is read before there is any
-        # window to report it in, so a config that is not UTF-8 took the whole
-        # application down rather than costing the settings in it.
-        raw = ""
-    try:
-        return Config.from_dict(json.loads(raw))
-    except (json.JSONDecodeError, ValueError):
-        # Defaults are returned so the app still starts, but the unreadable file is
-        # moved aside first. It used to be left in place, and the next save — a drag
-        # release is enough — wrote the defaults over it, so a single interrupted
-        # write turned into permanent loss of every setting the user had chosen.
-        salvaged = target.with_suffix(target.suffix + ".corrupt")
-        try:
-            target.replace(salvaged)
-        except OSError as exc:
-            logger.warning("Config %s is unreadable and could not be set aside: %s", target, exc)
-        else:
-            logger.warning("Config %s is not valid JSON; kept as %s and using defaults", target, salvaged)
-        return Config()
+    """Load configuration through the typed file-storage boundary."""
+    return ConfigStore(Config, path).load()
 
 
 def save_config(config: Config, path: Path | None = None) -> None:
-    """Persist the configuration, leaving no half-written file behind.
-
-    Written to a sibling temporary file and renamed over the target, because a
-    rename within one directory is atomic: a reader either sees the whole previous
-    file or the whole new one. Writing in place meant a logout, an OOM kill or a
-    full disk during any of the writes this makes — one per settings apply and one
-    per drag release — could leave truncated JSON that the loader then discarded.
-    """
-    target = path or config_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    payload = json.dumps(config.to_dict(), indent=2, ensure_ascii=False)
-    # Created exclusively under an unpredictable name: a fixed one is a file another
-    # process can put a symlink at first, and this write would follow it.
-    descriptor, temporary_name = tempfile.mkstemp(
-        dir=target.parent, prefix=f".{target.name}.", suffix=".new"
-    )
-    temporary = Path(temporary_name)
-    try:
-        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
-            handle.write(payload)
-            handle.flush()
-            # The rename is atomic, but only orders against data the filesystem has
-            # actually taken: without this, ext4's delayed allocation can record the
-            # rename first and leave an empty file after a crash. Measured here at a
-            # median 0.4 ms, on a path reached by discrete user actions — a drag
-            # release, an offset nudge, a settings apply — not per frame.
-            os.fsync(handle.fileno())
-        temporary.replace(target)
-    except OSError:
-        temporary.unlink(missing_ok=True)
-        raise
+    """Save configuration through the typed file-storage boundary."""
+    ConfigStore(Config, path).save(config)
 
 
 #: Bound on the global sync offset, shared with the control that edits it so the

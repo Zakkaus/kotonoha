@@ -1,4 +1,5 @@
 import asyncio
+import json
 from typing import cast
 
 import aiohttp
@@ -7,10 +8,11 @@ import pytest
 from kotonoha.display.coordinator import DisplayCoordinator
 from kotonoha.display.models import DisplayState
 from kotonoha.lyrics.cider_api import CiderLyricsResponseAdapter
+from kotonoha.lyrics.match import TrackMetadata
 from kotonoha.lyrics.models import LyricsDocument, TimingKind
 from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
-from kotonoha.providers.cider_api import CiderApiProvider
+from kotonoha.providers.cider_api import CIDER_API_CLIENT_ID, CiderApiProvider
 from kotonoha.providers.cider_client import CiderApiClient, CiderPlaybackResponseAdapter
 from kotonoha.state import LyricsState
 
@@ -117,15 +119,22 @@ def test_cider_lyrics_adapter_allows_empty_line_text():
 
 
 class _FakeContent:
-    async def read(self, _limit: int) -> bytes:
-        return ("{\"data\":" + _json_payload() + "}").encode()
+    def __init__(self, payload: bytes) -> None:
+        self._payload = payload
+        self._cursor = 0
+
+    async def read(self, limit: int) -> bytes:
+        chunk = self._payload[self._cursor : self._cursor + min(limit, 8192)]
+        self._cursor += len(chunk)
+        return chunk
 
 
 class _FakeResponse:
     status = 200
 
-    def __init__(self) -> None:
-        self.content = _FakeContent()
+    def __init__(self, padding: int = 0) -> None:
+        payload = json.dumps({"data": _playback_payload(), "padding": "x" * padding}).encode()
+        self.content = _FakeContent(payload)
 
     async def __aenter__(self):
         return self
@@ -135,13 +144,14 @@ class _FakeResponse:
 
 
 class _FakeSession:
-    def __init__(self) -> None:
+    def __init__(self, *, padding: int = 0) -> None:
         self.headers: list[dict[str, str]] = []
+        self._padding = padding
 
     def get(self, _url, *, params, headers):
         del params
         self.headers.append(headers)
-        return _FakeResponse()
+        return _FakeResponse(self._padding)
 
 
 def _json_payload() -> str:
@@ -163,6 +173,19 @@ async def test_cider_client_sends_an_apptoken_only_when_configured(token, expect
 
 
 @pytest.mark.asyncio
+async def test_cider_client_reads_a_chunked_json_response_to_eof():
+    session = _FakeSession(padding=20_000)
+    client = CiderApiClient(session=cast(aiohttp.ClientSession, session))
+    await client.start()
+
+    observation = await client.playback(observed_at=1.0)
+
+    await client.close()
+    assert observation.track is not None
+    assert observation.track.title == "Song"
+
+
+@pytest.mark.asyncio
 async def test_cider_client_runtime_token_can_be_changed():
     session = _FakeSession()
     client = CiderApiClient(token=None, session=cast(aiohttp.ClientSession, session))
@@ -175,6 +198,23 @@ async def test_cider_client_runtime_token_can_be_changed():
 
     assert session.headers[0].get("apptoken") == "test-token"
     assert session.headers[1].get("apptoken") is None
+
+
+def test_changing_cider_translation_drops_the_old_live_candidate():
+    track = TrackIdentity("cider", "cider-api", "song-1", "Song", "Song", "Artist", "Album", None, 180.0)
+    observation = PlaybackObservation("cider", "cider-api", track, PlaybackStatus.PLAYING, 1.5, 180.0, 1.0)
+    document = CiderLyricsResponseAdapter().adapt(_lyrics_payload(), track=track, duration_s=180.0)
+    ownership = SourceOwnershipCoordinator()
+    ownership.observe(CIDER_API_CLIENT_ID, observation, document)
+    provider = CiderApiProvider(
+        display=DisplayCoordinator(LyricsState()),
+        ownership=ownership,
+        client=_FakeCiderClient(observation, document),
+    )
+
+    provider.set_translation_language("ja")
+
+    assert ownership.current_match(TrackMetadata("Song", "Artist", "Album", 180.0)) is None
 
 
 class _FakeCiderClient:

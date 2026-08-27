@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import json
 import zlib
-from typing import Any
 
 from .http import LyricsResponse
 
@@ -27,8 +26,13 @@ MAX_DECOMPRESSED_BYTES = 4 * 1024 * 1024
 _CHUNK_BYTES = 64 * 1024
 
 
-async def read_capped(response: LyricsResponse, source: str) -> bytes:
-    """Return the whole body, refusing one larger than :data:`MAX_RESPONSE_BYTES`.
+async def read_capped(
+    response: LyricsResponse,
+    source: str,
+    *,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+) -> bytes:
+    """Return the whole body, refusing one larger than ``max_bytes``.
 
     Read in a loop to end of stream. A single ``content.read(n)`` returns only what
     has arrived so far, not ``n`` bytes: measured against a server streaming 307KB
@@ -36,6 +40,8 @@ async def read_capped(response: LyricsResponse, source: str) -> bytes:
     parse — so a lyric or search result larger than one buffer would have been lost
     rather than capped.
     """
+    if type(max_bytes) is not int or max_bytes <= 0:
+        raise ValueError("response byte limit must be a positive integer")
     chunks: list[bytes] = []
     total = 0
     while True:
@@ -43,21 +49,26 @@ async def read_capped(response: LyricsResponse, source: str) -> bytes:
         if not chunk:
             break
         total += len(chunk)
-        if total > MAX_RESPONSE_BYTES:
-            raise ValueError(f"{source} response exceeded {MAX_RESPONSE_BYTES} bytes")
+        if total > max_bytes:
+            raise ValueError(f"{source} response exceeded {max_bytes} bytes")
         chunks.append(chunk)
     return b"".join(chunks)
 
 
-async def read_json_capped(response: LyricsResponse, source: str) -> Any:
+async def read_json_capped(
+    response: LyricsResponse,
+    source: str,
+    *,
+    max_bytes: int = MAX_RESPONSE_BYTES,
+) -> object:
     """Return the body parsed as JSON, refusing an oversized one.
 
     Used instead of ``response.json()``, which buffers whatever arrives.
     """
-    body = await read_capped(response, source)
+    body = await read_capped(response, source, max_bytes=max_bytes)
     try:
         return json.loads(body)
-    except json.JSONDecodeError as exc:
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{source} response is not JSON: {exc}") from exc
 
 

@@ -1,29 +1,20 @@
-"""Pure timeline rules used by the object-oriented presentation adapter."""
+"""Stateful normalized playback clock owned by the application layer."""
 
 from __future__ import annotations
 
 from dataclasses import replace
-from statistics import median
 
 from ..clock import MediaClock
-from ..lyrics.models import LyricLine
 from ..playback.models import PlaybackObservation, PlaybackStatus
-from .models import Interlude
-
-# How far past the song's own pace a span must run before the music after a line
-# counts as an interlude rather than a long-held phrase.
-_INTERLUDE_FACTOR = 2.5
-_INTERLUDE_FLOOR_S = 12.0
-_SWEEP_CAP_FACTOR = 2.0
 
 
 class TimelineEngine:
     """Own playback calibration and smooth media-time estimation.
 
-    Player adapters provide occasional observations.  The engine re-anchors the
+    Player adapters provide occasional observations. The engine re-anchors the
     shared :class:`MediaClock` on those observations and exposes a current
-    observation for the display coordinator to project.  It owns timing state;
-    it does not know about lyrics, Qt, or any concrete player adapter.
+    observation for the display coordinator to project. It owns timing state;
+    lyric selection and presentation rules live in ``DisplayEngine``.
     """
 
     def __init__(self, clock: MediaClock | None = None) -> None:
@@ -54,18 +45,18 @@ class TimelineEngine:
     def observe(
         self,
         position_s: float | None,
-        is_playing: bool | None,
+        status: PlaybackStatus | None,
     ) -> PlaybackObservation | None:
         """Apply a clock-only calibration and return the current observation."""
         observation = self._observation
         if observation is None:
             return None
-        playing = is_playing if isinstance(is_playing, bool) else True
-        self._sync_clock(position_s, PlaybackStatus.PLAYING if playing else PlaybackStatus.PAUSED)
+        resolved_status = status if status is not None else observation.status
+        self._sync_clock(position_s, resolved_status)
         self._observation = replace(
             observation,
             position_s=position_s if position_s is not None else observation.position_s,
-            status=PlaybackStatus.PLAYING if playing else PlaybackStatus.PAUSED,
+            status=resolved_status,
         )
         return self._observation
 
@@ -111,69 +102,4 @@ def _track_key(observation: PlaybackObservation) -> tuple[object, ...]:
     )
 
 
-def find_current_index(lines: list[LyricLine], position: float) -> int:
-    """Return the last line whose start is not after ``position``."""
-    index = -1
-    for index_candidate, line in enumerate(lines):
-        if line.start <= position:
-            index = index_candidate
-        else:
-            break
-    return index
-
-
-def typical_span(lines: list[LyricLine]) -> float:
-    """Return the median positive distance between neighboring line starts."""
-    spans = [lines[index + 1].start - lines[index].start for index in range(len(lines) - 1)]
-    usable = [span for span in spans if span > 0.0]
-    return median(usable) if usable else 0.0
-
-
-def in_interlude(
-    lines: list[LyricLine], index: int, position: float, duration_s: float | None = None
-) -> bool:
-    """Return whether ``position`` is in an instrumental gap after ``index``."""
-    if not 0 <= index < len(lines):
-        return False
-    line = lines[index]
-    if index + 1 == len(lines):
-        return duration_s is not None and duration_s > line.end and position > line.end
-    span = lines[index + 1].start - line.start
-    typical = typical_span(lines)
-    if typical <= 0.0 or span <= _INTERLUDE_FACTOR * typical or span < _INTERLUDE_FLOOR_S:
-        return False
-    return position > line.start + typical
-
-
-def interlude_at(
-    lines: list[LyricLine], index: int, position: float, duration_s: float | None = None
-) -> Interlude | None:
-    """Return the active instrumental gap, including an intro or outro gap."""
-    if not lines:
-        return None
-    if index < 0:
-        return Interlude(0.0, lines[0].start) if position < lines[0].start else None
-    if not in_interlude(lines, index, position, duration_s):
-        return None
-    line = lines[index]
-    if index + 1 == len(lines):
-        if duration_s is None or duration_s <= line.end:
-            return None
-        return Interlude(line.end, duration_s)
-    return Interlude(line.start + typical_span(lines), lines[index + 1].start)
-
-
-def swept_line(line: LyricLine, typical: float) -> LyricLine:
-    """Limit only the highlight sweep; keep the lyric line visible."""
-    if line.has_word_timing:
-        sung = max((word.end for word in line.words if word.end is not None), default=None)
-        return line if sung is None or sung >= line.end else replace(line, end=sung)
-    if typical <= 0.0:
-        return line
-    capped = line.start + _SWEEP_CAP_FACTOR * typical
-    return line if capped >= line.end else replace(line, end=capped)
-
-
-def song_timing(lines: list[LyricLine]) -> str:
-    """Return the legacy timing label for a line collection."""
-    return "Word" if any(line.has_word_timing for line in lines) else "Line"
+__all__ = ["TimelineEngine"]

@@ -1,4 +1,5 @@
 import asyncio
+import contextlib
 
 import pytest
 
@@ -89,3 +90,55 @@ async def test_workflow_cancellation_releases_owned_resolution_task():
     with pytest.raises(asyncio.CancelledError):
         await task
     assert cancelled.is_set()
+
+
+async def test_new_generation_waits_for_old_generation_cancellation():
+    started = asyncio.Event()
+    cancelled = asyncio.Event()
+    release_cancellation = asyncio.Event()
+    second_started = asyncio.Event()
+
+    class BlockingResolver:
+        def __init__(self) -> None:
+            self._calls = 0
+
+        async def resolve_with_diagnostics(self, _session, _track, _sources, /):
+            self._calls += 1
+            if self._calls == 1:
+                started.set()
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError:
+                    cancelled.set()
+                    await release_cancellation.wait()
+                    raise
+            second_started.set()
+            await asyncio.Event().wait()
+            return ResolverLookup(None)
+
+        async def resolve(self, session, track, sources, /):
+            return (await self.resolve_with_diagnostics(session, track, sources)).result
+
+        async def resolve_hint(self, _session, _track, _sources, _hint, /):
+            return None
+
+    workflow = LyricsResolutionWorkflow(BlockingResolver())
+    first = asyncio.create_task(
+        workflow.resolve(None, TRACK, SourcePlan.from_sources(["netease"]), generation=1)
+    )
+    await started.wait()
+
+    second = asyncio.create_task(
+        workflow.resolve(None, TRACK, SourcePlan.from_sources(["netease"]), generation=2)
+    )
+    await cancelled.wait()
+    with pytest.raises(asyncio.TimeoutError):
+        await asyncio.wait_for(second_started.wait(), timeout=0.01)
+
+    release_cancellation.set()
+    await second_started.wait()
+    await workflow.cancel_all()
+    with contextlib.suppress(asyncio.CancelledError):
+        await first
+    with contextlib.suppress(asyncio.CancelledError):
+        await second

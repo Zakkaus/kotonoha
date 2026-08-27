@@ -40,6 +40,10 @@ CREATE INDEX IF NOT EXISTS lyrics_provider_access
 """
 
 
+class LyricsCacheError(RuntimeError):
+    """A cache operation failed behind the persistent-storage boundary."""
+
+
 def cache_path() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or os.path.join(os.path.expanduser("~"), ".cache")
     return Path(base) / "kotonoha" / "lyrics.sqlite3"
@@ -51,6 +55,10 @@ class LyricsCache:
         self._max_entries = max(1, max_entries)
         self._worker = BlockingCallRunner("kotonoha-lyrics-cache")
 
+    def start(self) -> None:
+        """Reopen the owned worker after a previous provider shutdown."""
+        self._worker.reopen()
+
     def close(self) -> None:
         """Release the cache worker; an already-running SQLite call may finish."""
         self._worker.close()
@@ -61,17 +69,29 @@ class LyricsCache:
         track: TrackMetadata,
         parser: PayloadParser,
     ) -> LyricsArtifact | None:
-        return await self._worker.run(self._lookup_sync, provider, track, parser)
+        try:
+            return await self._worker.run(self._lookup_sync, provider, track, parser)
+        except (OSError, sqlite3.Error) as exc:
+            raise LyricsCacheError("Lyrics cache lookup failed") from exc
 
     async def store(self, artifact: LyricsArtifact) -> None:
         if artifact.confidence is MatchConfidence.HIGH:
-            await self._worker.run(self._store_sync, artifact)
+            try:
+                await self._worker.run(self._store_sync, artifact)
+            except (OSError, sqlite3.Error) as exc:
+                raise LyricsCacheError("Lyrics cache write failed") from exc
 
     async def clear(self) -> None:
-        await self._worker.run(self._clear_sync)
+        try:
+            await self._worker.run(self._clear_sync)
+        except (OSError, sqlite3.Error) as exc:
+            raise LyricsCacheError("Lyrics cache clear failed") from exc
 
     async def count(self) -> int:
-        return await self._worker.run(self._count_sync)
+        try:
+            return await self._worker.run(self._count_sync)
+        except (OSError, sqlite3.Error) as exc:
+            raise LyricsCacheError("Lyrics cache count failed") from exc
 
     def _connect(self) -> sqlite3.Connection:
         self._path.parent.mkdir(parents=True, exist_ok=True)

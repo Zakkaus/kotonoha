@@ -64,3 +64,22 @@ def test_tray_icon_can_switch_without_restart(qapp):
     tray_icon.set_icon_name("leaf-pink-circle.png")
 
     assert tray_icon.icon().cacheKey() != first_key
+
+
+def test_tray_menu_forwards_settings_and_quit_actions(qapp):
+    events: list[str] = []
+    tray_icon = tray.KotonohaTray(
+        icon_name="leaf-green.svg",
+        passthrough=False,
+        on_toggle_passthrough=lambda _checked: None,
+        on_open_settings=lambda: events.append("settings"),
+        on_quit=lambda: events.append("quit"),
+    )
+
+    menu = tray_icon.contextMenu()
+    assert menu is not None
+    actions = menu.actions()
+    actions[2].trigger()
+    actions[3].trigger()
+
+    assert events == ["settings", "quit"]

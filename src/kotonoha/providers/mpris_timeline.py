@@ -11,8 +11,8 @@ from .mpris_track import TrackCommit
 logger = logging.getLogger(__name__)
 
 
-class MprisTimeline:
-    """Track song-relative offset and correct stale transition positions."""
+class MprisPositionCalibrator:
+    """Track MPRIS-specific position corrections outside display policy."""
 
     def __init__(self) -> None:
         self._offset = 0.0
@@ -96,4 +96,8 @@ class MprisTimeline:
         self._calibration_offset = None
 
 
-__all__ = ["MprisTimeline"]
+# TODO(phase-6): remove this compatibility alias after provider tests and callers
+# migrate to the explicit calibrator name.
+MprisTimeline = MprisPositionCalibrator
+
+__all__ = ["MprisPositionCalibrator", "MprisTimeline"]

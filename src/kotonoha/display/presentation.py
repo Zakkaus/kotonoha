@@ -1,39 +1,136 @@
-"""Object-owned projection from canonical lyrics and playback to a display frame."""
+"""Object-owned projection from playback and lyric inputs to ``DisplayFrame``."""
 
 from __future__ import annotations
 
-from ..lyrics.models import LyricsDocument
+from dataclasses import replace
+
+from ..lyrics.models import LyricLine, LyricsDocument
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
-from .models import DisplayFrame, DisplayState
-from .timeline import find_current_index, in_interlude, interlude_at, swept_line, typical_span
+from .karaoke import (
+    active_word_index,
+    interlude_text,
+    line_fill_fraction,
+    line_progress,
+    word_fill_fractions,
+)
+from .models import (
+    DisplayDiagnostic,
+    DisplayFrame,
+    DisplayInput,
+    DisplayOptions,
+    DisplayState,
+    Interlude,
+    LineProgress,
+    ResolutionState,
+    WordProgress,
+)
+from .rules import find_current_index, in_interlude, interlude_at, sweep_end, typical_span
+from .text import DisplayTextTransformer, ScriptTextTransformer
 
 
-class LyricsPresentationAdapter:
-    """Build the one renderer-facing frame shared by every input adapter."""
+class DisplayEngine:
+    """Build the single renderer-facing frame shared by every input adapter.
+
+    The engine owns display policy but no wall-clock state.  A caller supplies a
+    complete :class:`DisplayInput`; the returned frame contains canonical line
+    context plus semantic progress for a renderer to paint.
+    """
+
+    def __init__(
+        self,
+        options: DisplayOptions | None = None,
+        *,
+        text_transformer: DisplayTextTransformer | None = None,
+    ) -> None:
+        self._options = options if options is not None else DisplayOptions()
+        self._text_transformer = text_transformer if text_transformer is not None else ScriptTextTransformer()
+
+    @property
+    def options(self) -> DisplayOptions:
+        """Return the immutable presentation options currently in use."""
+        return self._options
+
+    def set_options(self, options: DisplayOptions) -> None:
+        """Replace presentation options without retaining mutable config state."""
+        self._options = options
+
+    def project_input(self, display_input: DisplayInput) -> DisplayFrame:
+        """Project one complete normalized input into a display frame."""
+        playback = display_input.playback
+        options = display_input.options
+        document = self._display_document(display_input.document, options)
+        position = self._display_position(playback, document, options)
+        state = display_input.resolution.display_state()
+        lines = document.lines if document is not None else ()
+
+        diagnostic: DisplayDiagnostic | None = None
+        if state is DisplayState.LYRICS_AVAILABLE and not lines:
+            state = DisplayState.LYRICS_NOT_FOUND
+            diagnostic = DisplayDiagnostic("empty_document", "The lyric source returned no timed lines")
+
+        if state is not DisplayState.LYRICS_AVAILABLE or not lines or position is None:
+            return DisplayFrame(
+                state=state,
+                track=playback.track,
+                document=document,
+                current_time=position,
+                is_playing=playback.status is PlaybackStatus.PLAYING,
+                fallback=self._fallback_line(playback.track, document, options),
+                diagnostic=diagnostic,
+            )
+
+        index = find_current_index(lines, position)
+        duration_s = document.duration_s if document is not None else None
+        quiet = in_interlude(lines, index, position, duration_s)
+        current = None if quiet else (lines[index] if 0 <= index < len(lines) else None)
+        previous = lines[index] if quiet else (lines[index - 1] if index - 1 >= 0 else None)
+        next_line = lines[index + 1] if 0 <= index + 1 < len(lines) else None
+        interlude = interlude_at(lines, index, position, duration_s)
+        around = tuple(lines[max(0, index - 2) : index + 3])
+        interlude_line = self._interlude_line(interlude, position, options)
+
+        line_result: LineProgress | None = None
+        word_result: WordProgress | None = None
+        translation: LyricLine | None = None
+        if current is not None:
+            line_result = LineProgress(current.id, self._line_fraction(current, position, lines))
+            if current.translation:
+                translation = replace(current, text=current.translation, translation="", words=())
+            if current.has_word_timing:
+                word_result = WordProgress(
+                    current.id,
+                    word_fill_fractions(current.words, position),
+                    active_word_index(current.words, position),
+                )
+        elif interlude is not None and interlude_line is not None:
+            line_result = LineProgress(interlude_line.id, interlude.progress(position))
+
+        return DisplayFrame(
+            state=state,
+            track=playback.track,
+            document=document,
+            current_time=position,
+            is_playing=playback.status is PlaybackStatus.PLAYING,
+            previous=previous,
+            current=current,
+            translation=translation,
+            fallback=None,
+            next=next_line,
+            around=around,
+            interlude=interlude,
+            interlude_line=interlude_line,
+            line_progress=line_result,
+            word_progress=word_result,
+        )
 
     def project_observation(
         self,
         playback: PlaybackObservation,
         document: LyricsDocument | None,
-        *,
-        state: DisplayState | None = None,
+        resolution: ResolutionState,
     ) -> DisplayFrame:
-        """Project one normalized playback/document pair into a display frame."""
-        resolved_state = state
-        if resolved_state is None:
-            if playback.track is None and document is None:
-                resolved_state = DisplayState.NO_TRACK
-            elif document is not None and document.lines:
-                resolved_state = DisplayState.LYRICS_AVAILABLE
-            else:
-                resolved_state = DisplayState.LYRICS_NOT_FOUND
-        return self.project(
-            document,
-            playback.position_s,
-            track=playback.track,
-            is_playing=playback.status is PlaybackStatus.PLAYING,
-            state=resolved_state,
-        )
+        """Project normalized playback, document, and explicit resolution facts."""
+        return self.project_input(DisplayInput(playback, document, resolution, self._options))
 
     def project(
         self,
@@ -42,41 +139,108 @@ class LyricsPresentationAdapter:
         *,
         track: TrackIdentity | None,
         is_playing: bool,
-        state: DisplayState | None = None,
     ) -> DisplayFrame:
-        """Project a document and playback clock without touching Qt state."""
-        lines = list(document.lines) if document is not None else []
-        resolved_state = state
-        if resolved_state is None:
-            resolved_state = DisplayState.LYRICS_AVAILABLE if lines else DisplayState.LYRICS_NOT_FOUND
-        if not lines or resolved_state is not DisplayState.LYRICS_AVAILABLE or position_s is None:
-            return DisplayFrame(
-                state=resolved_state,
-                track=track,
-                document=document,
-                current_time=position_s,
-                is_playing=is_playing,
-            )
+        """Compatibility projection for pure callers without a player adapter.
 
-        index = find_current_index(lines, position_s)
-        duration_s = document.duration_s if document is not None else None
-        quiet = in_interlude(lines, index, position_s, duration_s)
-        current = None if quiet else (lines[index] if 0 <= index < len(lines) else None)
-        if current is not None:
-            current = swept_line(current, typical_span(lines))
-        previous = lines[index] if quiet else (lines[index - 1] if index - 1 >= 0 else None)
-        interlude = interlude_at(lines, index, position_s, duration_s)
-        next_line = lines[index + 1] if 0 <= index + 1 < len(lines) else None
-        around = tuple(lines[max(0, index - 2) : index + 3])
-        return DisplayFrame(
-            state=resolved_state,
+        New application code should call :meth:`project_observation` so the
+        adapter identity and full playback status remain explicit.
+        """
+        playback = PlaybackObservation(
+            adapter_id="display-test",
+            player_id="display-test",
             track=track,
-            document=document,
-            current_time=position_s,
-            is_playing=is_playing,
-            previous=previous,
-            current=current,
-            next=next_line,
-            around=around,
-            interlude=interlude,
+            status=PlaybackStatus.PLAYING if is_playing else PlaybackStatus.PAUSED,
+            position_s=position_s,
+            duration_s=track.duration_s if track is not None else document.duration_s if document else None,
+            observed_at=0.0,
         )
+        # The old pure helper accepted an empty document without a track. The
+        # typed input contract does not: an empty document carries no source
+        # fact, so normalize that legacy shape before constructing DisplayInput.
+        normalized_document = document if track is not None or (document is not None and document.lines) else None
+        return self.project_observation(
+            playback,
+            normalized_document,
+            ResolutionState.from_facts(playback, normalized_document),
+        )
+
+    def _display_document(
+        self,
+        document: LyricsDocument | None,
+        options: DisplayOptions,
+    ) -> LyricsDocument | None:
+        """Apply display-only text conversion without mutating the source document."""
+        if document is None:
+            return document
+        return self._text_transformer.document(document, options.lyrics_script)
+
+    def _interlude_line(
+        self,
+        interlude: Interlude | None,
+        position: float,
+        options: DisplayOptions,
+    ) -> LyricLine | None:
+        """Create the renderer-ready marker for an active semantic interlude."""
+        if interlude is None:
+            return None
+        text = interlude_text(
+            interlude,
+            position,
+            style=options.interlude_style,
+            countdown=options.interlude_countdown,
+        )
+        return LyricLine(0, "interlude", interlude.start, interlude.end, text, "", ())
+
+    def _display_position(
+        self,
+        playback: PlaybackObservation,
+        document: LyricsDocument | None,
+        options: DisplayOptions,
+    ) -> float | None:
+        """Apply configured lead and per-track offset at the display boundary."""
+        position = playback.position_s
+        if position is None:
+            return None
+        track = playback.track
+        title_value = track.title if track is not None else document.title if document is not None else None
+        artist_value = track.artist if track is not None else document.artist if document is not None else None
+        title = title_value if title_value is not None else ""
+        artist = artist_value if artist_value is not None else ""
+        key = "\x1f".join((title.strip().casefold(), artist.strip().casefold()))
+        offset_ms = options.track_offsets_ms.get(key, 0)
+        return position + (options.lead_ms + offset_ms) / 1000.0
+
+    def _fallback_line(
+        self,
+        track: TrackIdentity | None,
+        document: LyricsDocument | None,
+        options: DisplayOptions,
+    ) -> LyricLine | None:
+        """Build the display-only title line used while lyrics are unavailable."""
+        title_value = track.title if track is not None else document.title if document is not None else None
+        artist_value = track.artist if track is not None else document.artist if document is not None else None
+        if not title_value:
+            return None
+        artist = f" — {artist_value}" if artist_value else ""
+        text = self._text_transformer.text(f"♪ {title_value}{artist}", options.lyrics_script)
+        return LyricLine(0, "title", 0.0, 1e9, text, "", ())
+
+    def _line_fraction(
+        self,
+        line: LyricLine,
+        position: float,
+        lines: tuple[LyricLine, ...],
+    ) -> float:
+        """Calculate line sweep progress while preserving the source line span."""
+        if line.has_word_timing:
+            return line_progress(line, position)
+        end = sweep_end(line, typical_span(lines))
+        return line_fill_fraction(line.start, end, position)
+
+
+# TODO(phase-6): remove this compatibility alias after external callers migrate
+# from the old name to ``DisplayEngine``.
+LyricsPresentationAdapter = DisplayEngine
+
+
+__all__ = ["DisplayEngine", "LyricsPresentationAdapter"]

@@ -21,18 +21,26 @@ MPRIS Metadata/Status/Position
   TrackStabilizer (忽略空值，等待稳定组合)
             |
             v
-  PlaybackCoordinator + LyricsResolutionWorkflow
-                    |
-             LyricsResolver (source policy)
-       |                     |
-       v                     v
-provider 本地缓存/网络     Cider HTTP candidate
-       |                     |
-       +----------+----------+
-                  v
-       LyricsPresentationAdapter -> DisplayFrame
-                  |
-           QtDisplayPublisher -> LyricsState -> Overlay
+  MprisPlaybackCoordinator -> PlaybackSample
+            |
+  MprisLyricsCoordinator -> MprisResolutionSession
+            |                         |
+            |                  LyricsResolutionWorkflow
+            |                         |
+            |                  LyricsResolver (source policy)
+            |                    /          \
+            |                   /            \
+  MprisDisplayBinding    provider local/network    CiderApiProvider
+            |                   \            /          |
+            +--------------------+----------+           |
+                                 v                      |
+                         DisplayCoordinator <-----------+
+                                 |
+                         DisplayEngine -> DisplayFrame
+                                 |
+                  QtDisplayPublisher -> LyricsState -> Overlay
+
+  AdapterReceiver -> AdapterProtocolDecoder -> SourceOwnershipCoordinator
 ```
 
 MPRIS 负责当前歌曲身份和外部歌词的进度。Cider 被选中时，内容由同一首歌的一次 HTTP 歌词请求提供，播放位置由 Cider HTTP 的低频校准驱动，MediaClock 负责帧间插值，避免两个时钟同时驱动 HUD。
@@ -121,6 +129,8 @@ $XDG_CACHE_HOME/kotonoha/lyrics.sqlite3
 - 切歌后只请求一次 /api/v2/lyrics/current?words=true，当前响应不是目标歌曲时回退到 /api/v2/lyrics/:id。
 - source.provider 是最终歌词来源，例如 Apple Music 或其他 provider；它不被改写成 Cider。
 - HTTP 断开或歌词不存在时保留 MPRIS 的候选/回退行为；外部播放器如需推送，使用通用 adapter v1 的 `snapshot` / `clock` 消息。
+- WebSocket adapter 断开时丢弃其 candidate；若该连接仍拥有展示，会发布 `NoTrack` 清除浮窗，
+  而不会覆盖已经由 MPRIS 接管的展示。
 
 ## 7. MPRIS 切歌稳定化
 
@@ -139,12 +149,14 @@ title 和 artist 都为空的 `""/""` 样本永不提交，也不会搜索、写
 ## 8. 模块
 
 ```text
-src/kotonoha/providers/mpris_track.py  元数据解析、Observation、稳定器
-src/kotonoha/playback/coordinator.py  MPRIS session、订阅、poll 和稳定化生命周期
-src/kotonoha/providers/mpris.py        MPRIS facade 与配置转发
-src/kotonoha/providers/mpris_lyrics.py MPRIS lyric generation、ownership 与 timeline
-src/kotonoha/providers/cider_client.py Cider HTTP session、响应边界和可选 token
-src/kotonoha/providers/cider_api.py    Cider 低频校准、按 track generation 的歌词任务
+src/kotonoha/providers/mpris_track.py      元数据解析、Observation、稳定器
+src/kotonoha/providers/mpris_playback.py   MPRIS session、订阅、poll 和稳定化生命周期
+src/kotonoha/providers/mpris_resolution.py MPRIS 歌词解析会话与 resolver 生命周期
+src/kotonoha/providers/mpris_display.py    MPRIS sample 到 display/timeline 的绑定
+src/kotonoha/providers/mpris.py            MPRIS facade 与配置转发
+src/kotonoha/providers/mpris_lyrics.py     MPRIS lyric generation、ownership 与 workflow 编排
+src/kotonoha/providers/cider_client.py    Cider HTTP session、响应边界和可选 token
+src/kotonoha/providers/cider_api.py       Cider 低频校准、按 track generation 的歌词任务
 src/kotonoha/lyrics/ownership.py       live source facts 与 source 绑定
 src/kotonoha/lyrics/match.py           归一化、版本冲突、置信度
 src/kotonoha/lyrics/artifact.py        provider-neutral artifact

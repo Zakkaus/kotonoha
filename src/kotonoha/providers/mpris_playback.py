@@ -10,17 +10,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..playback.models import MprisPlayerPort, MprisPropertyChange, PlaybackObservation
 from ..players import PlayerInfo
-from ..providers.mpris_adapter import MprisPlaybackAdapter
-from ..providers.mpris_session import MprisSession, MprisSessionError
-from ..providers.mpris_track import (
-    TrackCommit,
-    TrackInfo,
-    TrackObservation,
-    TrackStabilizer,
-)
-from ..providers.player_selection import PlayerRecord, PlayerSelector
-from .models import MprisPlayerPort, MprisPropertyChange, PlaybackObservation
+from .mpris_adapter import MprisPlaybackAdapter
+from .mpris_session import MprisSession, MprisSessionError
+from .mpris_track import TrackCommit, TrackInfo, TrackObservation, TrackStabilizer
+from .player_selection import PlayerRecord, PlayerSelector
 
 logger = logging.getLogger(__name__)
 
@@ -28,7 +23,7 @@ MPRIS_PLAYER_IFACE = "org.mpris.MediaPlayer2.Player"
 
 
 class MprisSessionPort(Protocol):
-    """Session operations owned by the coordinator at the D-Bus boundary."""
+    """Session operations owned by the MPRIS provider boundary."""
 
     @property
     def connected(self) -> bool: ...
@@ -74,7 +69,7 @@ CommitListener = Callable[[TrackCommit], None]
 NoPlayerListener = Callable[[float], None]
 
 
-class PlaybackCoordinator:
+class MprisPlaybackCoordinator:
     """Own the complete MPRIS session and emit stable playback facts."""
 
     def __init__(
@@ -164,12 +159,12 @@ class PlaybackCoordinator:
         """Connect the session and start the owned poll task."""
         if self._task is not None and not self._task.done():
             return
+        self.reset()
         await self._session.connect()
-        self._subscribed_name = None
-        self._task = asyncio.create_task(self._run())
+        self._task = asyncio.create_task(self._run(), name="kotonoha-mpris-playback")
 
     async def stop(self) -> None:
-        """Cancel polling and close the session exactly once."""
+        """Cancel polling, close the session, and reset restartable state."""
         task = self._task
         self._task = None
         if task is not None:
@@ -178,6 +173,7 @@ class PlaybackCoordinator:
                 await task
         self._subscribed_name = None
         self._session.close()
+        self.reset()
 
     async def poll_once(self, *, now: float | None = None) -> None:
         """Sample the selected player once; exposed for deterministic tests."""
@@ -300,10 +296,12 @@ class PlaybackCoordinator:
             self._on_no_player(observed_at)
 
     def reset(self) -> None:
-        """Forget the stabilized track while keeping the D-Bus connection alive."""
+        """Forget playback history so a later start observes the current player anew."""
         self._stabilizer.reset()
+        self._selector.reset()
         self._current_commit = None
         self._last_raw_position = None
+        self._subscribed_name = None
 
 
-__all__ = ["PlaybackCoordinator", "PlaybackSample", "MprisSessionPort"]
+__all__ = ["MprisPlaybackCoordinator", "MprisSessionPort", "PlaybackSample"]

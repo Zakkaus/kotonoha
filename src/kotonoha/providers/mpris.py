@@ -8,10 +8,10 @@ from ..config import DEFAULT_LYRICS_SOURCES
 from ..display.coordinator import DisplayCoordinator
 from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..lyrics.workflow import ResolverPort
-from ..playback.coordinator import PlaybackCoordinator, PlaybackSample
 from ..players import PlayerInfo
 from .mpris_adapter import MprisPlaybackAdapter
 from .mpris_lyrics import MprisLyricsCoordinator
+from .mpris_playback import MprisPlaybackCoordinator, PlaybackSample
 from .mpris_track import TrackCommit
 
 logger = logging.getLogger(__name__)
@@ -41,7 +41,7 @@ class MprisProvider:
             playback_adapter=self._playback_adapter,
             lyrics_sources=lyrics_sources if lyrics_sources is not None else list(DEFAULT_LYRICS_SOURCES),
         )
-        self._playback = PlaybackCoordinator(
+        self._playback = MprisPlaybackCoordinator(
             poll_interval=poll_interval,
             playback_adapter=self._playback_adapter,
             on_sample=self._on_playback_sample,

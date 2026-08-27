@@ -12,6 +12,7 @@ from aiohttp import WSMsgType, web
 from .display.coordinator import DisplayCoordinator
 from .lyrics.ownership import SourceOwnershipCoordinator
 from .lyrics.protocol import AdapterClock, AdapterProtocolDecoder, AdapterProtocolError, AdapterSnapshot
+from .playback.models import PlaybackObservation, PlaybackStatus
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +59,7 @@ class AdapterReceiver:
         self._clients: set[web.WebSocketResponse] = set()
         self._sessions: dict[int, _AdapterSession] = {}
         self._runner: web.AppRunner | None = None
+        self._display_client_id: int | None = None
 
     def build_app(self) -> web.Application:
         """Build the HTTP application without starting a listener."""
@@ -82,10 +84,25 @@ class AdapterReceiver:
         logger.info("Adapter receiver listening on ws://%s:%d%s", self._host, self._port, WS_PATH)
 
     async def stop(self) -> None:
-        """Close all external connections and release the listening runner."""
-        if self._runner is not None:
-            await self._runner.cleanup()
-            self._runner = None
+        """Close connections, discard all sessions, and release the runner.
+
+        The POST route intentionally has a persistent logical client session even
+        though each request is short-lived. It therefore needs the same cleanup as
+        a WebSocket client when the receiver stops.
+        """
+        runner = self._runner
+        self._runner = None
+        try:
+            if runner is not None:
+                await runner.cleanup()
+        finally:
+            client_ids = set(self._sessions)
+            if self._display_client_id is not None:
+                client_ids.add(self._display_client_id)
+            client_ids.add(_POST_CLIENT_ID)
+            for client_id in client_ids:
+                self._drop_client(client_id)
+            self._clients.clear()
 
     def ingest(self, raw_text: str, *, client_id: int) -> bool:
         """Decode and publish one canonical adapter message."""
@@ -116,6 +133,7 @@ class AdapterReceiver:
         if not self._ownership.accepts(client_id):
             return True
         self._display.publish(message.playback, message.document)
+        self._display_client_id = client_id
         return True
 
     def _publish_clock(self, message: AdapterClock, client_id: int, session: _AdapterSession) -> bool:
@@ -131,7 +149,8 @@ class AdapterReceiver:
         if not accepted:
             return False
         if self._ownership.accepts(client_id):
-            self._display.tick(message.position_s, message.status.value == "Playing")
+            self._display.tick(message.position_s, message.status)
+            self._display_client_id = client_id
         return True
 
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
@@ -151,10 +170,32 @@ class AdapterReceiver:
                     break
         finally:
             self._clients.discard(ws)
-            self._sessions.pop(client_id, None)
-            self._ownership.drop_client(client_id)
+            self._drop_client(client_id)
         logger.debug("External adapter disconnected")
         return ws
+
+    def _drop_client(self, client_id: int) -> None:
+        """Forget one client and clear its display only when it owns the frame."""
+        self._sessions.pop(client_id, None)
+        was_display_client = self._display_client_id == client_id and self._ownership.accepts(client_id)
+        self._ownership.drop_client(client_id)
+        if self._display_client_id != client_id:
+            return
+        self._display_client_id = None
+        if not was_display_client:
+            return
+        self._display.publish(
+            PlaybackObservation(
+                adapter_id="adapter",
+                player_id=f"client:{client_id}",
+                track=None,
+                status=PlaybackStatus.STOPPED,
+                position_s=None,
+                duration_s=None,
+                observed_at=time.monotonic(),
+            ),
+            None,
+        )
 
     async def _handle_post(self, request: web.Request) -> web.Response:
         if not _is_local_origin(request):

@@ -16,7 +16,7 @@ from typing import Generic, TypeVar
 
 from kotonoha.lyrics.krc_parser import KRC_MAGIC, KRC_XOR_KEY
 from kotonoha.lyrics.match import Candidate, MatchConfidence, TrackMetadata
-from kotonoha.lyrics.models import LyricLine
+from kotonoha.lyrics.models import LyricLine, LyricWord
 from kotonoha.lyrics.payload import MAX_DECOMPRESSED_BYTES
 from kotonoha.providers.mpris_track import TrackInfo
 
@@ -367,9 +367,12 @@ class DisplayInput:
 class DisplayOutput:
     """Canonical frame facts needed by a renderer."""
 
-    found: bool
+    state: str
     current_text: str | None
     interlude: tuple[float, float] | None
+    line_progress: float | None
+    word_progress: tuple[float, ...] | None
+    diagnostic: str | None
 
 
 DISPLAY_CASES: tuple[BehaviorCase[DisplayInput, DisplayOutput], ...] = (
@@ -379,7 +382,7 @@ DISPLAY_CASES: tuple[BehaviorCase[DisplayInput, DisplayOutput], ...] = (
             (LyricLine(0, "L0", 0.0, 5.0, "hello", ""), LyricLine(1, "L1", 5.0, 10.0, "bye", "")),
             2.0,
         ),
-        expected=DisplayOutput(True, "hello", None),
+        expected=DisplayOutput("LyricsAvailable", "hello", None, 0.4, None, None),
         negative_variants=(DisplayInput((), 2.0),),
         source=RegressionSource("#64", "a resolved document exposes the active line; an empty document is not active"),
         rule_ids=("display.current_line", "display.not_found"),
@@ -395,7 +398,7 @@ DISPLAY_CASES: tuple[BehaviorCase[DisplayInput, DisplayOutput], ...] = (
             ),
             20.0,
         ),
-        expected=DisplayOutput(True, None, (15.0, 40.0)),
+        expected=DisplayOutput("LyricsAvailable", None, (15.0, 40.0), 0.2, None, None),
         negative_variants=(
             DisplayInput(
                 (LyricLine(0, "L0", 0.0, 5.0, "one", ""), LyricLine(1, "L1", 5.0, 10.0, "two", "")),
@@ -406,6 +409,27 @@ DISPLAY_CASES: tuple[BehaviorCase[DisplayInput, DisplayOutput], ...] = (
             "#64", "a meaningful instrumental gap clears the active line without losing the document"
         ),
         rule_ids=("display.interlude",),
+    ),
+    BehaviorCase(
+        case_id="display.word-progress",
+        input=DisplayInput(
+            (
+                LyricLine(
+                    0,
+                    "L0",
+                    0.0,
+                    5.0,
+                    "你好",
+                    "",
+                    (LyricWord(0.0, 1.0, "你"), LyricWord(1.0, 2.0, "好")),
+                ),
+            ),
+            1.5,
+        ),
+        expected=DisplayOutput("LyricsAvailable", "你好", None, 0.75, (1.0, 0.5), None),
+        negative_variants=(DisplayInput((), 1.5),),
+        source=RegressionSource("#58/#64", "word timing is carried as semantic progress instead of UI-owned time math"),
+        rule_ids=("display.word_progress", "display.canonical_line"),
     ),
 )
 

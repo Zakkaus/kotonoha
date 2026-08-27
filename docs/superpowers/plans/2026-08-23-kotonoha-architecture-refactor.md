@@ -1,6 +1,6 @@
 # Kotonoha 架构分层与重构实施计划
 
-> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3 的时间轴基础已开始，Phase 4/5 尚未开始**
+> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3 已完成并完成审查收口，Phase 4/5/6 尚未完成**
 >
 > 这份计划服务于仓库作者的长期重构。它先固定行为和边界，再迁移实现；不接受“发现一个 case 就在现有协调器加一个 if”作为完成方式。
 
@@ -339,27 +339,76 @@ Display/Overlay 视觉变化、platform surface lifecycle、Settings persistence
 **退出条件**：MPRIS 和 Cider HTTP 都能产生同一种 normalized playback/document 输入；#14 的 exact id、sidecar、
 embedded 和 fallback 场景通过同一 source contract；展示 frame 只在 Kotonoha 内生成；旧 `LyricsSnapshot` 和
 Cider 专用 WS 路由均已删除；所有 generation、payload budget、parser 和 cancellation golden scenarios 通过。
-当前验证：Python 全量 `743 passed, 2 skipped`，`ruff check .`、`ty check`、架构/worker 门禁、
+当前验证：Python 全量 `773 passed, 2 skipped`，`ruff check .`、`ty check`、架构/worker 门禁、
 `git diff --check` 和 `uv build` 通过。Cider 插件的 `pnpm test` / `pnpm build` 因当前环境没有 `pnpm`
 未执行；这不影响 Python 包的门禁结论，但仍是提交前的环境验证缺口。
 
 ### Phase 3：重建时间轴和展示模型
 
-**目的**：把 #38/#46/#56/#58/#59/#62/#64 的展示行为从 QWidget 和 MPRIS 协调器中收回到纯规则。
+**目的**：把 #38/#46/#56/#58/#59/#62/#64 的展示行为从 QWidget 和 MPRIS 协调器中收回到统一的、可测试的展示协议。
 
-- [x] 新建 `TimelineEngine`：接收 normalized playback observation/status，负责 per-track clock anchor 和高频推进；
-  lyric document 投影继续由 `LyricsPresentationAdapter` 持有。
-- [ ] 新建 `DisplayEngine`：输出 `DisplayFrame`，显式区分 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound`；
-  当前行、transition 和 interlude 作为 frame 内容或时间轴结果，不建立 `Empty` 或 `Finished` 状态。
-- [ ] word highlight 使用 document 中的 word spans 和最终 text mapping；不假设 words 之间有空格。
-- [ ] translation merge 变成 document index/transform；保持 #58 的复杂度改进并用性能测试守住。
-- [ ] interlude detector、countdown、font fit 的输入输出独立测试；字体尺寸测量留在 `ui` adapter，但 fit policy 不留在 MPRIS。
-- [ ] `DisplayFrame` 迁移必须通过 display corpus；比较 state、上下文行、word progress、diagnostic，不比较 QWidget 私有字段。
-- [x] `MediaClock` 只提供 clock observation；source selection 不在 `MediaClock` 内，暂停/恢复由
-  `TimelineEngine` 根据 normalized playback status 同步。
-- [x] `ui/overlay/` 改为接收 `DisplayFrame`，不再从 `LyricsSnapshot` 自己推导 provider/interlude/timing policy。
+Phase 3 不以新增一个同名包装类为目标，而是完成 `PlaybackObservation -> TimelineEngine -> DisplayEngine -> DisplayFrame`
+的唯一语义链路。MPRIS 的播放器特有位置校准保留在 MPRIS 边界，不进入展示规则。
 
-**退出条件**：可以不用 Qt 运行完整 display/timeline 测试；Overlay 只渲染 frame；lyrics provider 与 display policy 不再互相导入。
+#### Phase 3.0：冻结协议和责任边界
+
+- [x] 定义 typed `DisplayInput`：包含 `PlaybackObservation`、显式 `ResolutionState`、可选 `LyricsDocument` 和 `DisplayOptions`。
+- [x] 将 `LyricsPresentationAdapter` 演进为 `DisplayEngine`；不新增只转发调用的包装层。
+- [x] 规定 provider 不再通过可选 `state` 拼装展示状态；状态由完整输入和 DisplayEngine 统一推导。
+- [x] 将 `DisplayFrame` 的进度字段改成有语义的 value object，不使用含义不明确的裸 progress tuple。
+- [x] 明确 canonical lyric line 不被 sweep 或翻译展示过程修改；展示进度通过独立字段返回。
+
+#### Phase 3.1：收敛时间责任
+
+- [x] `TimelineEngine` 只负责 `MediaClock`、track anchor、pause/resume 和 normalized playback position。
+- [x] 从 `display.timeline` 拆出 line selection、interlude、line sweep 等纯展示规则，避免时钟状态和歌词策略共存。
+- [x] 将 `MprisTimeline` 演进为明确的 `MprisPositionCalibrator`；保留现有累计位置修正行为，但不让 DisplayEngine 依赖 MPRIS 类型。
+- [x] 删除 `MprisLyricsCoordinator` 自己的 current-line 判断和重复 emit 路径。
+- [x] generic receiver、Cider、MPRIS 都通过同一种 typed observation 进入 TimelineEngine，不在边界丢失 playback status 语义。
+
+#### Phase 3.2：实现 DisplayEngine
+
+- [x] 输出 `NoTrack/Resolving/LyricsAvailable/LyricsNotFound` 四种状态；不建立 `Empty` 或 `Finished` 状态。
+- [x] 统一 current/previous/next、transition、interlude、line progress 和 diagnostic 的生成规则。
+- [x] word highlight 使用 document word spans 和最终 text mapping，不假设 words 之间有空格。
+- [x] `DisplayFrame` 提供语义化 `LineProgress` / `WordProgress`；UI 只负责将进度映射到像素。
+- [x] offset、lead time、script transform 通过注入的 typed `DisplayOptions` 进入纯展示变换；Config 持久化仍属于 Phase 5。
+
+#### Phase 3.3：翻译、interlude 和布局策略
+
+- [x] translation merge 变成 document transform；timestamp alignment 和 positional alignment 都是显式策略。
+- [x] 保持 #58 的排序和二分查找复杂度，覆盖乱序、重复时间戳、长度不一致和容错边界。
+- [x] interlude detector 输出语义时间数据；倒计时样式和字符由渲染边界决定。
+- [x] font-fit policy 独立于 Qt 字体测量；测量留在 UI adapter，fit decision 留在纯展示模块。
+
+#### Phase 3.4：Overlay 渲染迁移
+
+- [x] Overlay 只绑定 `DisplayFrame` 并负责 Qt 控件、QPainter、QFontMetrics、动画、窗口尺寸和像素布局。
+- [x] 移除 Overlay 对当前行、interlude、translation、script、lead/offset 和 temporal progress 的业务推导。
+- [x] 保留 KaraokeLabel 的无空格文字到像素映射能力，但输入改为 DisplayEngine 生成的 progress。
+
+#### Phase 3.5：质量门禁和文档收口
+
+- [x] 建立 Qt-free display corpus：四种状态、上下文行、transition/interlude、line/word progress、translation、offset、pause/resume、diagnostic 和不可变性。
+- [x] 增加 MPRIS `NoLyricsResolution -> LyricsNotFound`、重复 tick、取消和校准回归测试。
+- [x] 增加架构门禁：单一 DisplayEngine、单一展示时钟、provider 不导入展示规则、Overlay 不计算歌词时间进度。
+- [x] 迁移 `lyrics.select` compatibility API，并保留带删除条件的 TODO，直到所有调用者迁移完成。
+- [x] 统一 `docs/SPEC.md` 中当前协议与旧 WebSocket 历史说明，避免新旧架构并列造成误导。
+
+#### Phase 3.6：审查问题收口（2026-08-27）
+
+- [x] `AdapterReceiver` 的 WebSocket、POST logical client 和 receiver stop 共用 client drop 路径；关闭时清理 session、ownership、display owner 和 sequence namespace，避免旧状态或旧 sequence 泄漏到下一次连接。
+- [x] `DisplayCoordinator` 对 clock task 使用 done callback，并在 restart/stop 读取已完成 task 的异常；取消仍按控制流处理，意外失败会被记录而不会变成未取出的 task exception。
+- [x] `LyricsResolutionWorkflow` 在启动新 generation 前取消并等待旧 generation，避免旧 resolver 请求仍在运行时与新请求并发。
+- [x] Cider 和共享 lyrics payload reader 都循环读到 EOF 并执行总字节上限；cache 将 SQLite/文件系统失败归一化为 `LyricsCacheError`，不让存储实现泄漏到 resolver/UI。
+- [x] tray Settings/Quit action 使用 receiver-owned bound method；剩余 Qt signal、deferred callback 和 surface callback 的全量生命周期审查留在 Phase 4/5。
+
+**退出条件**：可以不用 Qt 运行完整 display/timeline corpus；所有 provider 通过同一 typed display input；Overlay 只渲染 frame；
+MPRIS 校准不泄漏到 display policy；lyrics provider 与 display policy 不互相导入；Python 全量测试、Ruff、ty、构建和 diff 门禁通过。
+
+**Phase 3 收口验证（2026-08-27）**：Python 全量 `773 passed, 2 skipped`；定向 receiver/display/workflow/cache/
+resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff --check` 和 `uv build` 通过。
+`pnpm test` / `pnpm build` 仍受当前环境缺少 `pnpm` 影响，未执行。
 
 ### Phase 4：重建 Overlay surface/platform 生命周期
 
@@ -374,6 +423,7 @@ Cider 专用 WS 路由均已删除；所有 generation、payload budget、parser
 - [ ] Layer Shell、Qt fallback、niri、X11 capability reason 分别测试；至少一个真实 KWin live lifecycle test 保留 opt-in。
 - [ ] `ui/settings/` 和 `ui/overlay/` 通过 `app/services.py` 获得同一个 session capability snapshot/adapter，不自行 probe。
 - [ ] surface/output/drag state machine 维护 operation-result corpus；失败、pending intent、关闭后 callback 都必须有正向和负向场景。
+- [ ] 按责任拆分当前约 796 行的 `overlay.py`：将 surface binding、frame-to-widget binding、paint/layout 和 drag/geometry 分别迁到目标 `ui/overlay/`/`platform/` owner；拆分以依赖和生命周期为边界，并使新增或修改的 Python 文件通常保持在 500 行以内。
 
 **退出条件**：平台 fake 能完整跑 surface/drag/output 状态机；Overlay 不导入 native bridge；失败 operation 不会被伪装为成功；分散的 output lifecycle 代码收敛到唯一 owner。
 
@@ -386,20 +436,25 @@ Cider 专用 WS 路由均已删除；所有 generation、payload budget、parser
 - [ ] 所有 settings action 变成 typed intents：`ApplyConfig`、`ClearCache`、`RequestRestart`、`ChangeTrackOffset`。
 - [ ] `app/application_controller.py` 只负责 wiring/start/stop 和 intent routing；不再承载 MPRIS、Overlay、Settings 的业务决策。
 - [ ] 所有 async actions 由 `app/lifecycle.py` 的 supervisor 保持 task handle，并在 stop 时 cancel/await。
-- [ ] Qt signal 使用 bound method 或明确 QObject owner，不用 lambda 隐藏生命周期。
+- [ ] 完成剩余 Qt signal/deferred callback 的 owner 审计；tray Settings/Quit 已在 Phase 3 收口，未完成的 Settings/Overlay callback 仍必须使用 bound method 或明确 QObject owner。
+- [ ] 将当前约 610 行的 `settings_dialog.py` 按 dialog lifecycle、`SettingsFormState`、page builder 和 widget adapter 拆分；移除 page builder 对 dialog 私有控件注册表的隐式写入，使新增或修改的 Python 文件通常保持在 500 行以内。
+- [ ] 将 `ConfigStore.save()` 的同步文件写入移出 Qt signal/UI callback 的直接执行路径，交给 application-owned persistence worker/service，并定义失败反馈与 stop 时的等待语义。
 
 **退出条件**：`app/services.py` 和 `main.py` 只做 wiring；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
 
 ### Phase 6：删除被替代路径、收紧质量门禁
 
 - [x] 删除现有 `MprisProvider` 中已经迁移到新 owner 的 resolver/clock/display policy 分支；剩余 facade 只负责 wiring 和配置转发。
-- [ ] 删除 `lyrics/matching.py` 对 `lyrics/title_grammar.py` 私有 helper 的依赖，改为公开 feature result。
-- [ ] 合并 `config/store.py` 与 `lyrics/sources/local.py` 重复的 bounded regular-file reader，删除重复边界实现。
+- [ ] 删除实际 `lyrics/match.py` 对 `lyrics/titles.py` 私有 helper 的依赖，改为公开 feature result，并在目标目录迁移时保留 title grammar/matching 的 owner 边界。
+- [ ] 合并实际 `config_store.py` 与 `lyrics/local.py` 重复的 bounded regular-file reader，删除重复边界实现；迁移到目标 `config/store.py` 时保留 regular-file、FIFO、大小上限和原子替换语义。
+- [ ] 收敛 `config.py:track_identity_key` 与 `display/presentation.py` 的重复 track offset key 生成，放入中立的 typed track identity/value owner，避免配置与展示对同一身份规则各自解释。
 - [ ] 删除临时 compatibility exports/fallback，并为每个删除记录对应迁移完成条件。
 - [x] 逐步增加 Ruff/ty/architecture checks：feature contract transport imports、provider/display direction、
   unique publisher、D-Bus dynamic values、oversized module scope、broad exception handlers 和 public annotations。
 - [ ] 完整验证 Python 3.11-3.15 CI、offscreen Qt、Cider test/build、`uv build`、live compositor opt-in。
 - [ ] 更新仓库规范、运行文档和开发规则，使文档描述目标架构、边界和验证命令。
+- [ ] 将当前约 588 行的 `lyrics/titles.py` 与约 452 行的 `lyrics/match.py` 按 grammar、normalization、evidence 和 ranking 的实际依赖拆分；迁移完成前不得通过复制 helper 形成第二套规则。
+- [ ] 将当前约 386 行的 `controller.py` 收敛为组合根 wiring；Settings persistence、restart/cache intent 和 provider policy 必须分别归 application service/feature owner。
 
 **退出条件**：没有重复 state publisher、重复 task owner 或重复 platform decision path；所有门禁和 behavior contract 通过。
 
