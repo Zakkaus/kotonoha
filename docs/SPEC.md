@@ -224,10 +224,18 @@ src/kotonoha/
 ├── lyrics/sources.py        # local/exact/network source contracts
 ├── state.py                 # LyricsState：持有 DisplayFrame，发 frame_changed
 ├── receiver.py              # AdapterReceiver：aiohttp app，把 adapter message 灌进 frame path
-├── overlay.py               # LyricsOverlay(QWidget)：透明窗口与歌词绘制
-├── overlay_surface.py       # layer-shell surface、geometry、output 与 drag 生命周期
-├── overlay_chrome.py        # overlay 控件、图标和可见性
-├── overlay_style.py         # overlay appearance/font fallback
+├── overlay/                 # LyricsOverlay(QWidget) 与其 UI 生命周期协作者
+│   ├── __init__.py          # 稳定导出 LyricsOverlay
+│   ├── window.py            # 透明窗口、Qt 事件与 frame 绑定
+│   ├── surface.py           # layer-shell surface、output 与 surface 生命周期
+│   ├── position.py          # geometry、drag 与位置提交
+│   ├── content.py           # DisplayFrame 到歌词控件的绑定
+│   ├── presentation.py      # appearance、font、panel paint
+│   ├── chrome.py            # overlay 控件、图标和可见性
+│   ├── style.py             # overlay appearance/font fallback
+│   ├── geometry.py          # 尺寸与输出相关的几何规则
+│   ├── drag.py              # 拖动策略与结果映射
+│   └── view.py              # Qt widget tree 构造
 ├── karaoke_label.py         # KaraokeLabel：逐字渐变高亮的自绘 QWidget
 ├── tray.py                  # 托盘菜单：穿透开关 / 锁定位置 / 设置 / 退出
 ├── settings_dialog.py       # 设置对话框（字体、位置、不透明度、是否双语）
@@ -267,7 +275,7 @@ src/kotonoha/
 
 ### 6.3 激活时序
 
-照搬 BiliHUD：构造 widget → `activate_layer_shell()`（在 `show()` 之前先尝试一次，并 `QTimer.singleShot(100, ...)` 再补一次，确保 surface 映射后生效）。
+构造 widget → 由 surface lifecycle owner 显式执行 prepare/activate；Qt 展示后的补偿激活使用由 Overlay 持有、可停止的单次 timer，确保 surface 映射后仍可重试且不会留下无主回调。
 
 ---
 
@@ -416,7 +424,7 @@ GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函
 
 1. **M0 — 项目脚手架对齐**：升级 `pyproject.toml`（build hook + 依赖）、建包结构、移植 `build_bridge.sh` + `layer_shell_bridge.cpp`（改 scope/产物名）、`platform/detect.py` + 测试。
 2. **M1 — 数据链路打通（WS）**：`model.py` 解析 + `state.py` + `receiver.py`（aiohttp WS 服务端）；**改造探针 `main.ts` 为 WS 客户端**（连接/全量同步/心跳/退避重连）；端到端 smoke：探针推送能进 state（先 print，不画 UI）。
-3. **M2 — 透明浮窗**：`overlay.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
+3. **M2 — 透明浮窗**：`overlay/window.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
 4. **M3 — 逐字卡拉 OK + 现代样式**：`karaoke_label.py` 扫光高亮、三行布局、翻译行、阴影/发光、切行动画。
 5. **M4 — 托盘与设置**：穿透切换、拖动定位、`settings_dialog.py`、config 持久化。
 6. **M5 — 降级与打磨**：GNOME/X11 回退、空状态/暂停、README + 系统依赖文档、打包验证。

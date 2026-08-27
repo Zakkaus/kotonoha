@@ -1,4 +1,7 @@
 import asyncio
+import logging
+
+import pytest
 
 from kotonoha.display.coordinator import DisplayCoordinator
 from kotonoha.display.models import DisplayState
@@ -25,9 +28,10 @@ class FakePlayer:
     def __init__(self, metadata: dict[str, object], *, position: int = 0) -> None:
         self.metadata = metadata
         self.position = position
+        self.status = "Playing"
 
     async def get_playback_status(self) -> str:
-        return "Playing"
+        return self.status
 
     async def get_metadata(self) -> dict[str, object]:
         return self.metadata
@@ -184,6 +188,23 @@ async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
     assert samples[-1].observation.position_s == 3.0
 
 
+async def test_playback_coordinator_logs_status_changes(caplog):
+    player = FakePlayer(VALID_METADATA, position=3_000_000)
+    session = FakeSession(player)
+    coordinator = MprisPlaybackCoordinator(session=session)
+
+    with caplog.at_level(logging.INFO):
+        await coordinator.poll_once(now=0.0)
+        player.status = "Paused"
+        await coordinator.poll_once(now=0.5)
+
+    assert any(
+        "MPRIS playback state changed" in record.getMessage()
+        and "status=Paused" in record.getMessage()
+        for record in caplog.records
+    )
+
+
 async def test_playback_coordinator_closes_its_session_and_poll_task():
     session = FakeSession(None)
     coordinator = MprisPlaybackCoordinator(session=session, poll_interval=0.01)
@@ -249,16 +270,59 @@ async def test_new_generation_cancels_old_resolution():
     assert coordinator.current_commit.info.title == "B"
 
 
-async def test_external_result_is_projected_to_the_canonical_frame():
+async def test_mpris_commit_claims_external_ownership_before_resolution_starts():
+    ownership = SourceOwnershipCoordinator()
+    coordinator = lyrics_coordinator(
+        DisplayCoordinator(LyricsState()),
+        resolver=RecordingResolver(),
+        ownership=ownership,
+    )
+
+    coordinator.on_playback_commit(track_commit(1))
+
+    # The commit callback runs synchronously; another adapter must not publish in
+    # the event-loop gap before the resolver task gets its first turn.
+    assert ownership.accepts("cider") is False
+
+    await coordinator.stop()
+
+
+async def test_mpris_transition_claims_external_ownership_before_commit():
+    ownership = SourceOwnershipCoordinator()
+    coordinator = lyrics_coordinator(
+        DisplayCoordinator(LyricsState()),
+        resolver=RecordingResolver(),
+        ownership=ownership,
+    )
+    commit = track_commit(1)
+    observation = PlaybackObservation(
+        "mpris",
+        "org.mpris.MediaPlayer2.test",
+        TrackIdentity("mpris", "test", stable_id="song", title="Song", artist="Artist"),
+        PlaybackStatus.PLAYING,
+        0.0,
+        180.0,
+        1.0,
+    )
+
+    coordinator.on_playback_sample(PlaybackSample(observation, commit.info, True, commit))
+
+    assert ownership.accepts("cider") is False
+
+    await coordinator.stop()
+
+
+async def test_external_result_is_projected_to_the_canonical_frame(caplog):
     state = LyricsState()
     coordinator = lyrics_coordinator(
         DisplayCoordinator(state),
         resolver=RecordingResolver(lyric_result("lrclib")),
         ownership=SourceOwnershipCoordinator(),
     )
-    coordinator.on_playback_commit(track_commit(1))
-    assert coordinator.load_task is not None
-    await coordinator.load_task
+    with caplog.at_level(logging.INFO):
+        coordinator.on_playback_commit(track_commit(1))
+        assert coordinator.load_task is not None
+        await coordinator.load_task
 
     observation = PlaybackObservation(
         "mpris",
@@ -278,6 +342,12 @@ async def test_external_result_is_projected_to_the_canonical_frame():
     assert state.frame.document.song_id == "provider-song-1"
     assert state.frame.document.language == "en"
     assert state.frame.current is not None
+    assert any(
+        "lyrics selected: generation=1" in record.getMessage()
+        and "slot='lrclib'" in record.getMessage()
+        and "provider='lrclib'" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def test_mpris_no_lyrics_resolution_publishes_not_found_state():
@@ -325,7 +395,8 @@ async def test_mpris_resolution_keeps_a_paused_playback_observation():
     assert state.frame.current_time == 4.0
 
 
-async def test_cider_frame_can_take_over_after_a_late_external_miss():
+async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog):
+    caplog.set_level(logging.INFO)
     resolver = RecordingResolver()
     gate = SourceOwnershipCoordinator()
     state = LyricsState()
@@ -342,6 +413,11 @@ async def test_cider_frame_can_take_over_after_a_late_external_miss():
     assert coordinator.content_owner == "live"
     assert gate.accepts(10) is True
     assert state.frame.document is not None
+    assert any(
+        "lyrics source switched during playback" in record.getMessage()
+        and "slot='cider'" in record.getMessage()
+        for record in caplog.records
+    )
 
 
 async def test_matching_cider_clock_can_drive_external_timeline():
@@ -368,7 +444,7 @@ async def test_matching_cider_clock_can_drive_external_timeline():
     )
     coordinator.on_playback_sample(PlaybackSample(observation, info, False, None))
 
-    assert state.frame.current_time == 7.5
+    assert state.frame.current_time == pytest.approx(7.5, abs=0.01)
 
 
 async def test_non_song_is_not_sent_to_the_resolver():

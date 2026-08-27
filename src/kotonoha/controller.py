@@ -91,11 +91,14 @@ class AppController:
         self._state = LyricsState()
         self._display = DisplayCoordinator(self._state, options=_display_options(config))
         platform_name = app.platformName()
-        self._platform_name = platform_name
         desktop = str(app.property("xdg_current_desktop") or "")
-        self._desktop = desktop
-        self._layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
-        self._overlay = LyricsOverlay(self._state, config, self._layer_shell)
+        layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
+        self._platform_factory = DefaultOverlayPlatformFactory(
+            layer_shell,
+            platform_name=platform_name,
+            current_desktop=desktop,
+        )
+        self._overlay = LyricsOverlay(self._state, config, platform_factory=self._platform_factory)
         ownership = SourceOwnershipCoordinator()
         resolver = LyricsResolver(catalog=LyricsSourceCatalog.default(ownership), cache_enabled=config.cache_enabled)
         self._receiver = AdapterReceiver(self._display, port=config.port, ownership=ownership)
@@ -161,6 +164,12 @@ class AppController:
 
     async def stop(self) -> None:
         await self._finish_settings_open()
+        if self._settings_dialog is not None:
+            self._settings_dialog.close()
+            self._settings_dialog = None
+        surface_result = self._overlay.shutdown()
+        if not surface_result.succeeded:
+            logger.warning("Overlay surface shutdown was incomplete: %s", surface_result.reason)
         await self._mpris.stop()
         await self._cider.stop()
         await self._receiver.stop()
@@ -290,9 +299,7 @@ class AppController:
             # a window on the same session as the overlay, and pinning Layer Shell
             # here handed an X11 session layer-shell capabilities — it reported no
             # window opacity and dropped its own fade-in.
-            platform_factory=DefaultOverlayPlatformFactory(
-                self._layer_shell, platform_name=self._platform_name, current_desktop=self._desktop
-            ),
+            platform_factory=self._platform_factory,
         )
         dialog.applied.connect(self._apply_config)
         dialog.clear_cache_requested.connect(self._clear_lyrics_cache)

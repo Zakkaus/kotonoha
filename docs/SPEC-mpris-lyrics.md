@@ -10,7 +10,7 @@
 - Cider 是播放器/传输适配器，不是最终歌词来源；Cider 响应中的 source.provider 会在边界层归一化为 source_id，并保留 source_name。
 - 本地缓存属于每一个网络 provider 的内部阶段，不是单独的 provider。
 - 不保存 MPRIS player、track ID、搜索词到 provider 歌曲的持久映射。
-- `overlay.py`、`karaoke_label.py`、`karaoke.py`、`native.py` 和 layer-shell bridge 保持既有视觉/平台行为；外部插件使用 `kotonoha.adapter` v1。
+- `overlay/`、`karaoke_label.py`、`karaoke.py`、`native.py` 和 layer-shell bridge 保持既有视觉/平台行为；外部插件使用 `kotonoha.adapter` v1。
 
 ## 2. 数据流
 

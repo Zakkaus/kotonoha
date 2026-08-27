@@ -42,6 +42,7 @@ class DisplayCoordinator:
         self._task: asyncio.Task[None] | None = None
         self._wake_event: asyncio.Event | None = None
         self._reported_task_failure: asyncio.Task[None] | None = None
+        self._last_logged_provider_key: tuple[object, ...] | None = None
 
     async def start(self) -> None:
         """Start the owned smooth-display task; repeated calls are harmless."""
@@ -127,6 +128,7 @@ class DisplayCoordinator:
 
     def publish_frame(self, frame: DisplayFrame) -> bool:
         """Publish an already projected frame through the sole Qt bridge."""
+        self._log_provider_metadata(frame)
         if frame.state is DisplayState.NO_TRACK and frame.track is None:
             self._document = None
             self._resolution = ResolutionState.NO_TRACK
@@ -181,6 +183,53 @@ class DisplayCoordinator:
     def _wake(self) -> None:
         if self._wake_event is not None:
             self._wake_event.set()
+
+    def _log_provider_metadata(self, frame: DisplayFrame) -> None:
+        """Log one metadata record per displayed lyric document."""
+        document = frame.document
+        if document is None:
+            self._last_logged_provider_key = None
+            return
+        key = self._provider_log_key(frame)
+        previous = self._last_logged_provider_key
+        if previous == key:
+            return
+        self._last_logged_provider_key = key
+
+        track = frame.track
+        logger.info(
+            "display lyric metadata: state=%s track=%r / %r ref=%r "
+            "provider=%r provider_name=%r song_id=%r timing=%s lines=%d duration=%s",
+            frame.state,
+            track.title if track is not None else "",
+            track.artist if track is not None else "",
+            track.track_ref if track is not None else None,
+            document.source_id,
+            document.source_name,
+            document.song_id,
+            document.timing,
+            len(document.lines),
+            "-" if document.duration_s is None else f"{document.duration_s:.3f}s",
+        )
+
+    @staticmethod
+    def _provider_log_key(frame: DisplayFrame) -> tuple[object, ...]:
+        """Return stable document facts that matter when diagnosing source changes."""
+        track = frame.track
+        document = frame.document
+        if document is None:
+            raise ValueError("provider log key requires a lyric document")
+        return (
+            track.track_ref if track is not None else None,
+            track.title if track is not None else "",
+            track.artist if track is not None else "",
+            document.source_id,
+            document.source_name,
+            document.song_id,
+            document.timing,
+            document.duration_s,
+            len(document.lines),
+        )
 
 
 __all__ = ["DisplayCoordinator"]

@@ -20,13 +20,16 @@ from overlay_helpers import (
     _ok,
     layer_shell_platform,
 )
+from overlay_helpers import (
+    build_overlay as LyricsOverlay,
+)
 from PyQt6.QtCore import QEvent, QPoint, QPointF, QRect, Qt
 from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config, PanelStyle
-from kotonoha.overlay import LyricsOverlay
-from kotonoha.platform.overlay_contracts import Output, OverlayOperationResult, WindowRectangle
+from kotonoha.overlay.geometry import OverlayGeometry
+from kotonoha.platform.overlay_contracts import Output, SurfaceResult, WindowRectangle
 from kotonoha.state import LyricsState
 
 
@@ -67,7 +70,7 @@ def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
 
     assert overlay._layer_pos == QPoint(2080, 100)
     assert overlay._active_screen is source
-    assert LyricsOverlay._screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
+    assert OverlayGeometry.screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -174,7 +177,7 @@ def test_an_activated_surface_reports_a_rejected_placement(qapp, caplog):
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
     layer_shell_platform(overlay)
     with patch.object(
-        overlay._platform, "move_to", lambda position: OverlayOperationResult.failure("margins rejected")
+        overlay._platform, "move_to", lambda position: SurfaceResult.rejected("margins rejected")
     ), caplog.at_level("WARNING"):
         activated = overlay.activate_layer_shell()
 
@@ -192,7 +195,7 @@ def test_a_failed_activation_falls_back_and_says_why(qapp, caplog):
     layer_shell_platform(overlay)
     positioned: list[bool] = []
     with patch.object(
-        overlay._platform, "activate", lambda: OverlayOperationResult.failure("no window handle")
+        overlay._platform, "activate", lambda: SurfaceResult.rejected("no window handle")
     ), patch.object(overlay, "_fallback_position", lambda: positioned.append(True)), caplog.at_level("WARNING"):
         overlay.activate_layer_shell()
 
@@ -238,8 +241,8 @@ def test_a_failed_activation_positions_as_an_ordinary_window(qapp):
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
     platform = layer_shell_platform(overlay)
     moves: list[tuple[str, object]] = []
-    with patch.object(platform, "activate", lambda: OverlayOperationResult.failure("no handle")), patch.object(
-        platform, "move_to", lambda position: moves.append(("anchor", position)) or OverlayOperationResult.success()
+    with patch.object(platform, "activate", lambda: SurfaceResult.rejected("no handle")), patch.object(
+        platform, "move_to", lambda position: moves.append(("anchor", position)) or SurfaceResult.applied()
     ), patch.object(overlay._host, "move_window", lambda position: moves.append(("host", position))):
         overlay.activate_layer_shell()
 
@@ -258,6 +261,8 @@ def test_a_drag_is_not_persisted_where_the_window_cannot_be_placed(qapp):
     )
     with patch.object(
         type(overlay._platform), "capabilities", property(lambda self: unplaceable)
+    ), patch.object(
+        type(overlay._platform), "client_positioning", property(lambda self: False)
     ), patch.object(overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)):
         overlay._dragging = True
         overlay._drag_moved = True
@@ -284,9 +289,7 @@ def test_a_drag_whose_update_failed_is_not_persisted(qapp):
     committed: list[object] = []
 
     def _fail(local, glob):
-        from kotonoha.platform.overlay_contracts import OverlayOperationResult
-
-        return OverlayOperationResult.failure("no window handle")
+        return SurfaceResult.rejected("no window handle")
 
     with patch.object(overlay._platform, "update_drag", _fail), patch.object(
         overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)
@@ -336,7 +339,7 @@ def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
     with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
         overlay, "_window_size", return_value=(1100, 170)
     ):
-        pos = overlay._compute_layer_pos(1100, 170)
+        pos = overlay._surface.compute_layer_pos(1100, 170, screen)
 
     assert 0 <= pos.x() <= 4096 - 1100
     assert 0 <= pos.y() <= 1152 - 170
@@ -358,10 +361,10 @@ def test_a_parked_position_survives_the_next_geometry_pass(qapp):
 
     with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
         overlay, "_window_size", return_value=(1100, 140)
-    ), patch.object(overlay._platform, "move_to_output"):
+    ):
         overlay._commit_drag_position(QPoint(20, 40))
         parked = overlay._layer_pos
-        reloaded = overlay._compute_layer_pos(1100, 140)
+        reloaded = overlay._surface.compute_layer_pos(1100, 140, screen)
 
     assert overlay._config.screen_width == 2048
     assert overlay._config.screen_height == 1152
@@ -391,7 +394,7 @@ def test_a_parked_position_is_not_trusted_on_a_different_output_of_the_same_size
     with patch.object(QGuiApplication, "screens", return_value=[other]), patch.object(
         overlay, "_window_size", return_value=(1100, 140)
     ):
-        pos = overlay._compute_layer_pos(1100, 140)
+        pos = overlay._surface.compute_layer_pos(1100, 140, other)
 
     assert 0 <= pos.x() <= 1920 - 1100, f"panel parked off screen at x={pos.x()}"
     overlay.deleteLater()
@@ -405,37 +408,39 @@ def test_a_returning_output_is_matched_by_name_not_by_its_old_mode(qapp):
     # rejected the very output the rebuild was waiting for, and the surface that
     # had already been destroyed was never rebuilt.
     live = FakeScreen("DP-1", 0, 0, 3840, 2160)
-    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
     stale = Output("DP-1", WindowRectangle(0, 0, 1920, 1080))
 
     with patch.object(QGuiApplication, "screens", return_value=[live]), patch.object(
-        overlay, "_bind_widget_screen"
-    ), patch.object(overlay, "activate_layer_shell", return_value=True), patch.object(overlay, "show"):
-        rebuilt = overlay._restore_output(stale)
+        overlay._surface, "bind_widget_screen"
+    ), patch.object(overlay._platform, "activate", return_value=SurfaceResult.applied()), patch.object(
+        overlay._platform, "move_to", return_value=SurfaceResult.applied()
+    ):
+        rebuilt = overlay._surface._rebuild_surface(stale)
+        overlay._surface._complete_rebind(stale)
 
-    assert rebuilt is True, "the returning output was rejected for changing mode"
+    assert rebuilt.succeeded, "the returning output was rejected for changing mode"
     assert overlay._active_screen is live
     overlay.deleteLater()
     qapp.processEvents()
 
 
 def test_the_platform_learns_which_output_the_overlay_is_on(qapp):
-    # apply_config set the attribute directly and ran before _target_screen ever
-    # did, so the early return there meant the adapter was never told. Its
-    # _active_output stayed None for the session, and the output lifecycle keyed
-    # on it — noticing the active monitor go away, choosing where to rebuild —
-    # could not fire at all.
+    # The lifecycle owner records the output only after the platform has accepted
+    # activation; selecting a screen during config application is not a commit.
     from kotonoha.platform.overlay_contracts import Output
 
-    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
-    told: list[Output | None] = []
+    screen = FakeScreen("HDMI-A-1", 0, 0, 1920, 1080)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
+        overlay._surface, "target_screen", return_value=screen
+    ), patch.object(
+        overlay._platform, "activate", return_value=SurfaceResult.applied()
+    ), patch.object(overlay._platform, "move_to", return_value=SurfaceResult.applied()), patch.object(
+        overlay._platform, "set_input_region", return_value=SurfaceResult.applied()
+    ), patch.object(overlay._platform, "set_blur_region", return_value=SurfaceResult.applied()):
+        assert overlay.activate_layer_shell() is True
 
-    def record(output: Output | None) -> None:
-        told.append(output)
-
-    with patch.object(overlay._platform, "set_active_output", record):
-        overlay.apply_config(Config())
-
-    assert told, "the platform was never told which output the overlay is on"
+    assert overlay._surface.active_output == Output("HDMI-A-1", WindowRectangle(0, 0, 1920, 1080))
     overlay.deleteLater()
     qapp.processEvents()

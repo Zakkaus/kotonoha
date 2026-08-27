@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QPoint
 
-from .platform.overlay_contracts import DragMode, OverlayOperationResult, OverlayPlatform, WindowPoint
+from ..platform.overlay_contracts import DragMode, DragPort, SurfaceResult, WindowPoint
 
 
 @dataclass(frozen=True)
@@ -20,7 +20,7 @@ class DragRelease:
 class OverlayDragController:
     """Own pointer-gesture state while the surface owns its screen position."""
 
-    def __init__(self, platform: OverlayPlatform) -> None:
+    def __init__(self, platform: DragPort) -> None:
         """Create a drag controller bound to one platform adapter."""
         self._platform = platform
         self._dragging = False
@@ -29,12 +29,12 @@ class OverlayDragController:
         self._drag_local = QPoint()
 
     @property
-    def platform(self) -> OverlayPlatform:
+    def platform(self) -> DragPort:
         """Return the platform used for the active gesture."""
         return self._platform
 
     @platform.setter
-    def platform(self, value: OverlayPlatform) -> None:
+    def platform(self, value: DragPort) -> None:
         self._platform = value
 
     @property
@@ -92,7 +92,7 @@ class OverlayDragController:
         position: QPoint,
         local: QPoint,
         global_position: QPoint,
-    ) -> tuple[QPoint, OverlayOperationResult]:
+    ) -> tuple[QPoint, SurfaceResult]:
         """Apply one local delta and return the platform result plus new position."""
         diff = local - self._drag_local
         if not diff.isNull():
@@ -109,7 +109,7 @@ class OverlayDragController:
     def end(self) -> DragRelease:
         """End the gesture and report whether persistence is safe."""
         moved = self._drag_moved
-        should_commit = moved and self._drag_applied and self._platform.capabilities.client_positioning
+        should_commit = moved and self._drag_applied and self._platform.client_positioning
         self._dragging = False
         self._drag_moved = False
         self._drag_applied = True

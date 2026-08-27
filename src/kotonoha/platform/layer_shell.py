@@ -3,18 +3,14 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
-
-from PyQt6.QtCore import QTimer
 
 from .overlay_contracts import (
     DragMode,
+    DragPort,
     DragStartResult,
     LayerShellBridge,
-    Output,
     OverlayCapabilities,
-    OverlayDragStrategy,
-    OverlayOperationResult,
+    SurfaceResult,
     WindowHost,
     WindowPoint,
     WindowPolicy,
@@ -22,8 +18,6 @@ from .overlay_contracts import (
 )
 
 logger = logging.getLogger(__name__)
-
-RESURFACE_DELAY_MS = 250
 
 
 class _LayerShellDragStrategy:
@@ -47,6 +41,11 @@ class _LayerShellDragStrategy:
         self._position = WindowPoint(0, 0)
         self._origin: WindowPoint | None = None
 
+    @property
+    def client_positioning(self) -> bool:
+        """Layer Shell can persist an output-local position through its anchor."""
+        return True
+
     def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         raise NotImplementedError
 
@@ -57,9 +56,9 @@ class _LayerShellDragStrategy:
         self._origin = self._reading(local_position, global_position)
         return DragStartResult(DragMode.MANUAL)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
         if self._origin is None:
-            return OverlayOperationResult.failure(f"{self._label} drag has not started")
+            return SurfaceResult.rejected(f"{self._label} drag has not started")
         reading = self._reading(local_position, global_position)
         position = WindowPoint(
             self._position.x + reading.x - self._origin.x,
@@ -67,15 +66,15 @@ class _LayerShellDragStrategy:
         )
         pointer = self._host.native_window_pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable")
+            return SurfaceResult.failed("Layer Shell window handle is unavailable", retryable=True)
         try:
             self._controller.set_anchor_position(pointer, position.x, position.y)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell position update failed")
+            return SurfaceResult.failed("Layer Shell position update failed", retryable=True)
         self._position = position
         if self._reanchors:
             self._origin = reading
-        return OverlayOperationResult.success()
+        return SurfaceResult.applied()
 
     def end_drag(self) -> None:
         self._origin = None
@@ -110,25 +109,21 @@ class NiriLayerShellDragStrategy(_LayerShellDragStrategy):
 
 
 class LayerShellPlatform:
-    """Drive layer-shell, input, blur, positioning, and output binding calls."""
+    """Adapt Layer Shell surface, input, blur, placement and drag operations."""
 
     def __init__(
         self,
         host: WindowHost,
         controller: LayerShellBridge,
-        drag_strategy: OverlayDragStrategy | None = None,
+        drag_strategy: DragPort | None = None,
     ) -> None:
         self._host = host
         self._controller = controller
-        self._drag_strategy = drag_strategy or LayerShellAnchorDragStrategy(host, controller)
-        self._active_output: Output | None = None
-        self._output_handler: Callable[[Output], bool] | None = None
-        self._pending_resurface = False
-        self._resurface_output: Output | None = None
-        self._resurface_timer = QTimer()
-        self._resurface_timer.setSingleShot(True)
-        self._resurface_timer.setInterval(RESURFACE_DELAY_MS)
-        self._resurface_timer.timeout.connect(self._restore_pending_surface)
+        self._drag_strategy = (
+            drag_strategy if drag_strategy is not None else LayerShellAnchorDragStrategy(host, controller)
+        )
+        self._surface_released = False
+        self._closed = False
 
     @property
     def capabilities(self) -> OverlayCapabilities:
@@ -141,103 +136,146 @@ class LayerShellPlatform:
         # A layer surface only exists on Wayland, which has no window-opacity protocol.
         return OverlayCapabilities.from_controller(self._controller, window_opacity=False)
 
+    @property
+    def client_positioning(self) -> bool:
+        """Expose the drag-relevant placement capability through the drag port."""
+        return self.capabilities.client_positioning
+
     def _pointer(self) -> int | None:
         return self._host.native_window_pointer()
 
-    def prepare(self) -> OverlayOperationResult:
+    def prepare(self) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         try:
             self._host.apply_window_policy(WindowPolicy(recreate_surface=True))
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Layer Shell window initialization failed: {exc}")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed(f"Layer Shell window initialization failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
-    def activate(self) -> OverlayOperationResult:
+    def activate(self) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         pointer = self._pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable.")
+            return SurfaceResult.failed("Layer Shell window handle is unavailable.", retryable=True)
         if not self._controller.available:
-            return OverlayOperationResult.failure(
+            return SurfaceResult.not_supported(
                 self._controller.disabled_reason or "Layer Shell is unavailable."
             )
         try:
             self._controller.make_overlay(pointer)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell activation failed.")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed("Layer Shell activation failed.", retryable=True)
+        self._surface_released = False
+        return SurfaceResult.applied()
 
-    def set_input_region(self, region: WindowRectangle | None) -> OverlayOperationResult:
+    def set_input_region(self, region: WindowRectangle | None) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         capabilities = self.capabilities
         if not capabilities.input_region:
             # The bridge no-ops silently when Layer Shell is unavailable, so
             # returning success here told the caller an update happened that did not.
-            return OverlayOperationResult.failure(
+            return SurfaceResult.not_supported(
                 capabilities.input_region_reason or "Layer Shell input regions are unavailable."
             )
         pointer = self._pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable.")
+            return SurfaceResult.failed("Layer Shell window handle is unavailable.", retryable=True)
         try:
             if region is None:
                 self._controller.set_passthrough(pointer, True)
             else:
                 self._controller.set_input_rect(pointer, region.x, region.y, region.width, region.height)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell input region update failed.")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed("Layer Shell input region update failed.", retryable=True)
+        return SurfaceResult.applied()
 
-    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> OverlayOperationResult:
+    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         capabilities = self.capabilities
         if not capabilities.blur:
-            return OverlayOperationResult.failure(capabilities.blur_reason or "Blur is unavailable.")
+            return SurfaceResult.not_supported(capabilities.blur_reason or "Blur is unavailable.")
         pointer = self._pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable.")
+            return SurfaceResult.failed("Layer Shell window handle is unavailable.", retryable=True)
         try:
             if region is None:
                 self._controller.clear_blur(pointer)
             else:
                 self._controller.set_blur_region(pointer, region.x, region.y, region.width, region.height, radius)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell blur update failed.")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed("Layer Shell blur update failed.", retryable=True)
+        return SurfaceResult.applied()
 
-    def move_to(self, position: WindowPoint) -> OverlayOperationResult:
+    def move_to(self, position: WindowPoint) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         capabilities = self.capabilities
         if not capabilities.layer_shell:
-            return OverlayOperationResult.failure(
+            return SurfaceResult.not_supported(
                 capabilities.layer_shell_reason or "Layer Shell is unavailable."
             )
         pointer = self._pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("Layer Shell window handle is unavailable.")
+            return SurfaceResult.failed("Layer Shell window handle is unavailable.", retryable=True)
         try:
             self._controller.set_anchor_position(pointer, position.x, position.y)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Layer Shell position update failed.")
+            return SurfaceResult.failed("Layer Shell position update failed", retryable=True)
         self._drag_strategy.set_position(position)
-        return OverlayOperationResult.success()
+        return SurfaceResult.applied()
 
-    def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:
-        capabilities = self.capabilities
-        if not capabilities.output_rebinding:
-            # host.bind_output not raising is not evidence the output was rebound:
-            # without Layer Shell there is no surface to bind.
-            return OverlayOperationResult.failure(
-                capabilities.output_rebinding_reason or "Output rebinding is unavailable."
-            )
+    def release_for_output_rebind(self) -> SurfaceResult:
+        """Release resources keyed by the old surface before recreation."""
+        return self.release_surface()
+
+    def release_surface(self) -> SurfaceResult:
+        """Hide and destroy the surface after releasing compositor resources."""
+        if self._surface_released:
+            return SurfaceResult.applied()
+        if not self._host.is_alive():
+            self._surface_released = True
+            return SurfaceResult.applied()
+
+        failures: list[str] = []
+        for result in (self._release_input(), self._release_blur()):
+            if not result.succeeded and result.reason is not None:
+                failures.append(result.reason)
         try:
-            self._host.bind_output(output)
+            self._host.hide_window()
+            self._host.destroy_surface()
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Output rebinding failed: {exc}")
-        return OverlayOperationResult.success()
+            failures.append(f"Layer Shell surface release failed: {exc}")
+        self._surface_released = not failures
+        if failures:
+            return SurfaceResult.failed("; ".join(failures), retryable=True)
+        return SurfaceResult.applied()
 
-    def set_output_handler(self, handler: Callable[[Output], bool]) -> None:
-        self._output_handler = handler
+    def close(self) -> SurfaceResult:
+        """Release the surface and prevent any later platform operation."""
+        if self._closed:
+            return SurfaceResult.applied()
+        result = self.release_surface()
+        self._drag_strategy.end_drag()
+        if result.succeeded:
+            self._closed = True
+        return result
 
-    def set_active_output(self, output: Output | None) -> None:
-        self._active_output = output
+    def _release_input(self) -> SurfaceResult:
+        """Make the old Layer Shell surface click-through before destruction."""
+        pointer = self._pointer()
+        if pointer is None:
+            return SurfaceResult.applied()
+        try:
+            self._controller.set_passthrough(pointer, True)
+        except (OSError, RuntimeError) as exc:
+            return SurfaceResult.failed(f"Layer Shell input release failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
-    def _release_blur(self) -> None:
+    def _release_blur(self) -> SurfaceResult:
         """Drop the compositor-side blur object before its surface goes.
 
         The bridge keys the effect on the wl_surface, and a rebuilt surface gets a
@@ -253,107 +291,27 @@ class LayerShellPlatform:
         """
         pointer = self._pointer()
         if pointer is None:
-            return
+            return SurfaceResult.applied()
         try:
             self._controller.clear_blur(pointer)
         except (OSError, RuntimeError) as exc:
             logger.warning("Blur release failed before the surface was destroyed: %s", exc)
-
-    def move_to_output(self, output: Output) -> OverlayOperationResult:
-        """Put the overlay on another output.
-
-        A layer surface binds its output when it is created and cannot be moved,
-        so this destroys the surface and has the host build a new one there.
-        Recording the output alone leaves the panel drawn on the output it was
-        dragged away from."""
-        self._active_output = output
-        self._pending_resurface = False
-        self._resurface_timer.stop()
-        if not self._host.is_alive():
-            return OverlayOperationResult.failure("The overlay window is gone.")
-        self._host.hide_window()
-        self._release_blur()
-        self._host.destroy_surface()
-        if self._output_handler is None:
-            self._pending_resurface = True
-            return OverlayOperationResult.failure("No output handler is registered.")
-        if not self._output_handler(output):
-            # The old surface is already destroyed. Clearing the debt up front and
-            # then failing here left nothing owed and the active output already set
-            # to the target, so the next output event returned early and the overlay
-            # stayed hidden for the rest of the session. Stay owed instead.
-            self._pending_resurface = True
-            return OverlayOperationResult.failure("The surface was not rebuilt on the new output.")
-        return OverlayOperationResult.success()
-
-    def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
-        if self._resurface_output is not None and self._resurface_output.name == output.name:
-            # It went away before the rebuild ran; drop the target but stay owed.
-            self._resurface_timer.stop()
-            self._resurface_output = None
-            self._pending_resurface = True
-        if self._active_output is None or self._active_output.name != output.name:
-            return
-        self._active_output = None
-        self._pending_resurface = True
-        self._host.hide_window()
-        self._release_blur()
-        self._host.destroy_surface()
-        remaining = self._select_output(connected, configured_name)
-        if remaining is not None:
-            self._schedule_resurface(remaining)
-
-    def output_added(self, connected: tuple[Output, ...], configured_name: str | None) -> None:
-        if not connected:
-            return
-        configured = next((output for output in connected if output.name == configured_name), None)
-        if not self._pending_resurface and (
-            configured is None or self._active_output is not None and self._active_output.name == configured.name
-        ):
-            return
-        output = self._select_output(connected, configured_name)
-        if output is not None:
-            self._schedule_resurface(output)
-
-    @staticmethod
-    def _select_output(outputs: tuple[Output, ...], configured_name: str | None) -> Output | None:
-        if configured_name:
-            configured = next((output for output in outputs if output.name == configured_name), None)
-            if configured is not None:
-                return configured
-        return outputs[0] if outputs else None
-
-    def _schedule_resurface(self, output: Output) -> None:
-        # The flag stays set until a rebuild actually happens. Clearing it here
-        # stranded the overlay when the scheduled output vanished inside the delay:
-        # the second removal returns early (the surface is already released), the
-        # scheduled rebuild finds its target gone, and nothing is left to tell the
-        # next output_added that a rebuild is still owed.
-        self._resurface_output = output
-        self._resurface_timer.start()
-
-    def _restore_pending_surface(self) -> None:
-        output, self._resurface_output = self._resurface_output, None
-        if output is None:
-            return
-        # The timer outlives the window it rebuilds: an output can return after the
-        # overlay is closed, and calling the handler then reaches a deleted widget.
-        if not self._host.is_alive():
-            return
-        self._active_output = output
-        if self._output_handler is None:
-            return
-        if not self._output_handler(output):
-            # No surface was rebuilt on the returning output, so a rebuild is still
-            # owed; clearing the flag here would retire it with nothing retrying.
-            return
-        self._pending_resurface = False  # only a rebuild that happened clears it
+            return SurfaceResult.failed(f"Blur release failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        if self._closed:
+            return DragStartResult(DragMode.UNAVAILABLE, "The Layer Shell adapter is closed.")
         return self._drag_strategy.begin_drag(local_position, global_position)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
         return self._drag_strategy.update_drag(local_position, global_position)
 
     def end_drag(self) -> None:
         self._drag_strategy.end_drag()
+
+    def set_position(self, position: WindowPoint) -> None:
+        """Synchronize the drag strategy after a committed anchor move."""
+        self._drag_strategy.set_position(position)

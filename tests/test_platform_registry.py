@@ -3,8 +3,17 @@
 from __future__ import annotations
 
 from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
-from kotonoha.platform.overlay_contracts import DragMode, Output, WindowPoint, WindowPolicy, WindowRectangle
+from kotonoha.platform.overlay_contracts import (
+    DragMode,
+    Output,
+    SurfaceResult,
+    SurfaceState,
+    WindowPoint,
+    WindowPolicy,
+    WindowRectangle,
+)
 from kotonoha.platform.qt_window import OrdinaryWindowDragStrategy, QtWindowPlatform
+from kotonoha.platform.surface_lifecycle import SurfaceLifecycleOwner
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory, _LayerShellProvider
 
 
@@ -97,6 +106,33 @@ class _MovingHost(_FakeHost):
         self.moves.append(position)
 
 
+class _RetryPolicyHost(_FakeHost):
+    """Fail one native setup call so the lifecycle retry path is observable."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_policy = True
+
+    def apply_window_policy(self, policy: WindowPolicy) -> None:
+        if self.fail_policy:
+            raise RuntimeError("setup is temporarily unavailable")
+        super().apply_window_policy(policy)
+
+
+class _RetryReleaseHost(_FakeHost):
+    """Fail the first surface destruction while allowing a later retry."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.fail_destroy = True
+
+    def destroy_surface(self) -> None:
+        if self.fail_destroy:
+            self.fail_destroy = False
+            raise RuntimeError("surface is temporarily busy")
+        super().destroy_surface()
+
+
 def _assert_measures_global_pointer(platform, controller) -> None:
     """The niri model: the surface follows the global pointer reading.
 
@@ -124,7 +160,7 @@ def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
         _FakeController(available=True, blur_available=True), platform_name="wayland", current_desktop="KDE"
     )(_FakeHost())
 
-    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform.surface, LayerShellPlatform)
     assert platform.capabilities.layer_shell
     assert platform.capabilities.blur
 
@@ -132,7 +168,7 @@ def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
 def test_x11_provider_claims_without_layer_shell() -> None:
     platform = DefaultOverlayPlatformFactory(_FakeController(False), platform_name="xcb")(_FakeHost())
 
-    assert isinstance(platform, QtWindowPlatform)
+    assert isinstance(platform.surface, QtWindowPlatform)
     assert not platform.capabilities.layer_shell
     assert platform.capabilities.layer_shell_reason == "X11 has no Layer Shell overlay capability."
 
@@ -142,7 +178,7 @@ def test_wayland_fallback_explains_rejected_layer_shell() -> None:
         _FakeController(False), platform_name="wayland", current_desktop="GNOME"
     )(_FakeHost())
 
-    assert isinstance(platform, QtWindowPlatform)
+    assert isinstance(platform.surface, QtWindowPlatform)
     assert platform.capabilities.layer_shell_reason == "Wayland compositor does not provide Layer Shell."
     # Blur is a separate capability, so the reason comes from the bridge rather
     # than from the window being an ordinary one.
@@ -158,11 +194,12 @@ def test_a_wayland_fallback_keeps_blur_when_the_compositor_offers_it() -> None:
         controller, platform_name="wayland", current_desktop="GNOME"
     )(_FakeHost())
 
-    assert isinstance(platform, QtWindowPlatform)
+    assert isinstance(platform.surface, QtWindowPlatform)
     assert platform.capabilities.blur is True
     assert platform.capabilities.blur_reason is None
 
-    result = platform.set_blur_region(WindowRectangle(0, 0, 10, 10), 4)
+    assert platform.blur is not None
+    result = platform.blur.set_blur_region(WindowRectangle(0, 0, 10, 10), 4)
 
     assert result.succeeded, result.reason
     assert any(call[0] == "set_blur_region" for call in controller.calls)
@@ -171,7 +208,7 @@ def test_a_wayland_fallback_keeps_blur_when_the_compositor_offers_it() -> None:
 def test_generic_provider_claims_unknown_platform_with_reason() -> None:
     platform = DefaultOverlayPlatformFactory(_FakeController(False), platform_name="offscreen")(_FakeHost())
 
-    assert isinstance(platform, QtWindowPlatform)
+    assert isinstance(platform.surface, QtWindowPlatform)
     assert platform.capabilities.layer_shell_reason == "Layer Shell is unavailable on this platform."
 
 
@@ -205,7 +242,6 @@ def test_layer_shell_operations_report_failure_when_the_capability_is_off() -> N
     for result in (
         platform.set_input_region(WindowRectangle(0, 0, 10, 10)),
         platform.move_to(WindowPoint(1, 2)),
-        platform.rebind_output(WindowRectangle(0, 0, 800, 600)),
     ):
         assert not result.succeeded
         assert result.reason
@@ -221,10 +257,7 @@ def test_a_wayland_fallback_reports_that_it_cannot_place_its_own_window() -> Non
     )(_FakeHost())
 
     assert platform.capabilities.client_positioning is False
-    result = platform.move_to(WindowPoint(120, 40))
-
-    assert not result.succeeded
-    assert result.reason
+    assert platform.placement is None
 
 
 def test_an_x11_fallback_can_place_its_own_window() -> None:
@@ -235,20 +268,21 @@ def test_an_x11_fallback_can_place_its_own_window() -> None:
     )(_FakeHost())
 
     assert platform.capabilities.client_positioning is True
-    assert platform.move_to(WindowPoint(120, 40)).succeeded
+    assert platform.placement is not None
+    assert platform.placement.move_to(WindowPoint(120, 40)).succeeded
 def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
     host = _MovingHost()
     controller = _FakeController(available=True)
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="KDE")(host)
 
-    assert isinstance(platform, LayerShellPlatform)
+    assert isinstance(platform.surface, LayerShellPlatform)
     # The anchor call below is what distinguishes this strategy from the ordinary
     # one, which moves the window instead. Asserting the concrete strategy object
     # would only restate the selection the behaviour already proves.
-    assert platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
-    assert platform.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
+    assert platform.drag.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
+    assert platform.drag.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
-    platform.end_drag()
+    platform.drag.end_drag()
 
 
 def test_layer_shell_registry_selects_niri_strategy() -> None:
@@ -256,8 +290,8 @@ def test_layer_shell_registry_selects_niri_strategy() -> None:
     controller = _FakeController(available=True)
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="niri")(host)
 
-    assert isinstance(platform, LayerShellPlatform)
-    _assert_measures_global_pointer(platform, controller)
+    assert isinstance(platform.surface, LayerShellPlatform)
+    _assert_measures_global_pointer(platform.drag, controller)
 
 
 def test_layer_shell_registry_keeps_default_strategy_for_kde() -> None:
@@ -269,8 +303,8 @@ def test_layer_shell_registry_keeps_default_strategy_for_kde() -> None:
         controller, platform_name="wayland", current_desktop="KDE", niri_socket_present=False
     )(host)
 
-    assert isinstance(platform, LayerShellPlatform)
-    _assert_measures_local_pointer(platform, controller)
+    assert isinstance(platform.surface, LayerShellPlatform)
+    _assert_measures_local_pointer(platform.drag, controller)
 
 
 def test_layer_shell_registry_selects_niri_from_session_desktop(monkeypatch) -> None:
@@ -279,8 +313,8 @@ def test_layer_shell_registry_selects_niri_from_session_desktop(monkeypatch) -> 
     controller = _FakeController(available=True)
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland")(_MovingHost())
 
-    assert isinstance(platform, LayerShellPlatform)
-    _assert_measures_global_pointer(platform, controller)
+    assert isinstance(platform.surface, LayerShellPlatform)
+    _assert_measures_global_pointer(platform.drag, controller)
 
 
 def test_niri_strategy_integrates_global_pointer_displacement() -> None:
@@ -370,220 +404,294 @@ def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
     assert result.reason == platform.capabilities.client_positioning_reason
     assert host.moves == [], "the window must not be moved when the compositor ignores it"
 
+
+def test_lifecycle_retries_prepare_before_activation_after_setup_failure(qapp) -> None:
+    host = _RetryPolicyHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    owner = SurfaceLifecycleOwner(
+        platform,
+        output_binding=platform,
+        timer_parent=qapp,
+        rebuild_surface=lambda _output: SurfaceResult.applied(),
+    )
+    active = _output("HDMI-A-1")
+
+    assert not owner.prepare().succeeded
+    assert owner.state is SurfaceState.DEGRADED
+
+    host.fail_policy = False
+    assert owner.activate(active).succeeded
+    assert owner.state is SurfaceState.ACTIVE
+
+
+def test_new_output_retries_a_release_that_failed_during_output_removal(qapp) -> None:
+    host = _RetryReleaseHost()
+    owner, _platform = _make_lifecycle_owner(
+        host, _FakeController(available=True), qapp, lambda _output: SurfaceResult.applied()
+    )
+    active = _output("HDMI-A-1")
+    target = _output("DP-1")
+    assert owner.activate(active).succeeded
+
+    owner.output_removed(active, target)
+    assert owner.state is SurfaceState.DEGRADED
+    assert owner.pending_output == target
+
+    owner.output_added(target)
+    assert owner.retry_pending().succeeded
+    assert owner.state is SurfaceState.ACTIVE
+
+
+def test_close_remains_retryable_when_surface_release_fails(qapp) -> None:
+    host = _RetryReleaseHost()
+    platform = LayerShellPlatform(host, _FakeController(available=True))
+    owner = SurfaceLifecycleOwner(
+        platform,
+        output_binding=platform,
+        timer_parent=qapp,
+        rebuild_surface=lambda _output: SurfaceResult.applied(),
+    )
+    assert owner.prepare().succeeded
+    assert owner.activate(_output("HDMI-A-1")).succeeded
+
+    first = owner.close()
+    assert not first.succeeded
+    assert owner.state is SurfaceState.CLOSING
+
+    assert owner.close().succeeded
+    assert owner.state is SurfaceState.CLOSED
+
 def _output(name: str, width: int = 1920) -> Output:
     return Output(name, WindowRectangle(0, 0, width, 1080))
 
 
-def test_layer_shell_ignores_vanishing_output_that_is_not_active() -> None:
-    host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
-    active = _output("HDMI-A-1")
-    platform.set_active_output(active)
+def _make_lifecycle_owner(host: _FakeHost, controller: _FakeController, qapp, rebuild):
+    """Create the explicit owner used by output lifecycle tests."""
+    platform = LayerShellPlatform(host, controller)
+    owner = SurfaceLifecycleOwner(
+        platform,
+        output_binding=platform,
+        timer_parent=qapp,
+        rebuild_surface=rebuild,
+    )
+    assert owner.prepare().succeeded
+    return owner, platform
 
-    platform.output_removed(_output("DP-1"), (), None)
+
+def test_layer_shell_ignores_vanishing_output_that_is_not_active(qapp) -> None:
+    host = _FakeHost()
+    owner, _platform = _make_lifecycle_owner(
+        host, _FakeController(available=True), qapp, lambda _output: SurfaceResult.applied()
+    )
+    active = _output("HDMI-A-1")
+    assert owner.activate(active).succeeded
+
+    owner.output_removed(_output("DP-1"), None)
 
     assert host.lifecycle == []
 
 
-def test_layer_shell_rebuilds_on_returning_output_after_release() -> None:
+def test_layer_shell_rebuilds_on_returning_output_after_release(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
-    active = _output("HDMI-A-1")
     restored: list[Output] = []
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
-    platform.output_removed(active, (), None)
-    platform._resurface_timer.setInterval(0)
-    platform.output_added((active,), None)
-    platform._resurface_timer.timeout.emit()
+
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
+    active = _output("HDMI-A-1")
+    assert owner.activate(active).succeeded
+    owner.output_removed(active, None)
+    owner.output_added(active)
+    assert owner.retry_pending().succeeded
 
     assert host.lifecycle == ["hide", "destroy"]
     assert restored == [active]
 
 
-def test_layer_shell_configured_output_wins_when_outputs_return() -> None:
+def test_lifecycle_owner_accepts_the_output_selected_by_the_application(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
+    restored: list[Output] = []
+
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
     active = _output("HDMI-A-1")
     wanted = _output("DP-2", 5120)
-    other = _output("HDMI-A-2")
-    restored: list[Output] = []
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
-    platform.output_removed(active, (), None)
-    platform._resurface_timer.setInterval(0)
-    platform.output_added((other, wanted), "DP-2")
-    platform._resurface_timer.timeout.emit()
+    assert owner.activate(active).succeeded
+    owner.output_removed(active, None)
+    owner.output_added(wanted)
+    assert owner.retry_pending().succeeded
 
     assert restored == [wanted]
 
 
-def test_layer_shell_falls_back_to_output_still_connected() -> None:
+def test_layer_shell_falls_back_to_output_still_connected(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
+    restored: list[Output] = []
+
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
     lost = _output("DP-2")
     live = _output("HDMI-A-1")
-    restored: list[Output] = []
-    platform.set_active_output(lost)
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
-    platform.output_removed(lost, (live,), None)
-    platform._resurface_timer.timeout.emit()
+    assert owner.activate(lost).succeeded
+    owner.output_removed(lost, live)
+    assert owner.retry_pending().succeeded
 
     assert restored == [live]
 
 
-def test_qt_window_output_events_are_explicitly_ignored() -> None:
-    platform = QtWindowPlatform(_FakeHost())
-    platform.output_removed(_output("DP-1"), (), None)
-    platform.output_added((_output("DP-1"),), "DP-1")
+def test_qt_window_factory_has_no_output_binding_port() -> None:
+    platform = DefaultOverlayPlatformFactory(_FakeController(False), platform_name="offscreen")(_FakeHost())
+
+    assert platform.output_binding is None
 
 
-def test_the_blur_object_is_released_before_its_surface_is_destroyed() -> None:
-    # The bridge keys the compositor-side effect on the wl_surface. A rebuilt
-    # surface gets a new address, so one left behind can never be found again and
-    # leaks for the life of the process — once per output change.
+def test_the_blur_object_is_released_before_its_surface_is_destroyed(qapp) -> None:
     host = _FakeHost()
     controller = _FakeController(available=True, blur_available=True)
-    platform = LayerShellPlatform(host, controller)
+    owner, _platform = _make_lifecycle_owner(
+        host, controller, qapp, lambda _output: SurfaceResult.applied()
+    )
     active = _output("HDMI-A-1")
-    platform.set_active_output(active)
+    assert owner.activate(active).succeeded
 
-    platform.output_removed(active, (), None)
+    owner.output_removed(active, None)
 
     cleared = [call for call in controller.calls if call[0] == "clear_blur"]
     assert cleared, f"the surface was destroyed with its effect still registered: {controller.calls}"
     assert host.lifecycle.index("destroy") > 0
 
 
-def test_moving_to_another_output_rebuilds_the_surface() -> None:
-    # A layer surface binds its output when it is created, so a drag released on
-    # another monitor must destroy it and build a new one there. Recording the
-    # output alone leaves the panel drawn on the output it was dragged away from.
+def test_moving_to_another_output_rebuilds_the_surface(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
     restored: list[Output] = []
-    platform.set_active_output(_output("HDMI-A-1"))
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
 
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
+    active = _output("HDMI-A-1")
     target = _output("DP-1", 2560)
-    result = platform.move_to_output(target)
+    assert owner.activate(active).succeeded
+    result = owner.rebind(target)
 
     assert result.succeeded
     assert host.lifecycle == ["hide", "destroy"]
     assert restored == [target]
 
 
-def test_a_returning_output_does_not_rebuild_a_closed_overlay() -> None:
-    # The rebuild is deferred by a timer, so an output can come back after the
-    # overlay is gone. Calling the handler then reaches a deleted widget, which is
-    # how this project has produced segfaults before.
+def test_a_returning_output_does_not_rebuild_a_closed_overlay(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
-    active = _output("HDMI-A-1")
     restored: list[Output] = []
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
-    platform.output_removed(active, (), None)
-    platform.output_added((active,), None)
 
-    host.alive = False  # the overlay closed while the rebuild was pending
-    platform._resurface_timer.timeout.emit()
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
+    active = _output("HDMI-A-1")
+    assert owner.activate(active).succeeded
+    owner.output_removed(active, None)
+    owner.output_added(active)
+    assert owner.close().succeeded
+    assert not owner.retry_pending().succeeded
 
     assert restored == []
+    assert owner.state is SurfaceState.CLOSED
 
 
-def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed() -> None:
-    # Two outputs going away in quick succession: the first removal schedules a
-    # rebuild on the survivor, and the survivor disappears inside the delay. The
-    # scheduled rebuild then finds nothing to build on, and without a record that
-    # one is still owed the overlay never comes back. Reported in review on #19.
+def test_a_second_output_vanishing_before_the_rebuild_leaves_one_owed(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
+    restored: list[Output] = []
+
+    def rebuild(output: Output) -> SurfaceResult:
+        restored.append(output)
+        return SurfaceResult.applied()
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
     active = _output("HDMI-A-1")
     survivor = _output("DP-1")
-    restored: list[Output] = []
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
+    assert owner.activate(active).succeeded
+    owner.output_removed(active, survivor)
+    owner.output_removed(survivor, None)
+    assert not owner.retry_pending().succeeded
+    assert restored == []
 
-    platform.output_removed(active, (survivor,), None)   # schedules a rebuild on DP-1
-    platform.output_removed(survivor, (), None)          # DP-1 goes too, before the timer
-    platform._resurface_timer.timeout.emit()             # the scheduled rebuild runs
-
-    assert restored == [], "rebuilt on an output that is gone"
-
-    platform.output_added((active,), None)               # something comes back
-    platform._resurface_timer.timeout.emit()
-
-    assert restored == [active], "nothing remembered that a rebuild was owed"
+    owner.output_added(active)
+    assert owner.retry_pending().succeeded
+    assert restored == [active]
 
 
-def test_a_returning_output_that_cannot_be_rebuilt_stays_owed() -> None:
-    # Activation can fail on the returning output. Retiring the pending rebuild
-    # then leaves the overlay hidden with nothing that will try again.
+def test_a_returning_output_that_cannot_be_rebuilt_stays_owed(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
+    should_succeed = False
+
+    def rebuild(_output: Output) -> SurfaceResult:
+        if should_succeed:
+            return SurfaceResult.applied()
+        return SurfaceResult.rejected("surface was not ready")
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
     active = _output("HDMI-A-1")
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda output: False)  # nothing was rebuilt
+    assert owner.activate(active).succeeded
+    owner.output_removed(active, None)
+    owner.output_added(active)
+    assert not owner.retry_pending().succeeded
+    assert owner.pending_output == active
 
-    platform.output_removed(active, (), None)
-    platform.output_added((active,), None)
-    platform._resurface_timer.timeout.emit()
-
-    assert platform._pending_resurface is True
-
-    rebuilt: list[Output] = []
-    platform.set_output_handler(lambda output: bool(rebuilt.append(output)) or True)
-    platform.output_added((active,), None)
-    platform._resurface_timer.timeout.emit()
-
-    assert rebuilt == [active]
-    assert platform._pending_resurface is False
+    should_succeed = True
+    owner.output_added(active)
+    assert owner.retry_pending().succeeded
+    assert owner.pending_output is None
 
 
-def test_the_blur_object_is_released_even_when_blur_arrived_after_startup() -> None:
-    # The release consulted a construction-time snapshot while the capability is a
-    # live probe by contract: a compositor that gained the blur protocol after
-    # startup had its effect object destroyed with the surface it was keyed on, and
-    # a compositor that withdrew it would refuse the release for the same reason.
+def test_the_blur_object_is_released_even_when_blur_arrived_after_startup(qapp) -> None:
     host = _FakeHost()
     controller = _FakeController(available=True, blur_available=False)
-    platform = LayerShellPlatform(host, controller)
+    owner, _platform = _make_lifecycle_owner(
+        host, controller, qapp, lambda _output: SurfaceResult.applied()
+    )
     active = _output("HDMI-A-1")
-    platform.set_active_output(active)
+    assert owner.activate(active).succeeded
     controller.blur_available = True
 
-    platform.output_removed(active, (), None)
+    owner.output_removed(active, None)
 
     assert [call for call in controller.calls if call[0] == "clear_blur"], (
         f"the effect outlived the surface it was keyed on: {controller.calls}"
     )
 
 
-def test_a_failed_output_move_stays_owed_so_a_later_event_retries() -> None:
-    # move_to_output clears the debt and records the target before destroying the
-    # old surface. When the rebuild then failed, nothing was owed and the active
-    # output already matched, so the next output event returned early and the
-    # overlay stayed hidden for the rest of the session.
+def test_a_failed_output_move_stays_owed_so_a_later_event_retries(qapp) -> None:
     host = _FakeHost()
-    platform = LayerShellPlatform(host, _FakeController(available=True))
+    should_succeed = False
+
+    def rebuild(_output: Output) -> SurfaceResult:
+        if should_succeed:
+            return SurfaceResult.applied()
+        return SurfaceResult.rejected("rebuild refused")
+
+    owner, _platform = _make_lifecycle_owner(host, _FakeController(available=True), qapp, rebuild)
     active = _output("HDMI-A-1")
     target = _output("DP-1")
-    platform.set_active_output(active)
-    platform.set_output_handler(lambda _output: False)
-
-    result = platform.move_to_output(target)
+    assert owner.activate(active).succeeded
+    result = owner.rebind(target)
 
     assert not result.succeeded
-    assert host.lifecycle == ["hide", "destroy"], "the old surface is already gone"
+    assert owner.pending_output == target
+    assert host.lifecycle == ["hide", "destroy"]
 
-    restored: list[Output] = []
-    platform.set_output_handler(lambda output: bool(restored.append(output)) or True)
-    platform._resurface_timer.setInterval(0)
-    platform.output_added((active, target), None)
-    platform._resurface_timer.timeout.emit()
-
-    assert restored, "a destroyed surface was never rebuilt"
+    should_succeed = True
+    owner.output_added(target)
+    assert owner.retry_pending().succeeded
 
 
 def test_a_wayland_session_reports_that_window_opacity_does_nothing() -> None:
@@ -614,7 +722,7 @@ def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None
 
     settings = DefaultOverlayPlatformFactory(controller, platform_name="xcb")(_FakeHost())
 
-    assert isinstance(settings, QtWindowPlatform)
+    assert isinstance(settings.surface, QtWindowPlatform)
     assert settings.capabilities.window_opacity is True
 
 
@@ -629,8 +737,8 @@ def test_layer_shell_registry_selects_niri_from_its_socket() -> None:
         controller, platform_name="wayland", current_desktop="KDE", niri_socket_present=True
     )(host)
 
-    assert isinstance(platform, LayerShellPlatform)
-    _assert_measures_global_pointer(platform, controller)
+    assert isinstance(platform.surface, LayerShellPlatform)
+    _assert_measures_global_pointer(platform.drag, controller)
 
 
 def test_an_empty_drag_provider_tuple_is_not_a_missing_one() -> None:
@@ -644,8 +752,9 @@ def test_an_empty_drag_provider_tuple_is_not_a_missing_one() -> None:
     # the global reading instead.
     platform = provider.select("wayland", "niri", _MovingHost())
 
-    assert isinstance(platform, LayerShellPlatform)
-    _assert_measures_local_pointer(platform, controller)
+    assert platform is not None
+    assert isinstance(platform.surface, LayerShellPlatform)
+    _assert_measures_local_pointer(platform.drag, controller)
 
 
 def test_a_deleted_widget_reports_no_handle_rather_than_raising() -> None:

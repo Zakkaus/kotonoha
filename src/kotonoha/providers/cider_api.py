@@ -74,6 +74,7 @@ class CiderApiProvider:
         self._attempted_track_ref: str | None = None
         self._observation: PlaybackObservation | None = None
         self._document: LyricsDocument | None = None
+        self._last_log_publish_key: tuple[object, ...] | None = None
 
     async def start(self) -> None:
         """Start the owned HTTP session and low-frequency polling task."""
@@ -150,7 +151,18 @@ class CiderApiProvider:
             await self._cancel_lyrics()
             self._document = None
             self._attempted_track_ref = None
+            self._last_log_publish_key = None
             self._ownership.clear_client(CIDER_API_CLIENT_ID)
+            logger.info(
+                "Cider playback changed: generation=%d track=%r / %r ref=%r "
+                "status=%s position=%s",
+                self._generation,
+                observation.track.title if observation.track is not None else "",
+                observation.track.artist if observation.track is not None else "",
+                track_ref,
+                observation.status,
+                _position_text(observation.position_s),
+            )
         self._observation = observation
         if observation.track is not None and self._attempted_track_ref != track_ref:
             self._attempted_track_ref = track_ref
@@ -189,8 +201,32 @@ class CiderApiProvider:
             return
         current_track = self._observation.track
         if current_track is None or current_track.track_ref != track.track_ref:
+            logger.debug(
+                "Cider lyrics response discarded: generation=%d track_ref=%r is no longer current",
+                generation,
+                track.track_ref,
+            )
             return
         self._document = document
+        if document is None:
+            logger.info(
+                "Cider lyrics finished: generation=%d track=%r / %r provider=none lines=0",
+                generation,
+                track.title,
+                track.artist,
+            )
+        else:
+            logger.info(
+                "Cider lyrics resolved: generation=%d track=%r / %r provider=%r "
+                "provider_name=%r timing=%s lines=%d",
+                generation,
+                track.title,
+                track.artist,
+                document.source_id,
+                document.source_name,
+                document.timing,
+                len(document.lines),
+            )
         self._publish(
             self._observation,
             document,
@@ -212,7 +248,26 @@ class CiderApiProvider:
             observation.position_s,
             observation.status is PlaybackStatus.PLAYING,
         )
-        if self._ownership.accepts(CIDER_API_CLIENT_ID):
+        accepted = self._ownership.accepts(CIDER_API_CLIENT_ID)
+        publish_key = (
+            observation.track.track_ref if observation.track is not None else None,
+            accepted,
+            self._ownership.mode,
+            document.source_id if document is not None else None,
+            document.source_name if document is not None else None,
+        )
+        if publish_key != self._last_log_publish_key:
+            self._last_log_publish_key = publish_key
+            logger.debug(
+                "Cider candidate publication: track_ref=%r provider=%r provider_name=%r "
+                "accepted=%s owner=%s",
+                publish_key[0],
+                publish_key[3],
+                publish_key[4],
+                accepted,
+                self._ownership.mode,
+            )
+        if accepted:
             self._display.publish_resolution(observation, document, resolution)
 
     async def _cancel_lyrics(self) -> None:
@@ -252,6 +307,7 @@ class CiderApiProvider:
         self._document = None
         self._observation = None
         self._attempted_track_ref = None
+        self._last_log_publish_key = None
         self._ownership.clear_client(CIDER_API_CLIENT_ID)
         if publish and self._ownership.accepts(CIDER_API_CLIENT_ID):
             empty_observation = PlaybackObservation(
@@ -264,6 +320,11 @@ class CiderApiProvider:
                 observed_at=time.monotonic(),
             )
             self._display.publish(empty_observation, None)
+
+
+def _position_text(position: float | None) -> str:
+    """Format an optional Cider playback position for logs."""
+    return "-" if position is None else f"{position:.3f}s"
 
 
 __all__ = ["CIDER_API_CLIENT_ID", "CIDER_API_POLL_INTERVAL", "CiderApiPort", "CiderApiProvider"]

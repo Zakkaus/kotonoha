@@ -9,7 +9,18 @@ from PyQt6.QtGui import QGuiApplication
 from .detect import current_desktop, niri_socket, session_desktop
 from .layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from .native import LayerShellController, default_package_dir
-from .overlay_contracts import LayerShellBridge, OverlayDragStrategy, OverlayPlatform, WindowHost
+from .overlay_contracts import (
+    BlurPort,
+    DragPort,
+    InputRegionPort,
+    LayerShellBridge,
+    OutputBindingPort,
+    OverlayPlatform,
+    OverlayPlatformAdapters,
+    PlacementPort,
+    SurfacePort,
+    WindowHost,
+)
 from .qt_window import QtWindowPlatform
 
 
@@ -19,7 +30,7 @@ class _Provider(Protocol):
 class _LayerShellDragProvider(Protocol):
     """Create a strategy when a Layer Shell compositor is recognized."""
 
-    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None: ...
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> DragPort | None: ...
 
 
 class _NiriLayerShellDragProvider:
@@ -33,7 +44,7 @@ class _NiriLayerShellDragProvider:
         # depend on whoever happened to launch the test.
         self._socket_present = socket_present
 
-    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> DragPort | None:
         desktops = {part.strip().lower() for part in desktop.split(":")}
         if "niri" not in desktops and not self._socket_present:
             return None
@@ -43,7 +54,7 @@ class _NiriLayerShellDragProvider:
 class _DefaultLayerShellDragProvider:
     """Provide the existing local-anchor model for unrecognized compositors."""
 
-    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> OverlayDragStrategy | None:
+    def create(self, desktop: str, host: WindowHost, controller: LayerShellBridge) -> DragPort | None:
         del desktop
         return LayerShellAnchorDragStrategy(host, controller)
 
@@ -85,8 +96,24 @@ class _LayerShellProvider:
         for provider in self._drag_providers:
             strategy = provider.create(desktop, host, self._controller)
             if strategy is not None:
-                return LayerShellPlatform(host, self._controller, strategy)
-        return LayerShellPlatform(host, self._controller)
+                adapter = LayerShellPlatform(host, self._controller, strategy)
+                return _compose_adapter(
+                    adapter,
+                    input_region=adapter,
+                    blur=adapter,
+                    placement=adapter,
+                    output_binding=adapter,
+                    drag=adapter,
+                )
+        adapter = LayerShellPlatform(host, self._controller)
+        return _compose_adapter(
+            adapter,
+            input_region=adapter,
+            blur=adapter,
+            placement=adapter,
+            output_binding=adapter,
+            drag=adapter,
+        )
 
 
 class _X11Provider:
@@ -97,8 +124,16 @@ class _X11Provider:
         del desktop
         if platform_name != "xcb":
             return None
-        return QtWindowPlatform(
+        adapter = QtWindowPlatform(
             host, reason="X11 has no Layer Shell overlay capability.", blur=self._controller
+        )
+        return _compose_adapter(
+            adapter,
+            input_region=adapter,
+            blur=adapter if adapter.capabilities.blur else None,
+            placement=adapter if adapter.capabilities.client_positioning else None,
+            output_binding=None,
+            drag=adapter,
         )
 
 
@@ -112,7 +147,7 @@ class _WaylandFallbackProvider:
             return None
         # Still hand over the bridge: a Wayland compositor without Layer Shell can
         # speak a blur protocol, which is exactly the Mutter case.
-        return QtWindowPlatform(
+        adapter = QtWindowPlatform(
             host,
             reason="Wayland compositor does not provide Layer Shell.",
             blur=self._controller,
@@ -122,6 +157,14 @@ class _WaylandFallbackProvider:
             # Nor a way to set the window's opacity.
             window_opacity=False,
         )
+        return _compose_adapter(
+            adapter,
+            input_region=adapter,
+            blur=adapter if adapter.capabilities.blur else None,
+            placement=adapter if adapter.capabilities.client_positioning else None,
+            output_binding=None,
+            drag=adapter,
+        )
 
 
 class _GenericFallbackProvider:
@@ -130,9 +173,37 @@ class _GenericFallbackProvider:
 
     def select(self, platform_name: str, desktop: str, host: WindowHost) -> OverlayPlatform:
         del platform_name, desktop
-        return QtWindowPlatform(
+        adapter = QtWindowPlatform(
             host, reason="Layer Shell is unavailable on this platform.", blur=self._controller
         )
+        return _compose_adapter(
+            adapter,
+            input_region=adapter,
+            blur=adapter if adapter.capabilities.blur else None,
+            placement=adapter if adapter.capabilities.client_positioning else None,
+            output_binding=None,
+            drag=adapter,
+        )
+
+
+def _compose_adapter(
+    surface: SurfacePort,
+    *,
+    input_region: InputRegionPort | None,
+    blur: BlurPort | None,
+    placement: PlacementPort | None,
+    output_binding: OutputBindingPort | None,
+    drag: DragPort,
+) -> OverlayPlatformAdapters:
+    """Compose independent capability ports for one selected surface adapter."""
+    return OverlayPlatformAdapters(
+        surface=surface,
+        input_region=input_region,
+        blur=blur,
+        placement=placement,
+        output_binding=output_binding,
+        drag=drag,
+    )
 
 
 class DefaultOverlayPlatformFactory:
@@ -147,23 +218,30 @@ class DefaultOverlayPlatformFactory:
         providers: tuple[_Provider, ...] | None = None,
         niri_socket_present: bool | None = None,
     ) -> None:
-        self._controller = controller or LayerShellController(
-            default_package_dir(),
-            platform_name or QGuiApplication.platformName(),
-            current_desktop or self._current_desktop(),
-        )
+        if controller is None:
+            selected_platform = platform_name if platform_name is not None else QGuiApplication.platformName()
+            selected_desktop = current_desktop if current_desktop is not None else self._current_desktop()
+            self._controller = LayerShellController(default_package_dir(), selected_platform, selected_desktop)
+        else:
+            self._controller = controller
         self._platform_name = platform_name
         self._current_desktop_value = current_desktop
-        self._providers = providers or (
-            # The session is read once here, where the platform name and desktop
-            # already come from, rather than from inside provider selection.
-            _LayerShellProvider(
-                self._controller,
-                niri_socket_present=bool(niri_socket()) if niri_socket_present is None else niri_socket_present,
-            ),
-            _X11Provider(self._controller),
-            _WaylandFallbackProvider(self._controller),
-            _GenericFallbackProvider(self._controller),
+        self._providers = (
+            providers
+            if providers is not None
+            else (
+                # The session is read once here, where the platform name and desktop
+                # already come from, rather than from inside provider selection.
+                _LayerShellProvider(
+                    self._controller,
+                    niri_socket_present=bool(niri_socket())
+                    if niri_socket_present is None
+                    else niri_socket_present,
+                ),
+                _X11Provider(self._controller),
+                _WaylandFallbackProvider(self._controller),
+                _GenericFallbackProvider(self._controller),
+            )
         )
 
     @property
@@ -172,8 +250,10 @@ class DefaultOverlayPlatformFactory:
         return self._controller
 
     def __call__(self, host: WindowHost) -> OverlayPlatform:
-        platform_name = self._platform_name or QGuiApplication.platformName()
-        desktop = self._current_desktop_value or self._current_desktop()
+        platform_name = (
+            self._platform_name if self._platform_name is not None else QGuiApplication.platformName()
+        )
+        desktop = self._current_desktop_value if self._current_desktop_value is not None else self._current_desktop()
         for provider in self._providers:
             platform = provider.select(platform_name, desktop, host)
             if platform is not None:

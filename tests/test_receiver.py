@@ -108,7 +108,11 @@ async def test_clock_message_updates_the_canonical_frame():
     finally:
         await client.close()
 
-    updated = next(frame for frame in reversed(frames) if frame.current_time == 13.0)
+    updated = next(
+        frame
+        for frame in reversed(frames)
+        if frame.current_time is not None and frame.current_time == pytest.approx(13.0, abs=0.01)
+    )
     assert updated.state is DisplayState.LYRICS_AVAILABLE
     assert updated.is_playing is False
     assert state.frame.state is DisplayState.NO_TRACK
@@ -148,7 +152,7 @@ def test_clock_for_another_track_is_rejected_without_consuming_sequence():
     assert receiver.ingest(json.dumps(wrong_track), client_id=22) is False
     assert receiver.ingest(json.dumps({**CLOCK, "sequence": 2}), client_id=22) is True
 
-    assert state.frame.current_time == 12.5
+    assert state.frame.current_time == pytest.approx(12.5, abs=0.01)
     assert state.frame.is_playing is True
 
 

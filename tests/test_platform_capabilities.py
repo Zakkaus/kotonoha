@@ -6,6 +6,7 @@ import pytest
 
 from kotonoha.platform import native
 from kotonoha.platform.native import LayerShellController
+from kotonoha.platform.overlay_contracts import SurfaceResult, SurfaceResultStatus
 
 
 class _FakeLib:
@@ -66,3 +67,21 @@ def test_capabilities_match_missing_library(monkeypatch: pytest.MonkeyPatch) -> 
         input_region_reason=controller.disabled_reason,
         output_rebinding_reason=controller.disabled_reason,
     )
+
+
+def test_surface_result_keeps_status_reason_and_retryability_consistent() -> None:
+    unsupported = SurfaceResult.not_supported("bridge is unavailable")
+    retryable = SurfaceResult.failed("surface is busy", retryable=True)
+
+    assert unsupported.status is SurfaceResultStatus.NOT_SUPPORTED
+    assert unsupported.reason == "bridge is unavailable"
+    assert unsupported.retryable is False
+    assert retryable.status is SurfaceResultStatus.FAILED
+    assert retryable.retryable is True
+
+    with pytest.raises(ValueError):
+        SurfaceResult(SurfaceResultStatus.APPLIED, reason="unexpected")
+    with pytest.raises(ValueError):
+        SurfaceResult(SurfaceResultStatus.NOT_SUPPORTED)
+    with pytest.raises(ValueError):
+        SurfaceResult(SurfaceResultStatus.NOT_SUPPORTED, reason="no retry", retryable=True)

@@ -7,9 +7,9 @@ from typing import Protocol
 
 from PyQt6.QtCore import QPoint, QRect
 
-from .config import Config
-from .display.layout import FontFitPolicy
-from .platform.overlay_contracts import Output, WindowRectangle
+from ..config import Config
+from ..display.layout import FontFitPolicy
+from ..platform.overlay_contracts import Output, WindowRectangle
 
 
 class ScreenLike(Protocol):

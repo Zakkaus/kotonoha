@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Literal, TypeAlias
 
@@ -10,6 +11,8 @@ from .match import Candidate, MatchConfidence, TrackMetadata, evaluate_match
 from .models import LyricsDocument
 
 SourceClientId: TypeAlias = int | str
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -61,24 +64,26 @@ class SourceOwnershipCoordinator:
         return self._mode == "live" and retained is not None and self._has_lyrics(retained)
 
     @property
+    def mode(self) -> Literal["standalone", "external", "live"]:
+        """Return the current display ownership mode for diagnostics and adapters."""
+        return self._mode
+
+    @property
     def revision(self) -> int:
         """Return the candidate revision used for late-source decisions."""
         return self._sequence
 
     def select_external(self) -> None:
         """Reserve display ownership for the local player workflow."""
-        self._mode = "external"
-        self._bound_client_id = None
+        self._set_mode("external", None)
 
     def select_live(self, client_id: SourceClientId) -> None:
         """Bind display ownership to one live source client."""
-        self._mode = "live"
-        self._bound_client_id = client_id
+        self._set_mode("live", client_id)
 
     def select_standalone(self) -> None:
         """Release source ownership so an adapter may publish directly."""
-        self._mode = "standalone"
-        self._bound_client_id = None
+        self._set_mode("standalone", None)
 
     def observe(
         self,
@@ -87,11 +92,27 @@ class SourceOwnershipCoordinator:
         document: LyricsDocument | None,
     ) -> None:
         """Retain one normalized source snapshot for matching and arbitration."""
+        previous = self._candidates.get(client_id)
         self._sequence += 1
+        candidate = LiveSourceCandidate(client_id, observation, document)
         self._candidates[client_id] = (
             self._sequence,
-            LiveSourceCandidate(client_id, observation, document),
+            candidate,
         )
+        if previous is None or self._candidate_log_key(previous[1]) != self._candidate_log_key(candidate):
+            track = observation.track
+            logger.debug(
+                "lyrics live candidate updated: client=%r track=%r / %r ref=%r "
+                "lyrics=%s provider=%r provider_name=%r lines=%d",
+                client_id,
+                track.title if track is not None else "",
+                track.artist if track is not None else "",
+                track.track_ref if track is not None else None,
+                document is not None and bool(document.lines),
+                document.source_id if document is not None else None,
+                document.source_name if document is not None else None,
+                len(document.lines) if document is not None else 0,
+            )
 
     def observe_clock(
         self,
@@ -206,14 +227,55 @@ class SourceOwnershipCoordinator:
     def clear_client(self, client_id: SourceClientId) -> None:
         """Forget one source's facts without changing the current ownership mode."""
         self._timings.pop(client_id, None)
-        if self._candidates.pop(client_id, None) is not None:
+        retained = self._candidates.pop(client_id, None)
+        if retained is not None:
             self._sequence += 1
+            candidate = retained[1]
+            track = candidate.observation.track
+            logger.info(
+                "lyrics live candidate removed: client=%r track=%r / %r ref=%r provider=%r",
+                client_id,
+                track.title if track is not None else "",
+                track.artist if track is not None else "",
+                track.track_ref if track is not None else None,
+                candidate.document.source_id if candidate.document is not None else None,
+            )
 
     def drop_client(self, client_id: SourceClientId) -> None:
         """Forget a disconnected source and release a binding to it."""
         self.clear_client(client_id)
         if self._bound_client_id == client_id:
             self.select_external()
+
+    def _set_mode(
+        self,
+        mode: Literal["standalone", "external", "live"],
+        client_id: SourceClientId | None,
+    ) -> None:
+        previous_mode = self._mode
+        previous_client = self._bound_client_id
+        self._mode = mode
+        self._bound_client_id = client_id
+        if previous_mode == mode and previous_client == client_id:
+            return
+        previous = previous_mode if previous_client is None else f"{previous_mode}:{previous_client!r}"
+        current = mode if client_id is None else f"{mode}:{client_id!r}"
+        logger.info("lyrics display ownership changed: %s -> %s", previous, current)
+
+    @staticmethod
+    def _candidate_log_key(candidate: LiveSourceCandidate) -> tuple[object, ...]:
+        """Return candidate facts whose change is useful in operational logs."""
+        track = candidate.observation.track
+        document = candidate.document
+        return (
+            track.track_ref if track is not None else None,
+            track.title if track is not None else "",
+            track.artist if track is not None else "",
+            document.source_id if document is not None else None,
+            document.source_name if document is not None else None,
+            len(document.lines) if document is not None else 0,
+            document.timing if document is not None else None,
+        )
 
 
 __all__ = [

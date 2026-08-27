@@ -8,6 +8,8 @@ import logging
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..display.coordinator import DisplayCoordinator
 from ..display.models import ResolutionState
+from ..lyrics.match import MatchConfidence
+from ..lyrics.models import LyricsDocument
 from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..lyrics.sources import LyricsSourceKind
 from ..lyrics.workflow import DocumentResolution, NoLyricsResolution, ResolverPort
@@ -118,6 +120,11 @@ class MprisLyricsCoordinator:
     def on_playback_sample(self, sample: PlaybackSample) -> None:
         """Apply one normalized playback sample to the active lyric timeline."""
         current = self._current_commit
+        if sample.transitioning or current is None:
+            # Claim before display binding or live-source fallback can publish.
+            # MPRIS emits samples while metadata is settling, and the first one
+            # can arrive before the stabilizer emits its commit callback.
+            self._ownership.select_external()
         self._display_binding.observe_sample(sample, current)
         if not sample.transitioning:
             self._ensure_content_owner()
@@ -143,7 +150,6 @@ class MprisLyricsCoordinator:
         self._reset()
 
     async def _load_song(self, commit: TrackCommit) -> None:
-        self._ownership.select_external()
         resolving_observation = self._resolution.resolving_observation(
             commit,
             self._display_binding.last_observation,
@@ -151,16 +157,27 @@ class MprisLyricsCoordinator:
         self._display_binding.publish_resolution(resolving_observation, ResolutionState.RESOLVING)
         result = await self._resolution.resolve(commit, self._display_binding.last_observation)
         if self._current_commit != commit:
+            active_generation = self._current_commit.generation if self._current_commit is not None else None
+            logger.debug(
+                "lyrics resolution discarded: generation=%d active_generation=%s track=%r / %r",
+                commit.generation,
+                active_generation,
+                commit.info.title,
+                commit.info.artist,
+            )
             return
         decision = result.decision
         if isinstance(decision, NoLyricsResolution):
             self._content_owner = "none"
             if not self._select_late_live_source():
                 logger.info(
-                    "MPRIS %r / %r -> no lyrics: %s",
+                    "lyrics resolution finished: generation=%d track=%r / %r "
+                    "selected=none reason=%s unreachable=%s",
+                    commit.generation,
                     commit.info.title,
                     commit.info.artist,
                     decision.reason,
+                    ",".join(sorted(decision.unreachable_sources)) or "-",
                 )
                 self._display_binding.publish_resolution(resolving_observation, ResolutionState.NOT_FOUND)
             return
@@ -170,9 +187,24 @@ class MprisLyricsCoordinator:
             match = self._ownership.current_match(result.info.metadata())
             if match is None:
                 self._content_owner = "none"
+                logger.info(
+                    "lyrics resolution finished: generation=%d track=%r / %r "
+                    "selected=none reason=live-candidate-no-longer-matches",
+                    commit.generation,
+                    commit.info.title,
+                    commit.info.artist,
+                )
                 self._display_binding.publish_resolution(resolving_observation, ResolutionState.NOT_FOUND)
                 return
             self._ownership.select_live(match.client_id)
+            self._log_document_selection(
+                commit,
+                decision.document,
+                source_slot=decision.source_id,
+                source_kind=decision.source_kind,
+                confidence=decision.confidence,
+                duration_s=decision.duration_s,
+            )
             self._display_binding.publish_document(match.document, result.info, commit=commit)
             return
         if isinstance(decision, DocumentResolution) and self._select_late_live_source(
@@ -190,12 +222,13 @@ class MprisLyricsCoordinator:
             decision.duration_s,
             latest.position_s if latest is not None else None,
         )
-        logger.info(
-            "MPRIS %r / %r -> %d %s lines",
-            commit.info.title,
-            commit.info.artist,
-            len(decision.document.lines),
-            decision.source_id,
+        self._log_document_selection(
+            commit,
+            decision.document,
+            source_slot=decision.source_id,
+            source_kind=decision.source_kind,
+            confidence=decision.confidence,
+            duration_s=decision.duration_s,
         )
         self._display_binding.publish_document(decision.document, result.info, commit=commit)
 
@@ -211,9 +244,24 @@ class MprisLyricsCoordinator:
             )
         if self._load_task is not None and not self._load_task.done():
             self._load_task.cancel()
+        # Claim the display synchronously with the commit callback. The resolver
+        # task is intentionally asynchronous; leaving this until _load_song starts
+        # gives Cider or an external adapter one event-loop turn to publish over the
+        # newly committed MPRIS track.
+        self._ownership.select_external()
         self._display_binding.observe_commit(commit)
         self._current_commit = commit
         self._content_owner = "resolving"
+        logger.info(
+            "lyrics resolution started: generation=%d player=%r track=%r / %r "
+            "id=%r sources=%s",
+            commit.generation,
+            commit.player_name,
+            commit.info.title,
+            commit.info.artist,
+            commit.info.track_id,
+            ",".join(self._resolution.lyrics_sources) or "-",
+        )
         task = asyncio.create_task(self._load_song(commit), name="kotonoha-mpris-lyrics")
         self._load_task = task
         self._load_tasks.add(task)
@@ -270,8 +318,53 @@ class MprisLyricsCoordinator:
             return False
         self._ownership.select_live(match.client_id)
         self._content_owner = "live"
+        logger.info(
+            "lyrics source switched during playback: generation=%d previous=%r "
+            "slot=%r client=%r",
+            current.generation,
+            before_source if before_source is not None else "none",
+            self._resolution.live_source_id,
+            match.client_id,
+        )
+        self._log_document_selection(
+            current,
+            match.document,
+            source_slot=self._resolution.live_source_id,
+            source_kind=LyricsSourceKind.LIVE,
+            confidence=match.confidence,
+            duration_s=match.document.duration_s,
+        )
         self._display_binding.publish_document(match.document, current.info, commit=current)
         return True
+
+    @staticmethod
+    def _log_document_selection(
+        commit: TrackCommit,
+        document: LyricsDocument,
+        *,
+        source_slot: str,
+        source_kind: LyricsSourceKind,
+        confidence: MatchConfidence,
+        duration_s: float | None,
+    ) -> None:
+        """Log both the resolver slot and final provider identity for one result."""
+        logger.info(
+            "lyrics selected: generation=%d player=%r track=%r / %r "
+            "slot=%r provider=%r provider_name=%r kind=%s timing=%s lines=%d "
+            "duration=%s confidence=%s",
+            commit.generation,
+            commit.player_name,
+            commit.info.title,
+            commit.info.artist,
+            source_slot,
+            document.source_id,
+            document.source_name,
+            source_kind,
+            document.timing,
+            len(document.lines),
+            "-" if duration_s is None else f"{duration_s:.3f}s",
+            confidence,
+        )
 
     def _reset(self) -> None:
         if self._load_task is not None and not self._load_task.done():

@@ -53,7 +53,7 @@ from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.lyrics.select import build_frame
 from kotonoha.lyrics.titles import clean_title, recover_artist, split_title
 from kotonoha.lyrics.yrc_parser import parse_yrc
-from kotonoha.platform.overlay_contracts import OverlayOperationResult
+from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus
 from kotonoha.providers.mpris_track import lyrics_lookup_reason
 
@@ -204,11 +204,11 @@ def _clock_projection(case: ClockInput) -> ClockOutput:
 
 def _platform_projection(case: PlatformOperationInput) -> PlatformOperationOutput:
     if case.succeeded:
-        result = OverlayOperationResult.success()
+        result = SurfaceResult.applied()
     else:
         if case.reason is None:
             raise ValueError("a failed platform case must have a reason")
-        result = OverlayOperationResult.failure(case.reason)
+        result = SurfaceResult.rejected(case.reason)
     return PlatformOperationOutput(result.succeeded, result.reason)
 
 

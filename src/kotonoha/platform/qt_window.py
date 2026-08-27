@@ -2,17 +2,14 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-
 from .overlay_contracts import (
     _NO_WINDOW_OPACITY,
     DragMode,
+    DragPort,
     DragStartResult,
     LayerShellBridge,
-    Output,
     OverlayCapabilities,
-    OverlayDragStrategy,
-    OverlayOperationResult,
+    SurfaceResult,
     WindowHost,
     WindowPoint,
     WindowPolicy,
@@ -31,25 +28,33 @@ class OrdinaryWindowDragStrategy:
         self._origin: WindowPoint | None = None
         self._window_origin = WindowPoint(0, 0)
 
-    def set_position(self, position: WindowPoint) -> None:
-        self._window_origin = position
+    @property
+    def client_positioning(self) -> bool:
+        """Return whether ordinary-window moves can be persisted on this session."""
+        return self._client_positioning
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
         del global_position
-        current = self._host.window_position() or self._window_origin
+        current = self._host.window_position()
+        if current is None:
+            current = self._window_origin
         self._window_origin = current
         self._origin = local_position
         return DragStartResult(DragMode.MANUAL)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+    def set_position(self, position: WindowPoint) -> None:
+        """Synchronize the drag origin after an ordinary-window move."""
+        self._window_origin = position
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
         del global_position
         if self._origin is None:
-            return OverlayOperationResult.failure("Window drag has not started")
+            return SurfaceResult.rejected("Window drag has not started")
         # move_to already refuses here; the drag path went straight to the host and
         # so reported every update as applied on a compositor that moves nothing.
         # The two paths have to answer the same question the same way.
         if not self._client_positioning:
-            return OverlayOperationResult.failure(_NO_CLIENT_POSITIONING)
+            return SurfaceResult.not_supported(_NO_CLIENT_POSITIONING)
         position = WindowPoint(
             self._window_origin.x + local_position.x - self._origin.x,
             self._window_origin.y + local_position.y - self._origin.y,
@@ -57,13 +62,13 @@ class OrdinaryWindowDragStrategy:
         try:
             self._host.move_window(position)
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Window move failed: {exc}")
+            return SurfaceResult.failed(f"Window move failed: {exc}", retryable=True)
         # The window origin advances; the press point does not. The window follows
         # the pointer, so the pointer's local position re-settles toward where the
         # press landed — advancing that anchor too counts the settling twice and
         # the window snaps back or stalls. Same model as the Layer Shell anchor.
         self._window_origin = position
-        return OverlayOperationResult.success()
+        return SurfaceResult.applied()
 
     def end_drag(self) -> None:
         self._origin = None
@@ -90,12 +95,14 @@ class QtWindowPlatform:
         # Wayland has no client-side window-opacity protocol either, and the same
         # provider knows which session this is.
         self._window_opacity = window_opacity
+        self._surface_released = False
+        self._closed = False
         # Blur is a separate capability from Layer Shell: Mutter offers no
         # layer-shell and does speak ext-background-effect-v1, so hardcoding
         # blur=False here dropped the frosted panel on exactly the compositor the
         # blur work was for. When a bridge is available the answer comes from it.
         self._blur = blur
-        self._drag_strategy: OverlayDragStrategy = OrdinaryWindowDragStrategy(
+        self._drag_strategy: DragPort = OrdinaryWindowDragStrategy(
             host, client_positioning=client_positioning
         )
 
@@ -124,17 +131,29 @@ class QtWindowPlatform:
             window_opacity_reason=None if self._window_opacity else _NO_WINDOW_OPACITY,
         )
 
-    def prepare(self) -> OverlayOperationResult:
+    @property
+    def client_positioning(self) -> bool:
+        """Expose the drag-relevant placement capability through the drag port."""
+        return self._client_positioning
+
+    def prepare(self) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
         try:
             self._host.apply_window_policy(WindowPolicy(recreate_surface=True))
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Window initialization failed: {exc}")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed(f"Window initialization failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
-    def activate(self) -> OverlayOperationResult:
-        return OverlayOperationResult.success()
+    def activate(self) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
+        self._surface_released = False
+        return SurfaceResult.applied()
 
-    def set_input_region(self, region: WindowRectangle | None) -> OverlayOperationResult:
+    def set_input_region(self, region: WindowRectangle | None) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
         try:
             self._host.apply_window_policy(
                 WindowPolicy(
@@ -156,70 +175,82 @@ class QtWindowPlatform:
                 self._host.set_input_mask(region)
             self._host.refresh()
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Input mode update failed: {exc}")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed(f"Input mode update failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
-    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> OverlayOperationResult:
+    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
         # An ordinary window can still carry a compositor blur where the protocol
         # exists — Mutter has no Layer Shell and does speak it — so this is a real
         # operation here, not a permanent failure.
         capabilities = self.capabilities
         if not capabilities.blur or self._blur is None:
-            return OverlayOperationResult.failure(capabilities.blur_reason or "Blur is unavailable.")
+            return SurfaceResult.not_supported(capabilities.blur_reason or "Blur is unavailable.")
         pointer = self._host.native_window_pointer()
         if pointer is None:
-            return OverlayOperationResult.failure("The window handle is unavailable.")
+            return SurfaceResult.failed("The window handle is unavailable.", retryable=True)
         try:
             if region is None:
                 self._blur.clear_blur(pointer)
             else:
                 self._blur.set_blur_region(pointer, region.x, region.y, region.width, region.height, radius)
         except (OSError, RuntimeError):
-            return OverlayOperationResult.failure("Blur update failed.")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed("Blur update failed.", retryable=True)
+        return SurfaceResult.applied()
 
-    def move_to(self, position: WindowPoint) -> OverlayOperationResult:
+    def move_to(self, position: WindowPoint) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
         capabilities = self.capabilities
         if not capabilities.client_positioning:
-            return OverlayOperationResult.failure(
+            return SurfaceResult.not_supported(
                 capabilities.client_positioning_reason or "This window cannot be positioned by the client."
             )
         try:
             self._host.move_window(position)
         except RuntimeError as exc:
-            return OverlayOperationResult.failure(f"Window move failed: {exc}")
-        return OverlayOperationResult.success()
+            return SurfaceResult.failed(f"Window move failed: {exc}", retryable=True)
+        return SurfaceResult.applied()
 
-    def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult:
-        del output
-        return OverlayOperationResult.failure(
-            self.capabilities.output_rebinding_reason or "Output rebinding is unavailable."
-        )
+    def release_surface(self) -> SurfaceResult:
+        """Hide and release the ordinary window before shutdown."""
+        if self._surface_released or not self._host.is_alive():
+            self._surface_released = True
+            return SurfaceResult.applied()
+        try:
+            self._host.clear_input_mask()
+            self._host.hide_window()
+            self._host.destroy_surface()
+        except RuntimeError as exc:
+            self._surface_released = False
+            return SurfaceResult.failed(f"Window surface release failed: {exc}", retryable=True)
+        self._surface_released = True
+        return SurfaceResult.applied()
 
-    def set_output_handler(self, handler: Callable[[Output], bool]) -> None:
-        del handler
-
-    def set_active_output(self, output: Output | None) -> None:
-        del output
-
-    def move_to_output(self, output: Output) -> OverlayOperationResult:
-        # A normal toplevel is not bound to an output, so there is nothing to rebuild.
-        # It was recorded in an attribute nothing initialized and nothing read, which
-        # only made the three siblings above look like they were forgetting something.
-        del output
-        return OverlayOperationResult.success()
-
-    def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None:
-        del output, connected, configured_name
-
-    def output_added(self, connected: tuple[Output, ...], configured_name: str | None) -> None:
-        del connected, configured_name
+    def close(self) -> SurfaceResult:
+        """Release the ordinary window and reject operations after shutdown."""
+        if self._closed:
+            return SurfaceResult.applied()
+        result = self.release_surface()
+        self._drag_strategy.end_drag()
+        if result.succeeded:
+            self._closed = True
+        return result
 
     def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        if self._closed:
+            return DragStartResult(DragMode.UNAVAILABLE, "The ordinary-window adapter is closed.")
         return self._drag_strategy.begin_drag(local_position, global_position)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult:
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+        if self._closed:
+            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
         return self._drag_strategy.update_drag(local_position, global_position)
 
     def end_drag(self) -> None:
         self._drag_strategy.end_drag()
+
+    def set_position(self, position: WindowPoint) -> None:
+        """Synchronize the drag strategy after a committed window move."""
+        self._drag_strategy.set_position(position)

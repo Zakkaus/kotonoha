@@ -6,8 +6,11 @@ and what it asks of the platform — and both need the same scaffolding.
 
 from PyQt6.QtCore import QRect
 
+from kotonoha.overlay import LyricsOverlay as ProductionLyricsOverlay
 from kotonoha.platform.native import LayerShellController
-from kotonoha.platform.overlay_contracts import OverlayOperationResult
+from kotonoha.platform.overlay_contracts import SurfaceResult
+from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
+from kotonoha.state import LyricsState
 
 
 class UnavailableController(LayerShellController):
@@ -31,10 +34,7 @@ class LayerShellStub(LayerShellController):
         return True
 
 def layer_shell_platform(overlay):
-    """Give the overlay the Layer Shell adapter the registry cannot select offscreen."""
-    from kotonoha.platform.layer_shell import LayerShellPlatform
-
-    overlay._platform = LayerShellPlatform(overlay._host, overlay._controller)
+    """Return the Layer Shell surface selected by the test composition root."""
     return overlay._platform
 
 class FakeScreen:
@@ -49,5 +49,17 @@ class FakeScreen:
         return self._geometry
 
 def _ok():
+    return SurfaceResult.applied()
 
-    return OverlayOperationResult.success()
+
+def build_overlay(state: LyricsState, config, controller=None):
+    """Build an overlay through the same factory boundary as production."""
+    selected_controller = controller if controller is not None else UnavailableController()
+    layer_shell = isinstance(selected_controller, LayerShellStub)
+    factory = DefaultOverlayPlatformFactory(
+        selected_controller,
+        platform_name="wayland" if layer_shell else "offscreen",
+        current_desktop="KDE" if layer_shell else "GNOME",
+        niri_socket_present=False,
+    )
+    return ProductionLyricsOverlay(state, config, platform_factory=factory)

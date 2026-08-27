@@ -175,6 +175,24 @@ async def test_set_fuzzy_clears_the_negative_cache_so_a_miss_can_retry():
     assert calls.count("network:netease") == first + 1
 
 
+async def test_resolver_logs_source_candidates_and_final_selection(caplog):
+    calls = []
+    resolver = resolver_with_fakes(
+        calls,
+        network_hits={"lrclib": artifact(provider="lrclib")},
+        cache_enabled=False,
+        prefer_best=True,
+    )
+
+    with caplog.at_level(logging.DEBUG):
+        result = await resolver.resolve(SESSION, TRACK, ["lrclib"])
+
+    assert result is not None
+    messages = [record.getMessage() for record in caplog.records]
+    assert any("lyrics candidate: stage=network slot='lrclib'" in message for message in messages)
+    assert any("lyrics candidate: stage=selected slot='lrclib'" in message for message in messages)
+
+
 async def test_resolver_does_not_change_display_ownership():
     ownership = SourceOwnershipCoordinator()
     resolver = LyricsResolver(

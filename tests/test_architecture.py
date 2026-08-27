@@ -114,6 +114,14 @@ def test_overlay_contracts_is_toolkit_free():
     )
 
 
+def test_overlay_window_lives_in_the_overlay_package():
+    """The overlay window and its collaborators have one package owner."""
+    assert (SOURCE_ROOT / "overlay").is_dir()
+    assert (SOURCE_ROOT / "overlay" / "__init__.py").is_file()
+    assert (SOURCE_ROOT / "overlay" / "window.py").is_file()
+    assert not (SOURCE_ROOT / "overlay.py").exists()
+
+
 def test_desktop_environment_has_one_reader():
     """Only the platform probe names XDG_CURRENT_DESKTOP.
 
@@ -229,7 +237,7 @@ def test_display_engine_is_the_single_policy_owner():
 
 def test_overlay_consumes_display_progress_without_owning_display_policy():
     """The Qt renderer may paint progress but may not select or calculate it."""
-    path = SOURCE_ROOT / "overlay.py"
+    path = SOURCE_ROOT / "overlay" / "window.py"
     forbidden_modules = ("display.karaoke", "display.rules", "display.presentation", "lyrics.select")
     imported = _module_names(path)
     assert not any(any(part in module for part in forbidden_modules) for module in imported), imported

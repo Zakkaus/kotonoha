@@ -5,6 +5,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from overlay_helpers import UnavailableController
+from overlay_helpers import build_overlay as LyricsOverlay
 from PyQt6.QtCore import QEvent, QPointF, QRect, Qt
 from PyQt6.QtGui import QMouseEvent
 
@@ -21,7 +22,7 @@ from kotonoha.display.models import (
 )
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
-from kotonoha.overlay import LyricsOverlay
+from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.playback.models import TrackIdentity
 from kotonoha.state import LyricsState
 
@@ -123,7 +124,7 @@ def test_fixed_panel_pins_pill_width_independent_of_text(qapp):
 
 def test_font_fallback_chain_keeps_cjk_after_a_latin_family(qapp):
     overlay = LyricsOverlay(LyricsState(), Config(font_family="Inter"), UnavailableController())
-    families = overlay._font_families()
+    families = overlay._presentation.font_families()
     assert families[0] == "Inter"  # the chosen family leads
     assert any("CJK" in name for name in families)  # CJK fallback still present
     overlay.deleteLater()
@@ -135,6 +136,27 @@ def test_idle_shows_default_text_so_the_panel_is_not_empty(qapp):
     overlay._on_frame(EMPTY_FRAME)  # nothing playing
     assert overlay._current.text  # a default line is shown, not a blank box
     assert "♪" in overlay._current.text
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_overlay_shutdown_can_retry_after_surface_release_failure(qapp, monkeypatch):
+    overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
+    responses = [
+        SurfaceResult.failed("temporary release failure", retryable=True),
+        SurfaceResult.applied(),
+    ]
+    monkeypatch.setattr(overlay._surface, "close", lambda: responses.pop(0))
+
+    first = overlay.shutdown()
+    assert not first.succeeded
+    assert overlay._closed is False
+    assert overlay._closing is True
+
+    second = overlay.shutdown()
+    assert second.succeeded
+    assert overlay._closed is True
+    assert overlay._closing is False
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -255,11 +277,27 @@ def test_disabling_animations_reveals_lines_instantly(qapp):
     qapp.processEvents()
 
 
+def test_rebinding_the_same_line_does_not_restart_its_transition(qapp):
+    from kotonoha.karaoke_label import KaraokeLabel
+
+    label = KaraokeLabel()
+    label.set_effects(glow=False, word_pop=False, intensity="subtle", animate=True)
+    line = LyricLine(0, "same", 0.0, 3.0, "line", "", ())
+    label.set_line(line, False)
+    label.reveal = 0.5
+
+    label.set_line(line, False)
+
+    assert label.reveal == pytest.approx(0.5)
+    label.deleteLater()
+    qapp.processEvents()
+
+
 def test_white_panel_flips_text_and_context_shadow_to_light(qapp):
     from PyQt6.QtWidgets import QGraphicsDropShadowEffect
 
     overlay = LyricsOverlay(LyricsState(), Config(panel_style=PanelStyle.WHITE), UnavailableController())
-    base, shadow, context_css = overlay._text_colors()
+    base, shadow, context_css = overlay._presentation.text_colors()
     assert base.lightness() < 90  # dark lyric text on the near-white slab
     assert shadow.lightness() > 160  # light halo, not a black smudge
     effect = overlay._prev_label.graphicsEffect()
@@ -267,7 +305,7 @@ def test_white_panel_flips_text_and_context_shadow_to_light(qapp):
     assert effect.color().lightness() > 160  # context halo follows the panel too
     # A dark panel keeps light text with a dark halo.
     overlay.apply_config(Config(panel_style=PanelStyle.PILL))
-    assert overlay._text_colors()[0].lightness() > 160
+    assert overlay._presentation.text_colors()[0].lightness() > 160
     effect = overlay._prev_label.graphicsEffect()
     assert isinstance(effect, QGraphicsDropShadowEffect)
     assert effect.color().lightness() < 100
@@ -306,11 +344,11 @@ def test_panel_visibility_follows_style_not_lock(qapp):
     locked_pill = LyricsOverlay(
         LyricsState(), Config(passthrough=True, panel_style=PanelStyle.PILL), UnavailableController()
     )
-    assert locked_pill._should_paint_panel() is True  # Glass panel stays while locked
+    assert locked_pill._presentation.should_paint_panel() is True  # Glass panel stays while locked
     locked_text = LyricsOverlay(
         LyricsState(), Config(passthrough=True, panel_style=PanelStyle.TEXT), UnavailableController()
     )
-    assert locked_text._should_paint_panel() is False  # Text-only is immersive
+    assert locked_text._presentation.should_paint_panel() is False  # Text-only is immersive
     for overlay in (locked_pill, locked_text):
         overlay.deleteLater()
     qapp.processEvents()
@@ -339,7 +377,7 @@ def test_accent_tinted_black_panel_uses_accent_hue(qapp):
         Config(panel_style=PanelStyle.PILL, panel_accent_tint=True, accent_start="#FF4FA3"),
         UnavailableController(),
     )
-    colour = overlay._panel_base_color()
+    colour = overlay._presentation.panel_base_color()
     assert colour != QColor(15, 17, 22)  # not the flat near-black
     assert colour.red() > colour.blue()  # tinted toward the pink accent
     overlay.deleteLater()
@@ -350,7 +388,7 @@ def test_frosted_panel_paints_and_keeps_window_opaque(qapp):
     overlay = LyricsOverlay(
         LyricsState(), Config(panel_style=PanelStyle.FROST, opacity=0.6), UnavailableController()
     )
-    assert overlay._should_paint_panel() is True  # frosted panel is drawn
+    assert overlay._presentation.should_paint_panel() is True  # frosted panel is drawn
     assert overlay.windowOpacity() == pytest.approx(1.0, abs=0.01)  # text stays crisp
     overlay.deleteLater()
     qapp.processEvents()
@@ -362,9 +400,9 @@ def test_panel_alpha_tracks_opacity(qapp):
         Config(panel_style=PanelStyle.PILL, opacity=1.0),
         UnavailableController(),
     )
-    assert overlay._panel_alpha() == 255  # 100% -> solid, not the old 150 cap
+    assert overlay._presentation.panel_alpha() == 255  # 100% -> solid, not the old 150 cap
     overlay.apply_config(Config(panel_style=PanelStyle.PILL, opacity=0.3))
-    assert overlay._panel_alpha() == round(255 * 0.3)
+    assert overlay._presentation.panel_alpha() == round(255 * 0.3)
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -376,12 +414,12 @@ def test_window_stays_opaque_and_frost_uses_its_own_opacity(qapp):
         LyricsState(), Config(panel_style=PanelStyle.PILL, opacity=0.0, frost_opacity=0.6), UnavailableController()
     )
     assert black.windowOpacity() == pytest.approx(1.0, abs=0.01)
-    assert black._panel_alpha() == 0  # black panel can go fully transparent
+    assert black._presentation.panel_alpha() == 0  # black panel can go fully transparent
     frost = LyricsOverlay(
         LyricsState(), Config(panel_style=PanelStyle.FROST, opacity=0.0, frost_opacity=0.6), UnavailableController()
     )
     assert frost.windowOpacity() == pytest.approx(1.0, abs=0.01)
-    assert frost._panel_alpha() == round(255 * 0.6)  # frost uses frost_opacity, not opacity
+    assert frost._presentation.panel_alpha() == round(255 * 0.6)  # frost uses frost_opacity, not opacity
     for overlay in (black, frost):
         overlay.deleteLater()
     qapp.processEvents()

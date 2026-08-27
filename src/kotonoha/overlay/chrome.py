@@ -8,11 +8,11 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QHBoxLayout, QToolButton, QWidget
 
-from .icons import earlier_icon, later_icon, lock_icon, settings_icon
-from .strings import t
+from ..icons import earlier_icon, later_icon, lock_icon, settings_icon
+from ..strings import t
 
 if TYPE_CHECKING:
-    from .overlay import LyricsOverlay
+    from .window import LyricsOverlay
 
 CONTROL_ICON_COLOR = "#9AA0A6"
 CONTROL_BUTTON_STYLE = """
@@ -42,16 +42,16 @@ class OverlayChromeController:
     def __init__(self, overlay: LyricsOverlay) -> None:
         self._overlay = overlay
 
-    def build(self) -> QWidget:
-        """Build the control bar and attach its typed overlay actions."""
+    def build(self, container: QWidget) -> QWidget:
+        """Build the control bar inside the supplied overlay container."""
         overlay = self._overlay
-        overlay._control_bar = QWidget(overlay._container)
+        overlay._control_bar = QWidget(container)
         bar = QHBoxLayout(overlay._control_bar)
         bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(6)
         bar.addStretch(1)
 
-        overlay._lock_btn = QToolButton(overlay._container)
+        overlay._lock_btn = QToolButton(container)
         overlay._lock_btn.setFixedSize(22, 22)
         overlay._lock_btn.setIconSize(QSize(15, 15))
         overlay._lock_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -59,14 +59,14 @@ class OverlayChromeController:
         overlay._lock_btn.clicked.connect(overlay.passthrough_toggle_requested.emit)
         bar.addWidget(overlay._lock_btn)
 
-        overlay._earlier_btn = self._make_offset_button(earlier_icon, "overlay.offset.earlier")
+        overlay._earlier_btn = self._make_offset_button(container, earlier_icon, "overlay.offset.earlier")
         overlay._earlier_btn.clicked.connect(overlay._nudge_earlier)
         bar.addWidget(overlay._earlier_btn)
-        overlay._later_btn = self._make_offset_button(later_icon, "overlay.offset.later")
+        overlay._later_btn = self._make_offset_button(container, later_icon, "overlay.offset.later")
         overlay._later_btn.clicked.connect(overlay._nudge_later)
         bar.addWidget(overlay._later_btn)
 
-        overlay._settings_btn = QToolButton(overlay._container)
+        overlay._settings_btn = QToolButton(container)
         overlay._settings_btn.setFixedSize(22, 22)
         overlay._settings_btn.setIconSize(QSize(15, 15))
         overlay._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -99,8 +99,8 @@ class OverlayChromeController:
     def _control_icon_color(self) -> str:
         return "#5F6368" if self._overlay._config.panel_style == "white" else CONTROL_ICON_COLOR
 
-    def _make_offset_button(self, icon_factory: IconFactory, tooltip_key: str) -> QToolButton:
-        button = QToolButton(self._overlay._container)
+    def _make_offset_button(self, container: QWidget, icon_factory: IconFactory, tooltip_key: str) -> QToolButton:
+        button = QToolButton(container)
         button.setFixedSize(22, 22)
         button.setIconSize(QSize(15, 15))
         button.setIcon(icon_factory(CONTROL_ICON_COLOR))

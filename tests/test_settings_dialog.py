@@ -691,7 +691,11 @@ def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
     # backdrop — unreadable — while still reporting frosted glass as on.
     from dataclasses import replace
 
-    from kotonoha.platform.overlay_contracts import OverlayCapabilities, OverlayOperationResult
+    from kotonoha.platform.overlay_contracts import (
+        OverlayCapabilities,
+        OverlayPlatformAdapters,
+        SurfaceResult,
+    )
     from kotonoha.platform.qt_window import QtWindowPlatform
 
     class RefusingPlatform(QtWindowPlatform):
@@ -701,11 +705,22 @@ def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
         def capabilities(self) -> OverlayCapabilities:
             return replace(super().capabilities, blur=True, blur_reason=None)
 
-        def set_blur_region(self, region, radius: int = 0) -> OverlayOperationResult:
+        def set_blur_region(self, region, radius: int = 0) -> SurfaceResult:
             del region, radius
-            return OverlayOperationResult.failure("compositor refused the effect")
+            return SurfaceResult.rejected("compositor refused the effect")
 
-    dialog = SettingsDialog(Config(frost_window=True), platform_factory=RefusingPlatform)
+    def refusing_factory(host):
+        adapter = RefusingPlatform(host)
+        return OverlayPlatformAdapters(
+            surface=adapter,
+            input_region=adapter,
+            blur=adapter,
+            placement=adapter,
+            output_binding=None,
+            drag=adapter,
+        )
+
+    dialog = SettingsDialog(Config(frost_window=True), platform_factory=refusing_factory)
     assert dialog._frosted is True, "the dialog should start out expecting frosted glass"
 
     with caplog.at_level("WARNING"):

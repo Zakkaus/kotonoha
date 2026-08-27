@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from PyQt6.QtGui import QColor
 
-from .config import Config
+from ..config import Config
 
 _FALLBACK_FAMILIES = (
     "Noto Sans CJK SC",

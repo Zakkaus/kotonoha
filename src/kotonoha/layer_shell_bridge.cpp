@@ -1,13 +1,13 @@
 // Kotonoha Wayland layer-shell bridge.
 //
 // Compiled to libkoto-layer.so and loaded from Python via ctypes (see
-// native.py / overlay.py). Promotes a QWindow to a wlr-layer-shell Overlay
+// native.py / overlay/window.py). Promotes a QWindow to a wlr-layer-shell Overlay
 // surface so the lyrics float above fullscreen apps, and exposes click-through
 // (input region) + positioning control.
 //
 // IMPORTANT: make_overlay() must run BEFORE the window is shown, otherwise the
 // surface already has an xdg-shell role and LayerShellQt refuses to convert it
-// ("already has a shell integration"). overlay.py calls activate before show().
+// ("already has a shell integration"). overlay/window.py calls activate before show().
 //
 // Modelled on BiliHUD's bridge: anchor Top|Left and position the fixed-size
 // surface with left/top margins (set_anchor_position), which is what makes the

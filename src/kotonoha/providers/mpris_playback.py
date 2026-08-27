@@ -97,6 +97,7 @@ class MprisPlaybackCoordinator:
         self._current_commit: TrackCommit | None = None
         self._last_raw_position: float | None = None
         self._subscribed_name: str | None = None
+        self._last_logged_playback_state: tuple[str, str] | None = None
 
     @property
     def current_commit(self) -> TrackCommit | None:
@@ -216,6 +217,17 @@ class MprisPlaybackCoordinator:
             return
 
         info = second_info
+        playback_state = (name, status)
+        if self._last_logged_playback_state is not None and playback_state != self._last_logged_playback_state:
+            logger.info(
+                "MPRIS playback state changed: player=%r status=%s track=%r / %r position=%s",
+                name,
+                status,
+                info.title,
+                info.artist,
+                _position_text(position),
+            )
+        self._last_logged_playback_state = playback_state
         track_observation = TrackObservation(name, info, status, position, observed_at, identity)
         commit = self._stabilizer.observe(track_observation)
         if not info.title and not info.artist:
@@ -230,6 +242,18 @@ class MprisPlaybackCoordinator:
         )
         if commit is not None:
             self._current_commit = commit
+            logger.info(
+                "MPRIS track committed: generation=%d player=%r track=%r / %r id=%r "
+                "status=%s raw_position=%s start_position=%s",
+                commit.generation,
+                commit.player_name,
+                commit.info.title,
+                commit.info.artist,
+                commit.info.track_id,
+                status,
+                _position_text(position),
+                _position_text(commit.start_position),
+            )
             if self._on_commit is not None:
                 self._on_commit(commit)
         sample = PlaybackSample(observation, info, self._stabilizer.transitioning, commit)
@@ -276,10 +300,25 @@ class MprisPlaybackCoordinator:
             collected.append(PlayerRecord(player, name, status, info))
 
         selected = self._selector.choose(collected)
+        previous_name = self._selector.current_name
         if selected is None or selected.player is None:
             self._selector.current_name = None
+            if previous_name is not None:
+                logger.info(
+                    "MPRIS player selection cleared: previous=%r reason=no followable player",
+                    previous_name,
+                )
             return None
         self._selector.current_name = selected.bus_name
+        if selected.bus_name != previous_name:
+            logger.info(
+                "MPRIS player selected: bus=%r status=%s track=%r / %r id=%r",
+                selected.bus_name,
+                selected.status,
+                selected.info.title,
+                selected.info.artist,
+                selected.info.track_id,
+            )
         return selected.player, selected.bus_name
 
     def _on_properties_changed(self, change: MprisPropertyChange) -> None:
@@ -302,6 +341,12 @@ class MprisPlaybackCoordinator:
         self._current_commit = None
         self._last_raw_position = None
         self._subscribed_name = None
+        self._last_logged_playback_state = None
+
+
+def _position_text(position: float | None) -> str:
+    """Format optional playback positions consistently in operational logs."""
+    return "-" if position is None else f"{position:.3f}s"
 
 
 __all__ = ["MprisPlaybackCoordinator", "MprisSessionPort", "PlaybackSample"]

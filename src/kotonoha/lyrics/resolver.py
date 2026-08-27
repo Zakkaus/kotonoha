@@ -188,10 +188,28 @@ class LyricsResolver:
     ) -> ResolverLookup:
         failures: set[str] = set()
         track_key = _track_key(track)
+        logger.debug(
+            "lyrics lookup started: track=%r / %r sources=%s mode=%s cache=%s fuzzy=%s",
+            track.title,
+            track.artist,
+            ",".join(sources) or "-",
+            "best" if self._prefer_best else "sequential",
+            self._cache_enabled,
+            self._fuzzy,
+        )
         if self._prefer_best:
             result = await self._resolve_best(session, track, sources, track_key, failures)
         else:
             result = await self._resolve_sequential(session, track, sources, track_key, failures)
+        if result is None:
+            logger.debug(
+                "lyrics lookup finished: track=%r / %r selected=none failed=%s",
+                track.title,
+                track.artist,
+                ",".join(sorted(failures)) or "-",
+            )
+        else:
+            _log_candidate("selected", result.source_id, result)
         return ResolverLookup(result, frozenset(failures))
 
     async def _resolve_sequential(
@@ -217,15 +235,18 @@ class LyricsResolver:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                 else:
                     if cached is not None:
-                        return LyricsSourceResult(
+                        result = LyricsSourceResult(
                             source,
                             document=LyricsSourceResult.from_artifact(cached).document,
                             confidence=cached.confidence,
                             duration_s=cached.duration_s,
                         )
+                        _log_candidate("cache", source, result)
+                        return result
 
             negative_key = source, track_key
             if parser is not None and self._negative_until.get(negative_key, 0.0) > time.monotonic():
+                logger.debug("lyrics source skipped: slot=%r reason=negative-cache", source)
                 continue
             try:
                 result = await adapter.resolve(session, track, fuzzy=self._fuzzy)
@@ -234,6 +255,7 @@ class LyricsResolver:
                 failures.add(source)
                 continue
             if result is None or not result.document.lines:
+                logger.debug("lyrics source missed: slot=%r reason=no-timed-lines", source)
                 self._negative_until[negative_key] = time.monotonic() + self._negative_ttl
                 continue
             if self._cache_enabled and result.cache_artifact is not None:
@@ -241,6 +263,7 @@ class LyricsResolver:
                     await self._cache.store(result.cache_artifact)
                 except LyricsCacheError as exc:
                     logger.warning("%s lyrics cache write failed: %s", source, exc)
+            _log_candidate("network", source, result)
             return result
         return None
 
@@ -261,6 +284,7 @@ class LyricsResolver:
             failures.add(source)
             return None
         if result is None or not result.document.lines:
+            logger.debug("lyrics source missed: slot=%r reason=no-timed-lines", source)
             self._negative_until[source, track_key] = time.monotonic() + self._negative_ttl
             return None
         if self._cache_enabled and result.cache_artifact is not None:
@@ -268,6 +292,7 @@ class LyricsResolver:
                 await self._cache.store(result.cache_artifact)
             except LyricsCacheError as exc:
                 logger.warning("%s lyrics cache write failed: %s", source, exc)
+        _log_candidate("network", source, result)
         return result
 
     async def _resolve_best(
@@ -313,6 +338,7 @@ class LyricsResolver:
                     )
             if candidate is not None:
                 resolved.add(source)
+                _log_candidate("cache-or-live", source, candidate)
                 score = (_CONF_RANK[candidate.confidence], -index)
                 if best_score is None or score > best_score:
                     best, best_score = candidate, score
@@ -333,6 +359,7 @@ class LyricsResolver:
                 continue
             if session is None:
                 raise LyricsSourceError(f"network source {source!r} requires an HTTP session")
+            logger.debug("lyrics source requested: slot=%r transport=network", source)
             tasks[source] = asyncio.create_task(
                 adapter.resolve(session, track, fuzzy=self._fuzzy)
             )
@@ -382,3 +409,21 @@ class LyricsResolver:
             await self._cache.clear()
         finally:
             self.reset_memory()
+
+
+def _log_candidate(stage: str, source_slot: str, result: LyricsSourceResult) -> None:
+    """Log the source slot and canonical provider for one resolver result."""
+    document = result.document
+    logger.debug(
+        "lyrics candidate: stage=%s slot=%r provider=%r provider_name=%r "
+        "kind=%s timing=%s lines=%d confidence=%s duration=%s",
+        stage,
+        source_slot,
+        document.source_id,
+        document.source_name,
+        result.source_kind,
+        document.timing,
+        len(document.lines),
+        result.confidence,
+        "-" if result.duration_s is None else f"{result.duration_s:.3f}s",
+    )

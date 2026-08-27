@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
 from dataclasses import dataclass
 from enum import Enum
-from typing import TYPE_CHECKING, Protocol
+from typing import Protocol
 
-if TYPE_CHECKING:
-    pass
 
 @dataclass(frozen=True, slots=True)
 class OverlayCapabilities:
@@ -102,27 +99,71 @@ class WindowPolicy:
     recreate_surface: bool = True
 
 
-@dataclass(frozen=True, slots=True)
-class OverlayOperationResult:
-    """Result of a platform operation, including an actionable failure reason."""
+class SurfaceState(Enum):
+    """Lifecycle state of the mapped overlay surface."""
 
-    succeeded: bool
+    UNPREPARED = "unprepared"
+    PREPARED = "prepared"
+    ACTIVE = "active"
+    REBINDING = "rebinding"
+    DEGRADED = "degraded"
+    CLOSING = "closing"
+    CLOSED = "closed"
+
+
+class SurfaceResultStatus(Enum):
+    """Outcome categories returned by a platform operation."""
+
+    APPLIED = "applied"
+    NOT_SUPPORTED = "not-supported"
+    REJECTED = "rejected"
+    FAILED = "failed"
+
+
+@dataclass(frozen=True, slots=True)
+class SurfaceResult:
+    """Result of a platform operation, including retryability and failure reason."""
+
+    status: SurfaceResultStatus
     reason: str | None = None
+    retryable: bool = False
 
     def __post_init__(self) -> None:
-        if self.succeeded and self.reason is not None:
-            raise ValueError("Successful results cannot contain a failure reason")
-        if not self.succeeded and not self.reason:
-            raise ValueError("Failed results must contain a reason")
+        if self.status is SurfaceResultStatus.APPLIED:
+            if self.reason is not None:
+                raise ValueError("Applied results cannot contain a failure reason")
+            if self.retryable:
+                raise ValueError("Applied results cannot be retryable")
+            return
+        if not self.reason:
+            raise ValueError("Non-applied results must contain a reason")
+        if self.retryable and self.status is not SurfaceResultStatus.FAILED:
+            raise ValueError("Only failed results can be retryable")
+
+    @property
+    def succeeded(self) -> bool:
+        """Whether the operation was applied by the platform."""
+        return self.status is SurfaceResultStatus.APPLIED
 
     @classmethod
-    def success(cls) -> OverlayOperationResult:
-        return cls(succeeded=True)
+    def applied(cls) -> SurfaceResult:
+        """Report that the requested operation was applied."""
+        return cls(SurfaceResultStatus.APPLIED)
 
     @classmethod
-    def failure(cls, reason: str) -> OverlayOperationResult:
-        return cls(succeeded=False, reason=reason)
+    def not_supported(cls, reason: str) -> SurfaceResult:
+        """Report that the selected platform has no such capability."""
+        return cls(SurfaceResultStatus.NOT_SUPPORTED, reason=reason)
 
+    @classmethod
+    def rejected(cls, reason: str) -> SurfaceResult:
+        """Report that the platform refused an otherwise supported operation."""
+        return cls(SurfaceResultStatus.REJECTED, reason=reason)
+
+    @classmethod
+    def failed(cls, reason: str, *, retryable: bool = False) -> SurfaceResult:
+        """Report an operation failure and whether retrying may succeed."""
+        return cls(SurfaceResultStatus.FAILED, reason=reason, retryable=retryable)
 
 class DragMode(Enum):
     """Movement mechanism selected for one press gesture."""
@@ -168,43 +209,149 @@ class WindowHost(Protocol):
     def refresh(self) -> None: ...
 
 
-class OverlayDragStrategy(Protocol):
-    """Optional strategy boundary for platform-specific dragging."""
-
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult: ...
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult: ...
-    def end_drag(self) -> None: ...
-    def set_position(self, position: WindowPoint) -> None: ...
-
-
-class OverlayPlatform(Protocol):
-    """Platform capability and lifecycle contract used by the overlay widget."""
+class SurfacePort(Protocol):
+    """Lifecycle operations for the mapped surface itself."""
 
     @property
-    def capabilities(self) -> OverlayCapabilities: ...
-    def prepare(self) -> OverlayOperationResult: ...
-    def activate(self) -> OverlayOperationResult: ...
-    def set_input_region(self, region: WindowRectangle | None) -> OverlayOperationResult: ...
-    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> OverlayOperationResult: ...
-    def move_to(self, position: WindowPoint) -> OverlayOperationResult: ...
-    def rebind_output(self, output: WindowRectangle) -> OverlayOperationResult: ...
-    # The handler returns whether a surface was actually rebuilt: activation can
-    # fail on the returning output, and retiring the pending rebuild then leaves
-    # the overlay hidden with nothing to try again.
-    def set_output_handler(self, handler: Callable[[Output], bool]) -> None: ...
-    def set_active_output(self, output: Output | None) -> None: ...
-    def move_to_output(self, output: Output) -> OverlayOperationResult: ...
-    def output_removed(self, output: Output, connected: tuple[Output, ...], configured_name: str | None) -> None: ...
-    def output_added(self, connected: tuple[Output, ...], configured_name: str | None) -> None: ...
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult: ...
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> OverlayOperationResult: ...
-    def end_drag(self) -> None: ...
+    def capabilities(self) -> OverlayCapabilities:
+        """Describe the operations supported by this surface adapter."""
+        ...
+
+    def prepare(self) -> SurfaceResult:
+        """Create or configure native resources without mapping the surface."""
+        ...
+
+    def activate(self) -> SurfaceResult:
+        """Map the prepared surface and make it available for presentation."""
+        ...
+
+    def release_surface(self) -> SurfaceResult:
+        """Release resources attached to the current native surface."""
+        ...
+
+    def close(self) -> SurfaceResult:
+        """Release the surface and reject future platform operations."""
+        ...
+
+
+class InputRegionPort(Protocol):
+    """Capability for changing the surface input region."""
+
+    def set_input_region(self, region: WindowRectangle | None) -> SurfaceResult:
+        """Apply a region, or make the entire surface click-through when absent."""
+        ...
+
+
+class BlurPort(Protocol):
+    """Capability for applying compositor blur to a surface region."""
+
+    def set_blur_region(self, region: WindowRectangle | None, radius: int = 0) -> SurfaceResult:
+        """Apply or clear compositor blur for the supplied surface region."""
+        ...
+
+
+class PlacementPort(Protocol):
+    """Capability for moving a mapped surface or ordinary window."""
+
+    def move_to(self, position: WindowPoint) -> SurfaceResult:
+        """Request a platform-specific movement and report whether it applied."""
+        ...
+
+
+class OutputBindingPort(Protocol):
+    """Capability that releases a surface before it is recreated on another output."""
+
+    def release_for_output_rebind(self) -> SurfaceResult:
+        """Release the current output-bound resources while keeping the adapter alive."""
+        ...
+
+
+class DragPort(Protocol):
+    """Optional strategy boundary for platform-specific dragging."""
+
+    @property
+    def client_positioning(self) -> bool:
+        """Whether a client-side movement can be trusted for persistence."""
+        ...
+
+    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+        """Start a platform-specific gesture from the pointer coordinates."""
+        ...
+
+    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+        """Apply one drag update and report the platform result."""
+        ...
+
+    def end_drag(self) -> None:
+        """Release the platform-specific gesture state."""
+        ...
+
+    def set_position(self, position: WindowPoint) -> None:
+        """Synchronize the strategy with a position committed elsewhere."""
+        ...
+
+class OverlayPlatform(Protocol):
+    """Typed composition of independent platform capability ports."""
+
+    @property
+    def capabilities(self) -> OverlayCapabilities:
+        """Return the selected session capability model."""
+        ...
+
+    @property
+    def surface(self) -> SurfacePort:
+        """Return lifecycle operations for the selected surface."""
+        ...
+
+    @property
+    def input_region(self) -> InputRegionPort | None:
+        """Return input-region operations when the adapter provides them."""
+        ...
+
+    @property
+    def blur(self) -> BlurPort | None:
+        """Return compositor-blur operations when the adapter provides them."""
+        ...
+
+    @property
+    def placement(self) -> PlacementPort | None:
+        """Return placement operations when client movement is meaningful."""
+        ...
+
+    @property
+    def output_binding(self) -> OutputBindingPort | None:
+        """Return output-rebind operations when the surface is output-bound."""
+        ...
+
+    @property
+    def drag(self) -> DragPort:
+        """Return the platform-specific drag strategy."""
+        ...
+
+
+@dataclass(frozen=True, slots=True)
+class OverlayPlatformAdapters:
+    """Wire independent platform ports selected for one Qt surface."""
+
+    surface: SurfacePort
+    input_region: InputRegionPort | None
+    blur: BlurPort | None
+    placement: PlacementPort | None
+    output_binding: OutputBindingPort | None
+    drag: DragPort
+
+    @property
+    def capabilities(self) -> OverlayCapabilities:
+        """Return the live capability snapshot supplied by the surface adapter."""
+        return self.surface.capabilities
 
 
 class OverlayPlatformFactory(Protocol):
     """Factory for an adapter bound to one window host."""
 
-    def __call__(self, host: WindowHost) -> OverlayPlatform: ...
+    def __call__(self, host: WindowHost) -> OverlayPlatform:
+        """Compose platform capability ports for a specific window host."""
+        ...
 
 
 class LayerShellBridge(Protocol):

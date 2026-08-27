@@ -55,7 +55,7 @@ class QtWindowHost:
 
         None also covers a widget Qt has already deleted. The contract is
         ``int | None``, and every platform operation keyed on this pointer reports
-        an unavailable handle as a failed OverlayOperationResult; letting the
+        an unavailable handle as a failed SurfaceResult; letting the
         deleted-widget RuntimeError escape from here turned that into an exception
         the callers do not catch, on a path — a deferred lifecycle callback
         arriving after teardown — that exists precisely to happen late.

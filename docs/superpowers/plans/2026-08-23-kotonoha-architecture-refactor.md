@@ -1,6 +1,6 @@
 # Kotonoha 架构分层与重构实施计划
 
-> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3 已完成并完成审查收口，Phase 4/5/6 尚未完成**
+> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3/4 已完成并完成审查收口，Phase 5/6 尚未完成**
 >
 > 这份计划服务于仓库作者的长期重构。它先固定行为和边界，再迁移实现；不接受“发现一个 case 就在现有协调器加一个 if”作为完成方式。
 
@@ -18,7 +18,7 @@
 ## 不做的事
 
 - 不一次性重写全部 `src/kotonoha`。
-- 不先按文件大小机械拆分 `mpris.py`、`overlay.py`、`settings_dialog.py`。
+- 不先按文件大小机械拆分 `mpris.py`、`settings_dialog.py`；Overlay 目录拆分必须服从 UI 生命周期和协作者边界。
 - 不在行为契约未确定前改变 provider precedence、置信度阈值或用户可见状态。
 - 不把已有 PR 的每个例外原样复制到新模块；先判断它属于稳定行为、实现补丁还是错误行为。
 - 不用扩大 `Any`、`cast`、`type: ignore` 或宽 Protocol 来“让 ty 通过”。
@@ -155,7 +155,7 @@ Qt、aiohttp、dbus-fast、native bridge 或具体 source adapter。`main.py` �
 | `lyrics/*.py` | Lyrics feature contracts、parsers 和 adapters | `lyrics/models.py`、`lyrics/title_grammar.py`、`lyrics/matching.py`、`lyrics/parsers/`、`lyrics/sources.py`、`lyrics/network_sources.py`、`lyrics/live_source.py` | provider 细节留在 lyrics feature；source contract 不依赖 display 或 concrete HTTP client |
 | `model.py` | 按语义拆分的 feature values | `lyrics/models.py`、`playback/models.py`、`display/models.py`、`lyrics/cider/` | 不保留一个跨 feature 的万能 model module |
 | `clock.py`、`karaoke.py` | Playback observation / display rules | `playback/clock.py`、`display/timeline.py`、`display/karaoke.py` | 纯规则留在 owner feature，时间源选择和发布由 app coordinator 负责 |
-| `overlay.py` | Overlay application workflow + Qt presentation | `app/overlay_coordinator.py`、`ui/overlay/`、`platform/` | QWidget 只渲染 `DisplayFrame`、翻译输入和显示平台结果 |
+| `overlay/` | Overlay application workflow + Qt presentation | `app/overlay_coordinator.py`、`ui/overlay/`、`platform/` | QWidget 只渲染 `DisplayFrame`、翻译输入和显示平台结果 |
 | `settings_dialog.py`、`tray.py`、`icons.py`、`leaf_icon.py` | Qt presentation | `ui/settings/`、`ui/tray/`、`ui/` | UI 通过 app capability 和 typed intent 工作，不直接保存配置或探测平台 |
 | `config.py` | Config model/store | `config/models.py`、`config/store.py` | JSON decode、validation、atomic persistence 只有一个 owner |
 
@@ -410,22 +410,35 @@ MPRIS 校准不泄漏到 display policy；lyrics provider 与 display policy 不
 resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff --check` 和 `uv build` 通过。
 `pnpm test` / `pnpm build` 仍受当前环境缺少 `pnpm` 影响，未执行。
 
-### Phase 4：重建 Overlay surface/platform 生命周期
+### Phase 4：重建 Overlay surface/platform 生命周期（已完成）
 
 **目的**：把 #27-#31/#35/#38/#46/#55/#60/#64 的平台行为变成可验证状态机。
 
-- [ ] 将 `platform.OverlayPlatform` 收缩为 capability-specific contracts：surface、output binding、input、blur、drag；不适用能力不要求实现无关方法。
-- [ ] 实现 `SurfaceLifecycleOwner`：`Unprepared -> Prepared -> Active -> Rebinding/Degraded -> Closing -> Closed`。
-- [ ] surface owner 负责 blur/input release、native handle 生命周期和 deferred callback guard。
-- [ ] output source 只提供 toolkit-neutral `OutputSnapshot`；active output 更新只有一个 command path。
-- [ ] rebind 失败保留 pending intent；成功后才提交 active output/config。
-- [ ] drag strategy 只计算 compositor-specific movement；application 根据 `Applied/Rejected` 决定保存。
-- [ ] Layer Shell、Qt fallback、niri、X11 capability reason 分别测试；至少一个真实 KWin live lifecycle test 保留 opt-in。
-- [ ] `ui/settings/` 和 `ui/overlay/` 通过 `app/services.py` 获得同一个 session capability snapshot/adapter，不自行 probe。
-- [ ] surface/output/drag state machine 维护 operation-result corpus；失败、pending intent、关闭后 callback 都必须有正向和负向场景。
-- [ ] 按责任拆分当前约 796 行的 `overlay.py`：将 surface binding、frame-to-widget binding、paint/layout 和 drag/geometry 分别迁到目标 `ui/overlay/`/`platform/` owner；拆分以依赖和生命周期为边界，并使新增或修改的 Python 文件通常保持在 500 行以内。
+- [x] 将 `platform.OverlayPlatform` 收缩为 capability-specific contracts：surface、output binding、input、blur、drag；不适用能力不要求实现无关方法。
+- [x] 实现 `SurfaceLifecycleOwner`：`Unprepared -> Prepared -> Active -> Rebinding/Degraded -> Closing -> Closed`。
+- [x] surface owner 负责 blur/input release、native handle 生命周期和 deferred callback guard。
+- [x] output source 只提供 toolkit-neutral `Output` value object；active output 更新只有一个 command path。
+- [x] rebind 失败保留 pending intent；成功后才提交 active output/config。
+- [x] drag strategy 只计算 compositor-specific movement；application 根据 `Applied/Rejected` 决定保存。
+- [x] Layer Shell、Qt fallback、niri、X11 capability reason 分别测试；保留真实 Wayland/KWin-compatible live lifecycle test opt-in，niri 仍需真实环境验证。
+- [x] `ui/settings/` 和 `ui/overlay/` 通过同一个 `DefaultOverlayPlatformFactory` 获得 session-selected capability adapter，不自行 probe。
+- [x] surface/output/drag state machine 维护 operation-result corpus；失败、pending intent、关闭后 callback 都有正向和负向场景。
+- [x] 按责任拆分当前约 796 行的 Overlay 实现：`overlay/window.py` 保留窗口边界，surface binding、frame-to-widget binding、presentation/paint 和 drag/geometry 分别迁到独立 owner；拆分以依赖和生命周期为边界，window 文件约 523 行，其余新模块均保持在 500 行以内。
 
 **退出条件**：平台 fake 能完整跑 surface/drag/output 状态机；Overlay 不导入 native bridge；失败 operation 不会被伪装为成功；分散的 output lifecycle 代码收敛到唯一 owner。
+
+**Phase 4 收口验证（2026-08-27）**：定向 Overlay/platform/Settings/architecture 测试 `169 passed`；全量 Python 测试
+`778 passed, 2 skipped`；`ruff check .`、`ty check`、`git diff --check` 和 `uv build` 通过。live compositor 测试保留为显式 opt-in，当前环境未执行。
+
+**Phase 3/4 收口后的运行审查修复（2026-08-27）**：
+
+- [x] `TimelineEngine.observe()` 返回 `MediaClock` 的平滑 observation，而不是被拒绝的滞后轮询值；切行边界不会因一次旧位置样本回跳到上一行。
+- [x] MPRIS 在 transitioning sample 和稳定 commit 两个同步入口声明 external ownership；resolver 尚未运行时，Cider/API 或 generic adapter 不能插入一帧覆盖当前播放链路。
+- [x] Overlay 对同一 `LyricLine` 的重复绑定保持幂等，不重建布局或重启动画；context label 也不重复触发 `setText()`。
+- [x] 增加时间轴回跳、MPRIS ownership 窗口和重复行绑定回归测试；当前全量 Python 验证为 `782 passed, 2 skipped`，其余门禁保持通过。
+
+审查结论：MPRIS 工作流内的 provider 竞争窗口已经关闭；没有 MPRIS 时，`SourceOwnershipCoordinator` 的
+`standalone` 模式仍允许多个 live adapter 直接发布，这是尚未定义仲裁策略的真实边界风险，不能把它误报为已解决。
 
 ### Phase 5：配置、Settings 与组合根收口
 
@@ -439,6 +452,7 @@ resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff
 - [ ] 完成剩余 Qt signal/deferred callback 的 owner 审计；tray Settings/Quit 已在 Phase 3 收口，未完成的 Settings/Overlay callback 仍必须使用 bound method 或明确 QObject owner。
 - [ ] 将当前约 610 行的 `settings_dialog.py` 按 dialog lifecycle、`SettingsFormState`、page builder 和 widget adapter 拆分；移除 page builder 对 dialog 私有控件注册表的隐式写入，使新增或修改的 Python 文件通常保持在 500 行以内。
 - [ ] 将 `ConfigStore.save()` 的同步文件写入移出 Qt signal/UI callback 的直接执行路径，交给 application-owned persistence worker/service，并定义失败反馈与 stop 时的等待语义。
+- [ ] 明确无 MPRIS 时多个 live adapter 的 standalone 仲裁策略；当前 Cider API 与 generic adapter 都可在该模式直接发布，需收敛为一个有记录、可测试的 active owner 后再删除兼容路径。
 
 **退出条件**：`app/services.py` 和 `main.py` 只做 wiring；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
 
@@ -448,6 +462,7 @@ resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff
 - [ ] 删除实际 `lyrics/match.py` 对 `lyrics/titles.py` 私有 helper 的依赖，改为公开 feature result，并在目标目录迁移时保留 title grammar/matching 的 owner 边界。
 - [ ] 合并实际 `config_store.py` 与 `lyrics/local.py` 重复的 bounded regular-file reader，删除重复边界实现；迁移到目标 `config/store.py` 时保留 regular-file、FIFO、大小上限和原子替换语义。
 - [ ] 收敛 `config.py:track_identity_key` 与 `display/presentation.py` 的重复 track offset key 生成，放入中立的 typed track identity/value owner，避免配置与展示对同一身份规则各自解释。
+- [ ] 将 `display/coordinator.py` 当前持有的 `QtDisplayPublisher` 兼容桥迁到明确的 application/UI boundary；保留唯一 publisher，同时让 display timeline/policy package 完全脱离 Qt。
 - [ ] 删除临时 compatibility exports/fallback，并为每个删除记录对应迁移完成条件。
 - [x] 逐步增加 Ruff/ty/architecture checks：feature contract transport imports、provider/display direction、
   unique publisher、D-Bus dynamic values、oversized module scope、broad exception handlers 和 public annotations。
@@ -510,4 +525,4 @@ canonical diff：
 4. 从 `RawTrackObservation -> TrackIdentity -> SourcePlan` 这条最能减少后续 patch 的链开始迁移，并逐 case 对比。
 5. 再迁移 `DisplayFrame`，最后迁移 surface/platform 生命周期和组合根。
 
-在第 4 步之前不应开始拆 `mpris.py` 或 `overlay.py`；没有目标 owner 的拆分只会制造更多转发层和新的隐含边界。
+在第 4 步之前不应开始拆 `mpris.py`；Overlay 已按目标 owner 迁入 package，后续拆分仍必须有独立的生命周期或职责边界，不能只为减少行数制造转发层。

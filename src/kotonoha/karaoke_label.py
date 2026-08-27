@@ -164,8 +164,11 @@ class KaraokeLabel(QWidget):
     def set_line(self, line: LyricLine | None, word_mode: bool) -> None:
         prev_id = self._line.id if self._line else None
         new_id = line.id if line else None
+        requested_word_mode = word_mode and line is not None and line.has_word_timing
+        if line == self._line and requested_word_mode == self._word_mode:
+            return
         self._line = line
-        self._word_mode = word_mode and line is not None and line.has_word_timing
+        self._word_mode = requested_word_mode
         self._rebuild_layout()
         if new_id is not None and new_id != prev_id:
             self._start_reveal()

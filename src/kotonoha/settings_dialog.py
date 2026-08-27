@@ -12,7 +12,6 @@ import logging
 from dataclasses import replace
 from typing import cast
 
-from PyQt6 import sip
 from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
@@ -21,6 +20,7 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
+    QCloseEvent,
     QColor,
     QHideEvent,
     QIcon,
@@ -51,7 +51,7 @@ from PyQt6.QtWidgets import (
 
 from . import leaf_icon, settings_theme
 from .config import Config
-from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, WindowRectangle
+from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
 from .players import PlayerInfo
 from .settings_pages import SettingsPageBuilder
 from .settings_widgets import IconStrip, available_font_styles, resolve_font_family
@@ -163,6 +163,8 @@ class SettingsDialog(QDialog):
         self._initial_ui_language = config.ui_language
         self._theme = _resolve_theme(config.theme)
         self._did_fade_in = False
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         # Real backdrop-blur behind the whole window (frosted glass), wherever the
         # compositor advertises a blur protocol. Asking the compositor beats matching
         # on the desktop name, which claimed KDE 6.7 could blur after it dropped
@@ -184,8 +186,6 @@ class SettingsDialog(QDialog):
         # a name passed in as an argument is still that same decision.
         self._window_opacity_ok = capabilities is None or capabilities.window_opacity
         self._frosted = self._blur_capable and config.frost_window
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
         # See-through level for the window surfaces. NOT setWindowOpacity — the Qt
         # Wayland plugin ignores that (no client-side opacity protocol); instead the
         # painted window fill + card alpha carry it, so it works under KWin.
@@ -316,18 +316,13 @@ class SettingsDialog(QDialog):
         rect = self.rect().adjusted(0, 0, -1, -1)
         painter.drawRoundedRect(rect, float(_RADIUS), float(_RADIUS))
 
-    def _window_ptr(self) -> int | None:
-        self.winId()  # force native handle creation
-        handle = self.windowHandle()
-        return sip.unwrapinstance(handle) if handle is not None else None
-
     def _apply_blur(self) -> None:
         if not self._frosted or self._platform is None:
             return
-        ptr = self._window_ptr()
-        if ptr is None:
+        blur = self._platform.blur
+        if blur is None:
             return
-        result = self._platform.set_blur_region(WindowRectangle(0, 0, self.width(), self.height()), _RADIUS)
+        result = blur.set_blur_region(WindowRectangle(0, 0, self.width(), self.height()), _RADIUS)
         if result.succeeded:
             return
         # The window is painted translucent because a compositor blur is meant to sit
@@ -340,10 +335,34 @@ class SettingsDialog(QDialog):
 
     def hideEvent(self, a0: QHideEvent | None) -> None:
         if self._frosted and self._platform is not None:
-            ptr = self._window_ptr()
-            if ptr is not None:
-                self._platform.set_blur_region(None)
+            blur = self._platform.blur
+            if blur is not None:
+                blur.set_blur_region(None)
         super().hideEvent(a0)
+
+    def done(self, a0: int) -> None:
+        """Close the owned surface before the dialog becomes reusable or hidden."""
+        result = self._close_platform()
+        if not result.succeeded:
+            logger.warning("Settings surface shutdown was incomplete: %s", result.reason)
+            return
+        super().done(a0)
+
+    def closeEvent(self, a0: QCloseEvent | None) -> None:
+        """Release the platform surface when the dialog is explicitly closed."""
+        result = self._close_platform()
+        if not result.succeeded:
+            logger.warning("Settings surface shutdown was incomplete: %s", result.reason)
+            if a0 is not None:
+                a0.ignore()
+            return
+        super().closeEvent(a0)
+
+    def _close_platform(self) -> SurfaceResult:
+        """Release the optional platform surface and report whether it completed."""
+        if self._platform is None:
+            return SurfaceResult.applied()
+        return self._platform.surface.close()
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
         super().resizeEvent(a0)
@@ -360,6 +379,14 @@ class SettingsDialog(QDialog):
 
     def showEvent(self, a0: QShowEvent | None) -> None:
         super().showEvent(a0)
+        if self._platform is not None:
+            prepared = self._platform.surface.prepare()
+            if not prepared.succeeded:
+                logger.warning("Settings surface preparation failed: %s", prepared.reason)
+            else:
+                activated = self._platform.surface.activate()
+                if not activated.succeeded:
+                    logger.warning("Settings surface activation failed: %s", activated.reason)
         # Now the stylesheet metrics are active: size the sidebar to its widest
         # label (in any language) and the content to the tallest page, so switching
         # sections never resizes the window and the nav never truncates.
@@ -588,12 +615,12 @@ class SettingsDialog(QDialog):
         frosted = self._blur_capable and self._config.frost_window
         if frosted != self._frosted and self._platform is not None:
             self._frosted = frosted
-            ptr = self._window_ptr()
-            if ptr is not None:
+            blur = self._platform.blur
+            if blur is not None:
                 if frosted:
                     self._apply_blur()
                 else:
-                    self._platform.set_blur_region(None)
+                    blur.set_blur_region(None)
         # Re-skin the dialog itself so an accent OR theme change is visible right
         # away (tab underline, checkbox fill, light/dark palette) rather than only
         # after Settings is closed and reopened.

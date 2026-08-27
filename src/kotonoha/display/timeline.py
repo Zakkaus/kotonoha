@@ -47,7 +47,7 @@ class TimelineEngine:
         position_s: float | None,
         status: PlaybackStatus | None,
     ) -> PlaybackObservation | None:
-        """Apply a clock-only calibration and return the current observation."""
+        """Apply a clock-only calibration and return its smooth observation."""
         observation = self._observation
         if observation is None:
             return None
@@ -58,7 +58,11 @@ class TimelineEngine:
             position_s=position_s if position_s is not None else observation.position_s,
             status=resolved_status,
         )
-        return self._observation
+        # ``MediaClock`` may intentionally reject a slightly stale poll while
+        # continuing to interpolate. Returning the raw value here would expose
+        # that rejected sample to DisplayEngine and can move the current lyric
+        # backwards across a line boundary for one frame.
+        return self.current_observation()
 
     def advance(self) -> PlaybackObservation | None:
         """Return the latest observation with the clock's current position."""
