@@ -5,12 +5,12 @@ from __future__ import annotations
 import asyncio
 import logging
 
+from ..app.source_contracts import MprisSourcePort
 from ..config import DEFAULT_LYRICS_SOURCES
-from ..display.coordinator import DisplayCoordinator
+from ..display.contracts import MprisDisplayPort
 from ..display.models import ResolutionState
 from ..lyrics.match import MatchConfidence
 from ..lyrics.models import LyricsDocument
-from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..lyrics.sources import LyricsSourceKind
 from ..lyrics.workflow import DocumentResolution, NoLyricsResolution, ResolverPort
 from .mpris_adapter import MprisPlaybackAdapter
@@ -27,9 +27,9 @@ class MprisLyricsCoordinator:
 
     def __init__(
         self,
-        display: DisplayCoordinator,
+        display: MprisDisplayPort,
         *,
-        ownership: SourceOwnershipCoordinator,
+        ownership: MprisSourcePort,
         resolver: ResolverPort,
         playback_adapter: MprisPlaybackAdapter | None = None,
         lyrics_sources: list[str] | None = None,
@@ -230,7 +230,7 @@ class MprisLyricsCoordinator:
             confidence=decision.confidence,
             duration_s=decision.duration_s,
         )
-        self._display_binding.publish_document(decision.document, result.info, commit=commit)
+        self._display_binding.publish_external_document(decision.document, result.info, commit=commit)
 
     def _schedule_load(self, commit: TrackCommit) -> None:
         current = self._current_commit

@@ -8,8 +8,8 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtGui import QColor
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QVBoxLayout, QWidget
 
-from ..karaoke_label import KaraokeLabel
 from .chrome import OverlayChromeController
+from .karaoke_label import KaraokeLabel
 
 
 @dataclass(frozen=True, slots=True)

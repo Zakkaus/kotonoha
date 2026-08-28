@@ -5,7 +5,15 @@ from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 
-def source_facts(*, found=True, title="Song", artist="Artist", album="", duration_s=None):
+def source_facts(
+    *,
+    found=True,
+    title="Song",
+    artist="Artist",
+    album="",
+    duration_s=None,
+    adapter_id="cider",
+):
     lines = (LyricLine(0, "L0", 0.0, 5.0, title, ""),) if found else ()
     document = LyricsDocument(
         source_id="apple-music",
@@ -17,8 +25,8 @@ def source_facts(*, found=True, title="Song", artist="Artist", album="", duratio
         lines=lines,
     )
     track = TrackIdentity(
-        "cider",
-        "cider",
+        adapter_id,
+        adapter_id,
         stable_id="song-1",
         title=title,
         artist=artist,
@@ -26,7 +34,7 @@ def source_facts(*, found=True, title="Song", artist="Artist", album="", duratio
         duration_s=duration_s,
     )
     observation = PlaybackObservation(
-        "cider", "cider", track, PlaybackStatus.PLAYING, 12.5, duration_s, 1.0
+        adapter_id, adapter_id, track, PlaybackStatus.PLAYING, 12.5, duration_s, 1.0
     )
     return observation, document
 
@@ -120,6 +128,37 @@ def test_current_match_reports_medium_confidence_for_a_title_only_match():
     match = coordinator.current_match(TrackMetadata("Song", ""))
     assert match is not None
     assert match.confidence is MatchConfidence.MEDIUM
+
+
+def test_standalone_owner_follows_display_priority_instead_of_latest_event():
+    coordinator = SourceOwnershipCoordinator(display_sources=["adapter", "cider"])
+    observe(coordinator, client_id="cider-api", adapter_id="cider")
+    observe(coordinator, client_id=20, adapter_id="adapter")
+
+    match = coordinator.current_match(TrackMetadata("Song", "Artist"))
+
+    assert match is not None
+    assert match.client_id == 20
+    assert coordinator.accepts(20) is True
+    assert coordinator.accepts("cider-api") is False
+
+
+def test_disabled_display_source_cannot_become_owner_or_match():
+    coordinator = SourceOwnershipCoordinator(display_sources=["adapter"])
+    observe(coordinator, client_id="cider-api", adapter_id="cider")
+
+    assert coordinator.current_match(TrackMetadata("Song", "Artist")) is None
+    assert coordinator.accepts("cider-api") is False
+
+
+def test_display_sources_default():
+    assert Config().display_sources == ["mpris", "cider", "adapter"]
+
+
+def test_display_sources_cleaned_and_roundtripped():
+    cfg = Config.from_dict({"display_sources": ["adapter", "bogus", "adapter", "cider"]})
+
+    assert cfg.display_sources == ["adapter", "cider"]
 
 
 def test_lyrics_sources_default():

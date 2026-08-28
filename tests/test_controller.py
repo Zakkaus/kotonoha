@@ -1,13 +1,18 @@
 import asyncio
 import os
+from collections.abc import Sequence
 from typing import cast
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
+from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from kotonoha import controller as controller_module
+from kotonoha.app import application_controller as controller_module
+from kotonoha.app.config_service import ConfigService
+from kotonoha.app.intents import ChangeTrackOffset
+from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.config import Config
 from kotonoha.controller import AppController
 from kotonoha.providers.mpris import MprisProvider
@@ -52,6 +57,23 @@ class _FakeCiderTokenStore:
         self.saved.append(token)
 
 
+class _FakeConfigWriter:
+    def __init__(self) -> None:
+        self.saved: list[Config] = []
+
+    def save(self, config: Config) -> None:
+        self.saved.append(config)
+
+
+def _config_service(config: Config | None = None) -> ConfigService:
+    initial = Config() if config is None else config
+    return ConfigService(
+        initial,
+        writer=_FakeConfigWriter(),
+        worker=BlockingCallRunner("test-config-service"),
+    )
+
+
 class _Signal:
     def connect(self, _slot):
         return None
@@ -59,6 +81,7 @@ class _Signal:
 
 class _FakeDialog:
     def __init__(self):
+        self.intent_requested = _Signal()
         self.applied = _Signal()
         self.clear_cache_requested = _Signal()
         self.restart_requested = _Signal()
@@ -67,12 +90,16 @@ class _FakeDialog:
     def show(self):
         return None
 
+    def close(self):
+        return None
+
 
 async def test_start_survives_optional_receiver_bind_failure(qapp):
     # A stale instance / double-launch holding port 28745 must only disable the
     # optional Cider receiver, not take down the already-shown overlay and tray.
     token_store = _FakeCiderTokenStore("loaded-token")
-    controller = AppController(qapp, Config(), cider_token_store=token_store)
+    service = _config_service()
+    controller = AppController(qapp, service, cider_token_store=token_store)
     controller._receiver = cast(AdapterReceiver, _FakeReceiver())
     fake_mpris = _FakeMpris()
     controller._mpris = cast(MprisProvider, fake_mpris)
@@ -112,18 +139,14 @@ async def test_run_stops_controller_when_startup_fails(qapp, monkeypatch):
 def test_out_of_range_cli_port_is_clamped(qapp):
     # argparse accepts any int; an unclamped 70000 reaches socket.bind() and raises
     # OverflowError (not an OSError), crashing startup. It must be clamped instead.
-    qapp.setProperty("cli_port", 70000)
-    try:
-        controller = AppController(qapp, Config())
-        assert controller._config.port == 65535
-    finally:
-        qapp.setProperty("cli_port", None)
-        controller._overlay.deleteLater()
-        qapp.processEvents()
+    from kotonoha.main import _apply_cli_port
+
+    assert _apply_cli_port(Config(), 70000).port == 65535
 
 
 async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
-    controller = AppController(qapp, Config())
+    service = _config_service()
+    controller = AppController(qapp, service)
     started = asyncio.Event()
     release = asyncio.Event()
     created = []
@@ -133,6 +156,9 @@ async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
             started.set()
             await release.wait()
             return []
+
+        async def stop(self):
+            return None
 
     def make_dialog(*_args, **_kwargs):
         created.append(True)
@@ -149,32 +175,67 @@ async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
         await asyncio.sleep(0)
         assert len(created) == 1
     finally:
+        await controller.stop()
         controller._overlay.deleteLater()
         qapp.processEvents()
-def test_controller_persists_track_offset(qapp, monkeypatch):
-    controller = AppController(qapp, Config())
-    saved = []
-    monkeypatch.setattr("kotonoha.controller.save_config", lambda config: saved.append(config))
-    controller._on_track_offset_changed("track", 50)
+
+
+async def test_tray_settings_action_opens_a_normal_visible_dialog(qapp):
+    service = _config_service()
+    controller = AppController(qapp, service)
+    try:
+        # The menu owns a real QAction; triggering it exercises tray -> controller
+        # -> supervised settings task instead of calling the controller directly.
+        menu = controller._tray.contextMenu()
+        if menu is None:
+            raise AssertionError("tray context menu was not created")
+        settings_action = menu.actions()[2]
+        settings_action.trigger()
+        task = controller._settings_open_task
+        assert task is not None
+        await task
+
+        dialog = controller._settings_dialog
+        assert dialog is not None
+        assert dialog.isVisible()
+        assert not dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    finally:
+        await controller.stop()
+        controller._overlay.deleteLater()
+        qapp.processEvents()
+
+
+async def test_controller_persists_track_offset(qapp):
+    writer = _FakeConfigWriter()
+    service = ConfigService(
+        Config(),
+        writer=writer,
+        worker=BlockingCallRunner("test-config-service"),
+    )
+    controller = AppController(qapp, service)
+    controller._handle_intent(ChangeTrackOffset("track", 50))
+    await service.close()
     assert controller._config.track_offsets == {"track": 50}
-    assert saved == [controller._config]
+    assert writer.saved[-1].track_offsets == {"track": 50}
+    await controller.stop()
     controller._overlay.deleteLater()
     qapp.processEvents()
 
 
-def test_a_restart_that_cannot_start_the_replacement_stays_up(qapp, monkeypatch):
+async def test_a_restart_that_cannot_start_the_replacement_stays_up(qapp):
     # The result was discarded and this instance quit regardless, so a replacement
     # that could not be spawned looked exactly like a successful restart — and left
     # the user with nothing running.
-    from PyQt6.QtCore import QProcess
+    class _FailedRestartLauncher:
+        def start(self, executable: str, arguments: Sequence[str]) -> bool:
+            del executable, arguments
+            return False
 
-    from kotonoha import controller as controller_module
-
-    monkeypatch.setattr(QProcess, "startDetached", staticmethod(lambda *_a, **_k: (False, 0)))
-    quits: list[bool] = []
-
-    instance = object.__new__(controller_module.AppController)
-
-    instance._restart()
-
-    assert quits == [], "the running instance quit although nothing replaced it"
+    service = _config_service()
+    controller = AppController(qapp, service, restart_launcher=_FailedRestartLauncher())
+    try:
+        controller._restart()
+    finally:
+        await controller.stop()
+        controller._overlay.deleteLater()
+        qapp.processEvents()

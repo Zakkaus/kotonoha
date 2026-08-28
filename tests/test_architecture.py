@@ -57,9 +57,9 @@ def _absolute_imports(path: Path) -> set[str]:
     return resolved
 
 
-#: The composition root is the only module outside the platform package allowed to
-#: name the concrete bridge. Overlay defaults are built by the platform factory.
-_BRIDGE_NAMERS = {"controller.py"}
+#: Composition roots are the only modules outside the platform package allowed
+#: to name the concrete bridge. Overlay defaults are built by the platform factory.
+_BRIDGE_NAMERS = {"controller.py", "application_controller.py"}
 
 #: The concrete native bridge, however it is spelled at the import site.
 _BRIDGE_SYMBOLS = {"LayerShellController"}
@@ -70,8 +70,8 @@ def test_ui_does_not_reach_the_native_bridge():
 
     Rejecting `platform.native` alone left the boundary open: `platform/__init__.py`
     re-exports LayerShellController, so `from .platform import LayerShellController`
-    hands a UI module the concrete bridge while the old check passed. The sole
-    remaining call site is the composition root listed above.
+    hands a UI module the concrete bridge while the old check passed. The only
+    remaining call sites are the composition roots listed above.
     """
     violations = []
     for path in _python_modules():
@@ -116,10 +116,37 @@ def test_overlay_contracts_is_toolkit_free():
 
 def test_overlay_window_lives_in_the_overlay_package():
     """The overlay window and its collaborators have one package owner."""
-    assert (SOURCE_ROOT / "overlay").is_dir()
-    assert (SOURCE_ROOT / "overlay" / "__init__.py").is_file()
-    assert (SOURCE_ROOT / "overlay" / "window.py").is_file()
+    overlay_root = SOURCE_ROOT / "ui" / "overlay"
+    assert overlay_root.is_dir()
+    assert (overlay_root / "__init__.py").is_file()
+    assert (overlay_root / "window.py").is_file()
     assert not (SOURCE_ROOT / "overlay.py").exists()
+    old_overlay_root = SOURCE_ROOT / "overlay"
+    assert not (old_overlay_root / "__init__.py").exists()
+    assert not any(old_overlay_root.glob("*.py"))
+
+
+def test_settings_presentation_lives_in_the_settings_package():
+    """Settings builders, widgets, and theme assets share one UI package owner."""
+    settings_root = SOURCE_ROOT / "ui" / "settings"
+    for name in (
+        "settings_dialog.py",
+        "settings_pages.py",
+        "settings_sources.py",
+        "settings_theme.py",
+        "settings_widgets.py",
+        "controls.py",
+        "form_state.py",
+    ):
+        assert (settings_root / name).is_file()
+    for name in (
+        "settings_dialog.py",
+        "settings_pages.py",
+        "settings_sources.py",
+        "settings_theme.py",
+        "settings_widgets.py",
+    ):
+        assert not (SOURCE_ROOT / name).exists()
 
 
 def test_desktop_environment_has_one_reader():
@@ -167,9 +194,17 @@ def test_the_title_grammar_knows_nothing_about_matching():
 def test_the_matcher_holds_no_platform_grammar():
     # Every regex that describes how a publisher decorates a title belongs to the
     # grammar module; match.py should only be scoring.
-    match_source = (SOURCE_ROOT / "lyrics" / "match.py").read_text(encoding="utf-8")
-
-    assert "re.compile" not in match_source, "a grammar rule has drifted back into the matcher"
+    tree = ast.parse((SOURCE_ROOT / "lyrics" / "match.py").read_text(encoding="utf-8"))
+    regex_compiles = [
+        node
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "compile"
+        and isinstance(node.func.value, ast.Name)
+        and node.func.value.id == "re"
+    ]
+    assert not regex_compiles, "a grammar rule has drifted back into the matcher"
 
 
 def test_lyrics_contract_modules_are_toolkit_and_transport_neutral():
@@ -217,6 +252,22 @@ def test_provider_boundaries_do_not_retain_legacy_display_or_gate_contracts():
     assert not violations, "provider boundaries retain legacy contracts: " + ", ".join(violations)
 
 
+def test_provider_adapters_depend_on_feature_ports_not_concrete_coordinators():
+    """Adapters must consume narrow application contracts at their boundaries."""
+    paths = (*tuple((SOURCE_ROOT / "providers").glob("*.py")), SOURCE_ROOT / "receiver.py")
+    forbidden = {
+        "kotonoha.app.source_gate",
+        "kotonoha.display.coordinator",
+    }
+    violations = [
+        f"{path.relative_to(SOURCE_ROOT)} -> {imported}"
+        for path in paths
+        for imported in _absolute_imports(path)
+        if imported in forbidden
+    ]
+    assert not violations, "adapters depend on concrete application owners: " + ", ".join(violations)
+
+
 def test_timeline_engine_is_clock_only():
     """Timeline state must not import lyric policy or presentation modules."""
     path = SOURCE_ROOT / "display" / "timeline.py"
@@ -237,7 +288,7 @@ def test_display_engine_is_the_single_policy_owner():
 
 def test_overlay_consumes_display_progress_without_owning_display_policy():
     """The Qt renderer may paint progress but may not select or calculate it."""
-    path = SOURCE_ROOT / "overlay" / "window.py"
+    path = SOURCE_ROOT / "ui" / "overlay" / "window.py"
     forbidden_modules = ("display.karaoke", "display.rules", "display.presentation", "lyrics.select")
     imported = _module_names(path)
     assert not any(any(part in module for part in forbidden_modules) for module in imported), imported
@@ -280,13 +331,22 @@ def test_playback_domain_does_not_depend_on_player_adapters():
 
 
 def test_large_ui_modules_are_explicitly_scoped():
+    allowed: dict[str, str] = {
+        "config.py": "flat configuration compatibility surface; planned package migration",
+        "lyrics/titles.py": "shared title grammar; planned private-helper extraction",
+        "ui/overlay/window.py": "Qt window lifecycle; planned presentation split",
+        "ui/settings/settings_dialog.py": "settings composition boundary; planned presentation split",
+    }
     offenders: list[str] = []
     for path in SOURCE_ROOT.rglob("*.py"):
         lines = len(path.read_text(encoding="utf-8").splitlines())
         relative = path.relative_to(SOURCE_ROOT).as_posix()
-        if lines > 800:
+        if lines > 800 or (lines > 500 and relative not in allowed):
             offenders.append(f"{relative} ({lines} lines)")
-    assert not offenders, "split oversized modules by responsibility: " + ", ".join(offenders)
+    assert not offenders, (
+        "split oversized modules by responsibility or record a scoped follow-up: "
+        + ", ".join(offenders)
+    )
 
 
 def test_application_code_does_not_swallow_unknown_failures():

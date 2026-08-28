@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any, TypeVar
 
 from . import config_store
+from .config_schema import SETTINGS_CONFIG_FIELDS
 
 APP_DIR_NAME = config_store.APP_DIR_NAME
 CONFIG_FILE_NAME = config_store.CONFIG_FILE_NAME
@@ -30,6 +31,11 @@ logger = logging.getLogger(__name__)
 # "cider" = lyrics exposed by Cider's public API.
 VALID_LYRICS_SOURCES = ("netease", "lrclib", "kugou", "qqmusic", "cider")
 DEFAULT_LYRICS_SOURCES = ["netease", "lrclib", "kugou", "cider"]
+
+# Display sources provide playback facts and a candidate lyric document. They
+# are ordered by preference independently from lyric lookup providers.
+VALID_DISPLAY_SOURCES = ("mpris", "cider", "adapter")
+DEFAULT_DISPLAY_SOURCES = ["mpris", "cider", "adapter"]
 
 # Accent presets: (key, start, end, sweep). The key is translated in the UI
 # (see strings.py "accent.*"); the first entry is the default pink.
@@ -123,7 +129,6 @@ class FxIntensity(StrEnum):
 
 EnumValue = TypeVar("EnumValue", bound=StrEnum)
 
-
 @dataclass
 class Config:
     # Transport
@@ -162,6 +167,7 @@ class Config:
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
+    display_sources: list[str] = field(default_factory=lambda: list(DEFAULT_DISPLAY_SOURCES))
     # Loaded from the OS keyring at startup; never serialized to config.json.
     cider_api_token: str = field(default="", repr=False, compare=False, kw_only=True)
     player_lock: str = ""
@@ -193,7 +199,7 @@ class Config:
     def clamped(self) -> Config:
         """Return a copy with values forced into sane ranges."""
         return Config(
-            port=_clamp_int(self.port, 1, 65535, 28745),
+            port=clamp_port(self.port),
             anchor_top=_clean_bool(self.anchor_top, True),
             margin_edge=_clamp_int(self.margin_edge, 0, 4000, 64),
             margin_x=_clamp_int(self.margin_x, -4000, 4000, 0),
@@ -245,7 +251,13 @@ class Config:
             interlude_countdown=_enum_or_default(
                 self.interlude_countdown, InterludeCountdown, InterludeCountdown.OFF
             ),
+            display_sources=_clean_display_sources(self.display_sources),
         )
+
+    def settings_values(self) -> tuple[object, ...]:
+        """Return Settings-owned values in ``SETTINGS_CONFIG_FIELDS`` order."""
+        values = asdict(self)
+        return tuple(values[field_name] for field_name in SETTINGS_CONFIG_FIELDS)
 
     def to_dict(self) -> dict[str, object]:
         """Serialize safe settings fields into the external JSON shape."""
@@ -354,6 +366,17 @@ def _clean_sources(value: object) -> list[str]:
     return cleaned or list(DEFAULT_LYRICS_SOURCES)
 
 
+def _clean_display_sources(value: object) -> list[str]:
+    """Keep known display adapters enabled, ordered, and never empty."""
+    if not isinstance(value, list):
+        return list(DEFAULT_DISPLAY_SOURCES)
+    cleaned: list[str] = []
+    for source in value:
+        if source in VALID_DISPLAY_SOURCES and source not in cleaned:
+            cleaned.append(source)
+    return cleaned or list(DEFAULT_DISPLAY_SOURCES)
+
+
 def _clean_token(value: object) -> str:
     """Normalize the in-memory token without ever treating it as config data."""
     return value.strip() if isinstance(value, str) and value.strip() else ""
@@ -382,12 +405,22 @@ def track_identity_key(title: str, artist: str, duration_s: float | None = None)
 
 def set_track_offset(config: Config, key: str, offset_ms: int) -> int:
     """Store a recent track offset and return its clamped value."""
-    offset = _clamp_int(offset_ms, -10_000, 10_000, 0)
+    offset = clamp_track_offset(offset_ms)
     config.track_offsets.pop(key, None)
     config.track_offsets[key] = offset
     while len(config.track_offsets) > TRACK_OFFSET_CAP:
         config.track_offsets.pop(next(iter(config.track_offsets)))
     return offset
+
+
+def clamp_port(port: int) -> int:
+    """Return a receiver port constrained to the valid TCP range."""
+    return _clamp_int(port, 1, 65535, 28745)
+
+
+def clamp_track_offset(offset_ms: int) -> int:
+    """Return a track offset constrained to the persisted timing range."""
+    return _clamp_int(offset_ms, -10_000, 10_000, 0)
 
 
 def _clamp_float(value: object, low: float, high: float, default: float) -> float:

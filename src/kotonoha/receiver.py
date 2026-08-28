@@ -9,8 +9,8 @@ from urllib.parse import urlparse
 
 from aiohttp import WSMsgType, web
 
-from .display.coordinator import DisplayCoordinator
-from .lyrics.ownership import SourceOwnershipCoordinator
+from .app.source_contracts import SourceIngressPort
+from .display.contracts import AdapterDisplayPort
 from .lyrics.protocol import AdapterClock, AdapterProtocolDecoder, AdapterProtocolError, AdapterSnapshot
 from .playback.models import PlaybackObservation, PlaybackStatus
 
@@ -44,11 +44,11 @@ class AdapterReceiver:
 
     def __init__(
         self,
-        display: DisplayCoordinator,
+        display: AdapterDisplayPort,
         host: str = DEFAULT_HOST,
         port: int = DEFAULT_PORT,
         *,
-        ownership: SourceOwnershipCoordinator,
+        ownership: SourceIngressPort,
         decoder: AdapterProtocolDecoder | None = None,
     ) -> None:
         self._display = display

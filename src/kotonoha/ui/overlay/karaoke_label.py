@@ -20,9 +20,9 @@ from PyQt6.QtCore import QEasingCurve, QPropertyAnimation, QRectF, QSize, Qt
 from PyQt6.QtGui import QBrush, QColor, QFont, QFontMetrics, QLinearGradient, QPainter, QPaintEvent, QPen
 from PyQt6.QtWidgets import QSizePolicy, QWidget
 
-from .display.layout import FontFitPolicy
-from .display.models import LineProgress, WordProgress
-from .lyrics.models import LyricLine
+from ...display.layout import FontFitPolicy
+from ...display.models import LineProgress, WordProgress
+from ...lyrics.models import LyricLine
 
 UNSUNG_COLOR = QColor(255, 255, 255, 95)
 SHADOW_COLOR = QColor(0, 0, 0, 170)

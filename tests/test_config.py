@@ -16,6 +16,15 @@ from kotonoha.config import (
     save_config,
     set_track_offset,
 )
+from kotonoha.config_schema import SETTINGS_CONFIG_FIELDS, SETTINGS_PAGE_FIELDS
+
+
+def test_settings_schema_has_one_ordered_field_contract() -> None:
+    """The Settings page grouping and merge order must stay identical."""
+    flattened = tuple(field_name for page in SETTINGS_PAGE_FIELDS for field_name in page)
+
+    assert flattened == SETTINGS_CONFIG_FIELDS
+    assert len(Config().settings_values()) == len(SETTINGS_CONFIG_FIELDS)
 
 
 def test_roundtrip(tmp_path):
@@ -39,6 +48,13 @@ def test_screen_name_roundtrips(tmp_path):
     path = tmp_path / "config.json"
     save_config(Config(screen_name="DP-1"), path)
     assert load_config(path).screen_name == "DP-1"
+
+
+def test_display_sources_roundtrip_preserves_order(tmp_path):
+    path = tmp_path / "config.json"
+    save_config(Config(display_sources=["adapter", "cider"]), path)
+
+    assert load_config(path).display_sources == ["adapter", "cider"]
 
 
 def test_player_lock_roundtrips_and_clamps():

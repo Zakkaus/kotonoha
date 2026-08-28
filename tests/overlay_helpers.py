@@ -6,11 +6,11 @@ and what it asks of the platform — and both need the same scaffolding.
 
 from PyQt6.QtCore import QRect
 
-from kotonoha.overlay import LyricsOverlay as ProductionLyricsOverlay
 from kotonoha.platform.native import LayerShellController
 from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
 from kotonoha.state import LyricsState
+from kotonoha.ui.overlay import LyricsOverlay as ProductionLyricsOverlay
 
 
 class UnavailableController(LayerShellController):

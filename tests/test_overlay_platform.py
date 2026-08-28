@@ -28,9 +28,9 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config, PanelStyle
-from kotonoha.overlay.geometry import OverlayGeometry
 from kotonoha.platform.overlay_contracts import Output, SurfaceResult, WindowRectangle
 from kotonoha.state import LyricsState
+from kotonoha.ui.overlay.geometry import OverlayGeometry
 
 
 @pytest.mark.parametrize("event_type", (QEvent.Type.Move, QEvent.Type.Resize))
@@ -84,16 +84,18 @@ def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
     overlay._active_screen = source
     overlay._layer_pos = QPoint(2100, 100)  # global x = 2100, on DP-1
     overlay._drag_local = QPoint(100, 40)
-    emitted: list[tuple[int, int, str]] = []
-    overlay.position_changed.connect(lambda edge, margin_x, name: emitted.append((edge, margin_x, name)))
+    emitted = []
+    overlay.position_changed.connect(
+        lambda change: emitted.append((change.margin_edge, change.margin_x, change.screen_name))
+    )
 
     with patch.object(QGuiApplication, "screens", return_value=[source, target]), patch.object(
         overlay, "_window_size", return_value=(500, 140)
     ):
         overlay._commit_drag_position(QPoint(100, 40))
 
-    assert overlay._config.margin_x == -658
-    assert overlay._config.screen_name == "DP-1"
+    assert overlay._config.margin_x == 37
+    assert overlay._config.screen_name == ""
     assert overlay._layer_pos == QPoint(52, 100)
     assert emitted == [(100, -658, "DP-1")]
     overlay.deleteLater()
@@ -106,6 +108,10 @@ def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
     overlay._active_screen = screen
     overlay._layer_pos = QPoint(-1100, 100)
     overlay._drag_local = QPoint(20, 40)
+    emitted = []
+    overlay.position_changed.connect(
+        lambda change: emitted.append((change.margin_edge, change.margin_x, change.screen_name))
+    )
 
     with patch.object(QGuiApplication, "screens", return_value=[screen]), patch.object(
         overlay, "_window_size", return_value=(1100, 140)
@@ -113,7 +119,7 @@ def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
         overlay._commit_drag_position(QPoint(20, 40))
 
     assert overlay._layer_pos == QPoint(-1020, 100)
-    assert overlay._config.margin_x == -1494
+    assert emitted == [(100, -1494, "HDMI-A-1")]
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -366,8 +372,8 @@ def test_a_parked_position_survives_the_next_geometry_pass(qapp):
         parked = overlay._layer_pos
         reloaded = overlay._surface.compute_layer_pos(1100, 140, screen)
 
-    assert overlay._config.screen_width == 2048
-    assert overlay._config.screen_height == 1152
+    assert overlay._config.screen_width == 0
+    assert overlay._config.screen_height == 0
     assert reloaded == parked, f"the panel jumped from {parked} to {reloaded}"
     overlay.deleteLater()
     qapp.processEvents()

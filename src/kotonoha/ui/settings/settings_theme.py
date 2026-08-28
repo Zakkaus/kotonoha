@@ -35,6 +35,23 @@ QListWidget#nav::item:hover { color: %TEXT_STRONG%; background: %NAV_HOVER%; }
 QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: %ACCENT_SOFT%; }
 /* Raised content surface (a card) for depth over the base dialog + sidebar. */
 QWidget#contentCard { background: %CARD_BG%; border: 1px solid %CARD_BORDER%; border-radius: 12px; }
+QScrollArea#settingsPageScroll { background: transparent; border: none; }
+QScrollBar:vertical {
+    background: transparent;
+    width: 9px;
+    margin: 8px 2px;
+}
+QScrollBar::handle:vertical {
+    background: %FIELD_BORDER%;
+    min-height: 36px;
+    border-radius: 4px;
+}
+QScrollBar::handle:vertical:hover { background: %FIELD_BORDER_HOVER%; }
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
+    height: 0px;
+    background: transparent;
+}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical { background: transparent; }
 QCheckBox { background: transparent; spacing: 8px; }
 QCheckBox::indicator, QListWidget::indicator {
     width: 16px; height: 16px;
@@ -175,10 +192,13 @@ _PALETTES: dict[str, dict[str, object]] = {
 # real bundled file — an inline data URI silently renders nothing, leaving a bare
 # filled square. Qt's SVG image plugin renders it. (White reads fine on every
 # accent colour, in both themes, since the checked box is filled with the accent.)
-_CHECKMARK_PATH = Path(__file__).with_name("assets") / "checkmark.svg"
+# The package-wide assets directory is shared by the tray and Settings UI; keep
+# this lookup anchored at the package root after the Settings modules move.
+_ASSETS_PATH = Path(__file__).parents[2] / "assets"
+_CHECKMARK_PATH = _ASSETS_PATH / "checkmark.svg"
 # Mid-grey chevrons for combo/spin arrows — one asset reads fine on both themes.
-_CHEVRON_DOWN_PATH = Path(__file__).with_name("assets") / "chevron-down.svg"
-_CHEVRON_UP_PATH = Path(__file__).with_name("assets") / "chevron-up.svg"
+_CHEVRON_DOWN_PATH = _ASSETS_PATH / "chevron-down.svg"
+_CHEVRON_UP_PATH = _ASSETS_PATH / "chevron-up.svg"
 
 
 

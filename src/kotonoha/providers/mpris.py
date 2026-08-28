@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import logging
 
+from ..app.source_contracts import MprisSourcePort
 from ..config import DEFAULT_LYRICS_SOURCES
-from ..display.coordinator import DisplayCoordinator
-from ..lyrics.ownership import SourceOwnershipCoordinator
+from ..display.contracts import MprisDisplayPort
 from ..lyrics.workflow import ResolverPort
 from ..players import PlayerInfo
 from .mpris_adapter import MprisPlaybackAdapter
@@ -22,11 +22,11 @@ class MprisProvider:
 
     def __init__(
         self,
-        display: DisplayCoordinator,
+        display: MprisDisplayPort,
         poll_interval: float = 0.2,
         *,
         lyrics_sources: list[str] | None = None,
-        ownership: SourceOwnershipCoordinator,
+        ownership: MprisSourcePort,
         resolver: ResolverPort,
         playback_adapter: MprisPlaybackAdapter | None = None,
     ) -> None:

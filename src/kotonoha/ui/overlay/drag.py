@@ -6,7 +6,7 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QPoint
 
-from ..platform.overlay_contracts import DragMode, DragPort, SurfaceResult, WindowPoint
+from ...platform.overlay_contracts import DragMode, DragPort, SurfaceResult, WindowPoint
 
 
 @dataclass(frozen=True)

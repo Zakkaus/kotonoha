@@ -714,16 +714,26 @@ def test_a_wayland_session_reports_that_window_opacity_does_nothing() -> None:
 
 
 def test_the_settings_window_gets_the_same_adapter_the_session_selects() -> None:
-    # The settings window was handed a Layer Shell adapter unconditionally, so on
-    # X11 it reported no window opacity — a Wayland fact — and dropped its own
-    # fade-in. It is a window on the same session as the overlay, and the registry
-    # is what knows which session that is.
+    # Settings shares the session's capability facts, but it is a normal window:
+    # Layer Shell and top-most stacking belong only to the lyrics overlay.
     controller = _FakeController(available=False)
+    factory = DefaultOverlayPlatformFactory(controller, platform_name="xcb")
 
-    settings = DefaultOverlayPlatformFactory(controller, platform_name="xcb")(_FakeHost())
+    settings = factory.for_regular_window(_FakeHost())
 
     assert isinstance(settings.surface, QtWindowPlatform)
     assert settings.capabilities.window_opacity is True
+
+
+def test_a_settings_window_never_uses_layer_shell_even_when_overlay_can() -> None:
+    factory = DefaultOverlayPlatformFactory(
+        _FakeController(available=True), platform_name="wayland", current_desktop="KDE"
+    )
+
+    settings = factory.for_regular_window(_FakeHost())
+
+    assert isinstance(settings.surface, QtWindowPlatform)
+    assert settings.capabilities.layer_shell is False
 
 
 def test_layer_shell_registry_selects_niri_from_its_socket() -> None:

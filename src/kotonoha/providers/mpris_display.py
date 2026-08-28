@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import time
 
-from ..display.coordinator import DisplayCoordinator
+from ..app.source_contracts import SourceClockPort
+from ..display.contracts import MprisDisplayPort
 from ..display.models import EMPTY_FRAME, ResolutionState
 from ..lyrics.models import LyricLine, LyricsDocument
-from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..playback.models import PlaybackObservation, PlaybackStatus
 from .mpris_adapter import MprisPlaybackAdapter
 from .mpris_playback import PlaybackSample
@@ -20,9 +20,9 @@ class MprisDisplayBinding:
 
     def __init__(
         self,
-        display: DisplayCoordinator,
+        display: MprisDisplayPort,
         *,
-        ownership: SourceOwnershipCoordinator,
+        ownership: SourceClockPort,
         playback_adapter: MprisPlaybackAdapter,
     ) -> None:
         """Create a binding around the application display port."""
@@ -46,6 +46,8 @@ class MprisDisplayBinding:
 
     def publish_external_sample(self, commit: TrackCommit, sample: PlaybackSample) -> None:
         """Publish the calibrated external timeline, honoring a live clock when present."""
+        if not self._ownership.accepts("mpris"):
+            return
         observation = sample.observation
         position = observation.position_s
         if position is not None:
@@ -79,7 +81,33 @@ class MprisDisplayBinding:
         resolution: ResolutionState,
     ) -> None:
         """Publish an explicit resolution state without lyric content."""
+        if not self._ownership.accepts("mpris"):
+            return
         self._display.publish_resolution(observation, None, resolution)
+
+    def publish_external_document(
+        self,
+        document: LyricsDocument,
+        info: TrackInfo,
+        *,
+        commit: TrackCommit | None,
+        position_s: float | None = None,
+        playing: bool | None = None,
+        player_name: str | None = None,
+        observed_at: float | None = None,
+    ) -> None:
+        """Publish an MPRIS-owned document only while MPRIS owns the display."""
+        if not self._ownership.accepts("mpris"):
+            return
+        self.publish_document(
+            document,
+            info,
+            commit=commit,
+            position_s=position_s,
+            playing=playing,
+            player_name=player_name,
+            observed_at=observed_at,
+        )
 
     def publish_document(
         self,

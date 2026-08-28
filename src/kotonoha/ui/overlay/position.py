@@ -8,15 +8,15 @@ from dataclasses import dataclass
 
 from PyQt6.QtCore import QPoint
 
-from ..config import Config
-from ..platform.overlay_contracts import (
+from ...config import Config
+from ...platform.overlay_contracts import (
     DragMode,
     Output,
     OverlayPlatform,
     SurfaceResult,
     WindowPoint,
 )
-from ..platform.surface_lifecycle import SurfaceLifecycleOwner
+from ...platform.surface_lifecycle import SurfaceLifecycleOwner
 from .drag import DragRelease, OverlayDragController
 from .geometry import OverlayGeometry, ScreenLike
 
@@ -30,6 +30,8 @@ class PositionCommit:
     margin_edge: int
     margin_x: int
     screen_name: str
+    screen_width: int
+    screen_height: int
 
 
 @dataclass(frozen=True, slots=True)
@@ -285,19 +287,20 @@ class OverlayPositionController:
             else max(0, geometry.height() - height - position.y())
         )
         margin_x = position.x() - (geometry.width() - width) // 2
-        return PositionCommit(margin_edge, margin_x, screen.name())
+        return PositionCommit(margin_edge, margin_x, screen.name(), geometry.width(), geometry.height())
 
     def _commit_position(self, screen: ScreenLike, position: QPoint, commit: PositionCommit) -> None:
         """Apply a placement DTO after the platform has accepted it."""
-        geometry = screen.geometry()
         self._layer_pos = position
         self._selected_screen = screen
         self._active_screen = screen
-        self._config.margin_edge = commit.margin_edge
-        self._config.margin_x = commit.margin_x
-        self._config.screen_name = commit.screen_name
-        self._config.screen_width = geometry.width()
-        self._config.screen_height = geometry.height()
+        self._geometry.record_position_commit(
+            commit.screen_name,
+            commit.screen_width,
+            commit.screen_height,
+            commit.margin_edge,
+            commit.margin_x,
+        )
 
     @staticmethod
     def _log_result(name: str, result: SurfaceResult) -> None:

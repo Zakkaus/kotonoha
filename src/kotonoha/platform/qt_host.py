@@ -19,8 +19,12 @@ class QtWindowHost:
     where a host is passed; a genuine omission now raises.
     """
 
-    def __init__(self, widget: QWidget) -> None:
+    def __init__(self, widget: QWidget, *, stay_on_top: bool = True) -> None:
         self._widget = widget
+        # Overlay surfaces stay above other applications; regular dialogs must
+        # retain normal window-manager stacking. The caller chooses the role at
+        # this boundary instead of making every platform adapter top-most.
+        self._stay_on_top = stay_on_top
 
     def is_alive(self) -> bool:
         """False once the C++ widget is gone.
@@ -31,11 +35,10 @@ class QtWindowHost:
 
     def apply_window_policy(self, policy: WindowPolicy) -> None:
         if policy.recreate_surface:
-            flags = (
-                Qt.WindowType.FramelessWindowHint
-                | Qt.WindowType.WindowStaysOnTopHint
-                | Qt.WindowType.Window
-            )
+            window_type = Qt.WindowType.Window if self._stay_on_top else Qt.WindowType.Dialog
+            flags = Qt.WindowType.FramelessWindowHint | window_type
+            if self._stay_on_top:
+                flags |= Qt.WindowType.WindowStaysOnTopHint
             if policy.transparent_for_input:
                 flags |= Qt.WindowType.WindowTransparentForInput
             if policy.does_not_accept_focus:

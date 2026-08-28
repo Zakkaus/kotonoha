@@ -243,6 +243,15 @@ class DefaultOverlayPlatformFactory:
                 _GenericFallbackProvider(self._controller),
             )
         )
+        # Settings and other ordinary windows share the session's blur facts but
+        # must never become Layer Shell surfaces. Keep that role-specific choice
+        # beside the overlay provider order instead of making the caller duplicate
+        # platform detection.
+        self._regular_window_providers = (
+            _X11Provider(self._controller),
+            _WaylandFallbackProvider(self._controller),
+            _GenericFallbackProvider(self._controller),
+        )
 
     @property
     def controller(self) -> LayerShellBridge:
@@ -259,6 +268,18 @@ class DefaultOverlayPlatformFactory:
             if platform is not None:
                 return platform
         raise RuntimeError("No overlay platform provider claimed the session.")
+
+    def for_regular_window(self, host: WindowHost) -> OverlayPlatform:
+        """Create a normal Qt window adapter without Layer Shell or top-most flags."""
+        platform_name = (
+            self._platform_name if self._platform_name is not None else QGuiApplication.platformName()
+        )
+        desktop = self._current_desktop_value if self._current_desktop_value is not None else self._current_desktop()
+        for provider in self._regular_window_providers:
+            platform = provider.select(platform_name, desktop, host)
+            if platform is not None:
+                return platform
+        raise RuntimeError("No regular-window platform provider claimed the session.")
 
     @staticmethod
     def _current_desktop() -> str:

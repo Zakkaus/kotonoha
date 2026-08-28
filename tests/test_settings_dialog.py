@@ -5,8 +5,9 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QApplication, QLineEdit, QListWidgetItem
+from PyQt6.QtWidgets import QApplication, QLineEdit, QListWidgetItem, QPushButton
 
+from kotonoha.app.intents import ApplyConfig, ClearCache
 from kotonoha.config import (
     Config,
     FxIntensity,
@@ -17,7 +18,7 @@ from kotonoha.config import (
     UiLanguage,
 )
 from kotonoha.players import PlayerInfo
-from kotonoha.settings_dialog import _PAGE_FIELDS, SettingsDialog
+from kotonoha.ui.settings.settings_dialog import _PAGE_FIELDS, SettingsDialog
 
 
 @pytest.fixture(scope="module")
@@ -31,29 +32,81 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     emitted = []
     dialog.clear_cache_requested.connect(lambda: emitted.append(True))
 
-    assert dialog._cache_enabled.isChecked() is False
-    dialog._cache_enabled.setChecked(True)
+    assert dialog.form_widgets.cache_enabled.isChecked() is False
+    dialog.form_widgets.cache_enabled.setChecked(True)
     assert dialog.current_config().cache_enabled is True
-    dialog._clear_cache.click()
+    dialog.form_widgets.clear_cache.click()
     assert emitted == [True]
+    dialog.close()
+
+
+def test_resetting_sources_page_does_not_duplicate_clear_cache_signal(qapp):
+    dialog = SettingsDialog(Config())
+    intents = []
+    legacy_signals = []
+    dialog.intent_requested.connect(intents.append)
+    dialog.clear_cache_requested.connect(lambda: legacy_signals.append(True))
+    sources = next(i for i, fields in enumerate(_PAGE_FIELDS) if "lyrics_sources" in fields)
+    dialog._nav.setCurrentRow(sources)
+
+    dialog._reset_current_page()
+    dialog._reset_current_page()
+    dialog.form_widgets.clear_cache.click()
+
+    assert intents == [ClearCache()]
+    assert legacy_signals == [True]
+    dialog.close()
+
+
+def test_apply_intent_reports_only_fields_changed_since_last_apply(qapp):
+    dialog = SettingsDialog(Config())
+    intents = []
+    dialog.intent_requested.connect(intents.append)
+    theme = dialog.form_widgets.theme_combo
+    theme.setCurrentIndex(theme.findData(ThemeMode.LIGHT.value))
+
+    dialog._emit()
+
+    assert isinstance(intents[-1], ApplyConfig)
+    assert intents[-1].changed_fields == frozenset({"theme"})
     dialog.close()
 
 
 def test_cider_token_is_editable_on_sources_page(qapp):
     dialog = SettingsDialog(Config(cider_api_token="test-token"))
 
-    assert dialog._cider_token.echoMode() == QLineEdit.EchoMode.Password
+    assert dialog.form_widgets.cider_token.echoMode() == QLineEdit.EchoMode.Password
     assert dialog.current_config().cider_api_token == "test-token"
-    dialog._cider_token.setText("new-token")
+    dialog.form_widgets.cider_token.setText("new-token")
     assert dialog.current_config().cider_api_token == "new-token"
+    dialog.close()
+
+
+def test_display_sources_keep_enabled_order_for_runtime_priority(qapp):
+    dialog = SettingsDialog(Config(display_sources=["adapter", "cider"]))
+    source_list = dialog.form_widgets.display_sources_list
+
+    identifiers = []
+    for index in range(source_list.count()):
+        item = source_list.item(index)
+        assert item is not None
+        identifiers.append(str(item.data(Qt.ItemDataRole.UserRole)))
+    assert identifiers == ["adapter", "cider", "mpris"]
+    assert dialog.current_config().display_sources == ["adapter", "cider"]
+
+    first = source_list.takeItem(0)
+    assert first is not None
+    source_list.insertItem(2, first)
+
+    assert dialog.current_config().display_sources == ["cider", "adapter"]
     dialog.close()
 
 
 def test_unavailable_player_lock_survives_dialog_roundtrip(qapp):
     dialog = SettingsDialog(Config(player_lock="org.mpris.MediaPlayer2.closed"), players=[])
 
-    assert dialog._player_combo.currentData() == "org.mpris.MediaPlayer2.closed"
-    assert "unavailable" in dialog._player_combo.currentText().lower()
+    assert dialog.form_widgets.player_combo.currentData() == "org.mpris.MediaPlayer2.closed"
+    assert "unavailable" in dialog.form_widgets.player_combo.currentText().lower()
     assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.closed"
     dialog.close()
 
@@ -64,10 +117,10 @@ def test_detected_players_are_readable_and_store_bus_name(qapp):
         players=[PlayerInfo("org.mpris.MediaPlayer2.youtube", "YouTube Music", "Song", "Artist", "Playing", True)],
     )
 
-    index = dialog._player_combo.findData("org.mpris.MediaPlayer2.youtube")
+    index = dialog.form_widgets.player_combo.findData("org.mpris.MediaPlayer2.youtube")
     assert index > 0
-    assert dialog._player_combo.itemText(index) == "Current · YouTube Music · Playing · Song by Artist"
-    dialog._player_combo.setCurrentIndex(index)
+    assert dialog.form_widgets.player_combo.itemText(index) == "Current · YouTube Music · Playing · Song by Artist"
+    dialog.form_widgets.player_combo.setCurrentIndex(index)
     assert dialog.current_config().player_lock == "org.mpris.MediaPlayer2.youtube"
     dialog.close()
 
@@ -79,18 +132,18 @@ def test_idle_player_row_has_status_and_unavailable_choice_stays_selected(qapp):
         players=[PlayerInfo("org.mpris.MediaPlayer2.idle", "Idle player", playback_status="Stopped")],
     )
 
-    idle_index = dialog._player_combo.findData("org.mpris.MediaPlayer2.idle")
-    assert dialog._player_combo.itemText(idle_index) == "Idle player · Stopped"
-    assert dialog._player_combo.currentData() == bus_name
-    assert dialog._player_combo.currentText() == bus_name + " (unavailable)"
+    idle_index = dialog.form_widgets.player_combo.findData("org.mpris.MediaPlayer2.idle")
+    assert dialog.form_widgets.player_combo.itemText(idle_index) == "Idle player · Stopped"
+    assert dialog.form_widgets.player_combo.currentData() == bus_name
+    assert dialog.form_widgets.player_combo.currentText() == bus_name + " (unavailable)"
     assert dialog.current_config().player_lock == bus_name
     dialog.close()
 
 
 def test_current_line_only_control_roundtrips(qapp):
     dialog = SettingsDialog(Config(current_line_only=True))
-    assert dialog._current_line_only.isChecked() is True
-    dialog._current_line_only.setChecked(False)
+    assert dialog.form_widgets.current_line_only.isChecked() is True
+    dialog.form_widgets.current_line_only.setChecked(False)
     assert dialog.current_config().current_line_only is False
     dialog.close()
 
@@ -115,7 +168,7 @@ def _indicator_white_pixels(qss: str, *, checked: bool) -> int:
 
 
 def test_checked_indicator_actually_renders_a_checkmark(qapp):
-    from kotonoha.settings_dialog import _CHECKMARK_PATH, _skin
+    from kotonoha.ui.settings.settings_dialog import _CHECKMARK_PATH, _skin
 
     # The glyph must be a real bundled file: Qt's stylesheet url() does not decode
     # data: URIs, so an inline data URI renders nothing (a bare filled square).
@@ -129,10 +182,10 @@ def test_apply_reskins_dialog_with_new_accent(qapp):
     dialog = SettingsDialog(Config(accent_start="#FF4FA3"))
     assert "#FF4FA3" in dialog.styleSheet()
     cyan_index = next(
-        i for i in range(dialog._accent.count())
-        if dialog._accent.itemData(i) == ("#4FACFE", "#00F2FE", "#38E1FF")
+        i for i in range(dialog.form_widgets.accent.count())
+        if dialog.form_widgets.accent.itemData(i) == ("#4FACFE", "#00F2FE", "#38E1FF")
     )
-    dialog._accent.setCurrentIndex(cyan_index)
+    dialog.form_widgets.accent.setCurrentIndex(cyan_index)
     dialog._emit()
     assert "#4FACFE" in dialog.styleSheet()
     dialog.close()
@@ -141,33 +194,36 @@ def test_apply_reskins_dialog_with_new_accent(qapp):
 def test_accent_has_custom_picker_and_panel_tint_roundtrips(qapp):
     dialog = SettingsDialog(Config(panel_accent_tint=True))
     # A trailing "Custom…" picker entry (data None) is present.
-    assert any(dialog._accent.itemData(i) is None for i in range(dialog._accent.count()))
-    assert dialog._panel_tint.isChecked() is True
+    assert any(
+        dialog.form_widgets.accent.itemData(i) is None
+        for i in range(dialog.form_widgets.accent.count())
+    )
+    assert dialog.form_widgets.panel_tint.isChecked() is True
     assert dialog.current_config().panel_accent_tint is True
     dialog.close()
 
 
 def test_custom_accent_slot_is_reused_not_accumulated(qapp):
     dialog = SettingsDialog(Config())
-    before = dialog._accent.count()
+    before = dialog.form_widgets.accent.count()
     dialog._set_custom_accent(("#123456", "#223344", "#334455"))
-    after_first = dialog._accent.count()
+    after_first = dialog.form_widgets.accent.count()
     dialog._set_custom_accent(("#654321", "#556677", "#778899"))
     assert after_first == before + 1  # one slot added
-    assert dialog._accent.count() == after_first  # reused, not piling up "自訂" entries
-    assert dialog._accent.currentData() == ("#654321", "#556677", "#778899")
-    assert "#654321".upper() in dialog._accent.currentText()  # labelled with its hex
+    assert dialog.form_widgets.accent.count() == after_first  # reused, not piling up "自訂" entries
+    assert dialog.form_widgets.accent.currentData() == ("#654321", "#556677", "#778899")
+    assert "#654321".upper() in dialog.form_widgets.accent.currentText()  # labelled with its hex
     dialog.close()
 
 
 def test_opacity_is_independent_per_panel_style(qapp):
     dialog = SettingsDialog(Config(panel_style=PanelStyle.PILL, opacity=1.0, frost_opacity=0.4))
-    assert dialog._opacity.value() == 100  # shows the black panel's opacity
-    dialog._panel.setCurrentIndex(dialog._panel.findData("frost"))
-    assert dialog._opacity.value() == 40  # switches to the frosted panel's opacity
-    dialog._opacity.setValue(70)
-    dialog._panel.setCurrentIndex(dialog._panel.findData("pill"))
-    assert dialog._opacity.value() == 100  # black opacity preserved across the switch
+    assert dialog.form_widgets.opacity.value() == 100  # shows the black panel's opacity
+    dialog.form_widgets.panel.setCurrentIndex(dialog.form_widgets.panel.findData("frost"))
+    assert dialog.form_widgets.opacity.value() == 40  # switches to the frosted panel's opacity
+    dialog.form_widgets.opacity.setValue(70)
+    dialog.form_widgets.panel.setCurrentIndex(dialog.form_widgets.panel.findData("pill"))
+    assert dialog.form_widgets.opacity.value() == 100  # black opacity preserved across the switch
     cfg = dialog.current_config()
     assert cfg.opacity == 1.0
     assert cfg.frost_opacity == 0.70  # the frosted change was kept separately
@@ -176,16 +232,16 @@ def test_opacity_is_independent_per_panel_style(qapp):
 
 def test_panel_style_has_frosted_option_and_roundtrips(qapp):
     dialog = SettingsDialog(Config(panel_style=PanelStyle.FROST))
-    assert dialog._panel.count() == 4  # black / white / frosted / text
-    assert dialog._panel.currentData() == "frost"  # selected by data, not index
+    assert dialog.form_widgets.panel.count() == 4  # black / white / frosted / text
+    assert dialog.form_widgets.panel.currentData() == "frost"  # selected by data, not index
     assert dialog.current_config().panel_style == "frost"
     dialog.close()
 
 
 def test_white_panel_option_present_and_roundtrips(qapp):
     dialog = SettingsDialog(Config(panel_style=PanelStyle.WHITE))
-    assert dialog._panel.findData("white") >= 0
-    assert dialog._panel.currentData() == "white"
+    assert dialog.form_widgets.panel.findData("white") >= 0
+    assert dialog.form_widgets.panel.currentData() == "white"
     assert dialog.current_config().panel_style == "white"
     dialog.close()
 
@@ -209,8 +265,8 @@ def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
 
 def test_frost_window_toggle_roundtrips_and_applies_safely(qapp):
     dialog = SettingsDialog(Config(frost_window=False))
-    assert dialog._frost_window.isChecked() is False
-    dialog._frost_window.setChecked(True)
+    assert dialog.form_widgets.frost_window.isChecked() is False
+    dialog.form_widgets.frost_window.setChecked(True)
     assert dialog.current_config().frost_window is True
     dialog._emit()  # applying the toggle must not raise (blur is a no-op in headless)
     dialog.close()
@@ -226,7 +282,7 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
     # three causes it is rather than restating the requirement.
     dialog = SettingsDialog(Config())
     assert dialog._blur_capable is False
-    assert dialog._frost_window.isEnabled() is False
+    assert dialog.form_widgets.frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
     causes = {t(f"set.frost_window.no_{cause}") for cause in ("session", "bridge", "protocol", "build")}
     assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
@@ -260,17 +316,17 @@ def test_title_logo_follows_the_accent(qapp):
     dialog = SettingsDialog(Config(accent_start="#FF4FA3"))
     before = dialog._logo_badge.pixmap().toImage()
     cyan = next(
-        i for i in range(dialog._accent.count())
-        if dialog._accent.itemData(i) == ("#4FACFE", "#00F2FE", "#38E1FF")
+        i for i in range(dialog.form_widgets.accent.count())
+        if dialog.form_widgets.accent.itemData(i) == ("#4FACFE", "#00F2FE", "#38E1FF")
     )
-    dialog._accent.setCurrentIndex(cyan)
+    dialog.form_widgets.accent.setCurrentIndex(cyan)
     dialog._emit()
     assert dialog._logo_badge.pixmap().toImage() != before
     dialog.close()
 
 
 def test_theme_selector_roundtrips_and_switches_palette(qapp):
-    from kotonoha.settings_dialog import _PALETTES
+    from kotonoha.ui.settings.settings_dialog import _PALETTES
 
     dark = SettingsDialog(Config(theme=ThemeMode.DARK))
     assert dark._theme == "dark"
@@ -281,7 +337,7 @@ def test_theme_selector_roundtrips_and_switches_palette(qapp):
     assert light._theme == "light"
     assert cast(str, _PALETTES["light"]["TEXT"]) in light.styleSheet()
     # Switching theme on Apply re-skins the dialog live.
-    light._theme_combo.setCurrentIndex(light._theme_combo.findData("dark"))
+    light.form_widgets.theme_combo.setCurrentIndex(light.form_widgets.theme_combo.findData("dark"))
     light._emit()
     assert light._theme == "dark"
     assert cast(str, _PALETTES["dark"]["TEXT"]) in light.styleSheet()
@@ -307,7 +363,7 @@ def test_connection_section_removed_but_port_preserved(qapp):
 def test_font_picker_is_a_dropdown_not_a_text_box(qapp):
     # Clicking the field should open the font list, not put a text cursor there.
     dialog = SettingsDialog(Config())
-    assert dialog._font_family.isEditable() is False
+    assert dialog.form_widgets.font_family.isEditable() is False
     dialog.close()
 
 
@@ -316,11 +372,11 @@ def test_typography_controls_roundtrip(qapp):
     dialog = SettingsDialog(Config(
         font_family="DejaVu Sans", context_font_size=17, translation_font_size=11,
     ))
-    assert dialog._context_font_size.value() == 17
-    assert dialog._translation_font_size.value() == 11
+    assert dialog.form_widgets.context_font_size.value() == 17
+    assert dialog.form_widgets.translation_font_size.value() == 11
     assert not hasattr(dialog, "_font_weight")  # the numeric weight picker is gone
-    assert dialog._font_style.count() >= 1  # the style picker always offers something
-    assert dialog._font_family.isEditable() is False  # a dropdown, never a text box
+    assert dialog.form_widgets.font_style.count() >= 1  # the style picker always offers something
+    assert dialog.form_widgets.font_family.isEditable() is False  # a dropdown, never a text box
     cfg = dialog.current_config()
     assert cfg.context_font_size == 17
     assert cfg.translation_font_size == 11
@@ -349,11 +405,11 @@ def test_style_picker_lists_the_familys_real_styles(qapp):
 
 def test_panel_width_control_enabled_only_for_fixed_mode(qapp):
     dialog = SettingsDialog(Config(panel_width_mode=PanelWidthMode.FIXED, panel_width=820))
-    assert dialog._panel_width.isEnabled() is True
+    assert dialog.form_widgets.panel_width.isEnabled() is True
     assert dialog.current_config().panel_width == 820
     # Switching to fit-to-text disables the width value (it no longer applies).
-    dialog._panel_width_mode.setCurrentIndex(dialog._panel_width_mode.findData("fit"))
-    assert dialog._panel_width.isEnabled() is False
+    dialog.form_widgets.panel_width_mode.setCurrentIndex(dialog.form_widgets.panel_width_mode.findData("fit"))
+    assert dialog.form_widgets.panel_width.isEnabled() is False
     assert dialog.current_config().panel_width_mode == "fit"
     dialog.close()
 
@@ -380,25 +436,44 @@ def test_sidebar_lists_every_section_and_drives_the_stack(qapp):
     qapp.processEvents()
 
 
+def test_long_settings_page_scrolls_inside_a_bounded_dialog(qapp):
+    dialog = SettingsDialog(Config())
+    dialog.show()
+    qapp.processEvents()
+    initial_size = dialog.size()
+
+    dialog._nav.setCurrentRow(7)
+    qapp.processEvents()
+
+    scroll = dialog._page_scrolls[7]
+    scrollbar = scroll.verticalScrollBar()
+    if scrollbar is None:
+        raise AssertionError("settings page did not create a vertical scrollbar")
+    assert dialog.size() == initial_size
+    assert scrollbar.maximum() > 0
+    assert scrollbar.isVisible()
+    dialog.close()
+
+
 def test_language_change_reveals_restart_button_and_persists(qapp):
     dialog = SettingsDialog(Config(ui_language=UiLanguage.AUTO))
-    assert dialog._restart_btn.isHidden() is True  # nothing changed yet
+    assert dialog.form_widgets.restart_button.isHidden() is True  # nothing changed yet
 
-    dialog._ui_language.setCurrentIndex(dialog._ui_language.findData("ja"))
-    assert dialog._restart_btn.isHidden() is False  # a different language -> offer restart
+    dialog.form_widgets.ui_language.setCurrentIndex(dialog.form_widgets.ui_language.findData("ja"))
+    assert dialog.form_widgets.restart_button.isHidden() is False  # a different language -> offer restart
 
     restarts: list[bool] = []
     applied: list[Config] = []
     dialog.restart_requested.connect(lambda: restarts.append(True))
     dialog.applied.connect(applied.append)
-    dialog._restart_btn.click()
+    dialog.form_widgets.restart_button.click()
 
     assert restarts == [True]
     assert applied and applied[-1].ui_language == "ja"  # persisted before relaunch
 
     # Reverting to the running language hides it again.
-    dialog._ui_language.setCurrentIndex(dialog._ui_language.findData("auto"))
-    assert dialog._restart_btn.isHidden() is True
+    dialog.form_widgets.ui_language.setCurrentIndex(dialog.form_widgets.ui_language.findData("auto"))
+    assert dialog.form_widgets.restart_button.isHidden() is True
     dialog.close()
 
 
@@ -407,8 +482,8 @@ def test_icon_picker_includes_generated_leaf_styles(qapp):
 
     dialog = SettingsDialog(Config(icon_name=leaf_icon.TILE))
     keys = []
-    for i in range(dialog._tray_icon_list.count()):
-        item = dialog._tray_icon_list.item(i)
+    for i in range(dialog.form_widgets.tray_icon_list.count()):
+        item = dialog.form_widgets.tray_icon_list.item(i)
         assert item is not None
         keys.append(str(item.data(Qt.ItemDataRole.UserRole)))
     for style in leaf_icon.PICKER_STYLES:  # accent / white / black / tile are offered
@@ -426,7 +501,7 @@ def test_legacy_mono_icon_stays_selectable_and_is_not_reset(qapp):
     # the picker no longer offers by default. It must still show + stay selected, so
     # Apply preserves it instead of silently resetting to the default icon.
     dialog = SettingsDialog(Config(icon_name=leaf_icon.MONO))
-    assert dialog._picked_icon(dialog._tray_icon_list) == leaf_icon.MONO
+    assert dialog._picked_icon(dialog.form_widgets.tray_icon_list) == leaf_icon.MONO
     assert dialog.current_config().icon_name == leaf_icon.MONO
     dialog.close()
 
@@ -436,15 +511,15 @@ def test_tray_and_window_icons_are_chosen_independently(qapp):
 
     dialog = SettingsDialog(Config(icon_name=leaf_icon.WHITE, window_icon_name=leaf_icon.TILE))
     # Each picker starts on its own saved style, not a shared one.
-    assert dialog._picked_icon(dialog._tray_icon_list) == leaf_icon.WHITE
-    assert dialog._picked_icon(dialog._window_icon_list) == leaf_icon.TILE
+    assert dialog._picked_icon(dialog.form_widgets.tray_icon_list) == leaf_icon.WHITE
+    assert dialog._picked_icon(dialog.form_widgets.window_icon_list) == leaf_icon.TILE
     # Changing one does not move the other.
     window_keys = []
-    for i in range(dialog._window_icon_list.count()):
-        item = dialog._window_icon_list.item(i)
+    for i in range(dialog.form_widgets.window_icon_list.count()):
+        item = dialog.form_widgets.window_icon_list.item(i)
         assert item is not None
         window_keys.append(str(item.data(Qt.ItemDataRole.UserRole)))
-    dialog._window_icon_list.setCurrentRow(window_keys.index(leaf_icon.BLACK))
+    dialog.form_widgets.window_icon_list.setCurrentRow(window_keys.index(leaf_icon.BLACK))
     cfg = dialog.current_config()
     assert cfg.icon_name == leaf_icon.WHITE
     assert cfg.window_icon_name == leaf_icon.BLACK
@@ -493,7 +568,7 @@ def test_reset_icon_tab_rebuilds_icon_pickers_without_doubling(qapp):
     assert cfg.window_icon_name == defaults.window_icon_name
     assert cfg.theme == "light"  # a different tab's edit is untouched by the Icon reset
     # The strips were rebuilt, not appended a second time.
-    assert len(dialog._icon_pickers) == 2
+    assert len(dialog.form_widgets.icon_pickers) == 2
     dialog.close()
 
 
@@ -502,7 +577,7 @@ def test_selected_icon_is_not_blue_tinted(qapp):
     from PyQt6.QtGui import QIcon
 
     dialog = SettingsDialog(Config())
-    item = dialog._tray_icon_list.item(0)
+    item = dialog.form_widgets.tray_icon_list.item(0)
     assert item is not None
     icon = item.icon()
     size = QSize(48, 48)
@@ -519,12 +594,12 @@ def test_effects_controls_roundtrip(qapp):
     dialog = SettingsDialog(
         Config(fx_animate=False, fx_glow=True, fx_word_pop=False, fx_intensity=FxIntensity.EXPRESSIVE)
     )
-    assert dialog._fx_animate.isChecked() is False
-    assert dialog._fx_glow.isChecked() is True
-    assert dialog._fx_word_pop.isChecked() is False
-    assert dialog._fx_intensity.currentData() == "expressive"
-    dialog._fx_glow.setChecked(False)
-    dialog._fx_word_pop.setChecked(True)
+    assert dialog.form_widgets.fx_animate.isChecked() is False
+    assert dialog.form_widgets.fx_glow.isChecked() is True
+    assert dialog.form_widgets.fx_word_pop.isChecked() is False
+    assert dialog.form_widgets.fx_intensity.currentData() == "expressive"
+    dialog.form_widgets.fx_glow.setChecked(False)
+    dialog.form_widgets.fx_word_pop.setChecked(True)
     cfg = dialog.current_config()
     assert cfg.fx_animate is False
     assert cfg.fx_glow is False
@@ -535,8 +610,8 @@ def test_effects_controls_roundtrip(qapp):
 
 def test_fuzzy_match_toggle_roundtrips(qapp):
     dialog = SettingsDialog(Config(fuzzy_match=False))
-    assert dialog._fuzzy_match.isChecked() is False
-    dialog._fuzzy_match.setChecked(True)
+    assert dialog.form_widgets.fuzzy_match.isChecked() is False
+    dialog.form_widgets.fuzzy_match.setChecked(True)
     assert dialog.current_config().fuzzy_match is True
     dialog.close()
 
@@ -545,10 +620,10 @@ def test_settings_window_opacity_applies_and_roundtrips(qapp):
     # Painted-alpha, not setWindowOpacity (which the Qt Wayland plugin ignores):
     # in the light theme the card is thinned; the window fill is thinned in paintEvent.
     dialog = SettingsDialog(Config(settings_opacity=0.8, theme=ThemeMode.LIGHT))
-    assert dialog._settings_opacity.value() == 80
+    assert dialog.form_widgets.settings_opacity.value() == 80
     assert dialog._win_opacity == 0.8
     assert "rgba(255, 255, 255, 204)" in dialog.styleSheet()  # 0.8 * 255 card alpha
-    dialog._settings_opacity.setValue(70)  # not applied until OK/Apply (no live preview)
+    dialog.form_widgets.settings_opacity.setValue(70)  # not applied until OK/Apply (no live preview)
     assert dialog._win_opacity == 0.8  # still the opened value
     dialog._emit()  # Apply
     assert dialog._win_opacity == 0.7
@@ -562,11 +637,11 @@ def test_settings_opacity_100_is_fully_opaque_and_range_is_full(qapp):
     # "100%" window still looked see-through before), and the spin allows 0..100.
     dialog = SettingsDialog(Config(settings_opacity=1.0, theme=ThemeMode.DARK))
     dialog.resize(200, 200)
-    assert dialog._settings_opacity.minimum() == 0
-    assert dialog._settings_opacity.maximum() == 100
+    assert dialog.form_widgets.settings_opacity.minimum() == 0
+    assert dialog.form_widgets.settings_opacity.maximum() == 100
     opaque = dialog.grab().toImage().pixelColor(100, 100).alpha()
     assert opaque == 255  # fully solid at 100%
-    dialog._settings_opacity.setValue(50)
+    dialog.form_widgets.settings_opacity.setValue(50)
     dialog._emit()  # applied on Apply, not live
     assert dialog.grab().toImage().pixelColor(100, 100).alpha() < 200  # clearly see-through
     dialog.close()
@@ -587,8 +662,8 @@ def test_font_picker_resolves_an_absent_family_to_an_installed_one(qapp):
 
 def test_transition_style_roundtrips(qapp):
     dialog = SettingsDialog(Config(fx_transition=FxTransition.ZOOM))
-    assert dialog._fx_transition.currentData() == "zoom"
-    dialog._fx_transition.setCurrentIndex(dialog._fx_transition.findData("slide"))
+    assert dialog.form_widgets.fx_transition.currentData() == "zoom"
+    dialog.form_widgets.fx_transition.setCurrentIndex(dialog.form_widgets.fx_transition.findData("slide"))
     assert dialog.current_config().fx_transition == "slide"
     dialog.close()
 
@@ -614,15 +689,15 @@ def test_icon_picker_shows_preview_only_and_updates_config(qapp):
     dialog = SettingsDialog(Config(icon_name="leaf-pink.svg"))
 
     items = [
-        cast(QListWidgetItem, dialog._tray_icon_list.item(index))
-        for index in range(dialog._tray_icon_list.count())
+        cast(QListWidgetItem, dialog.form_widgets.tray_icon_list.item(index))
+        for index in range(dialog.form_widgets.tray_icon_list.count())
     ]
     keys = [str(item.data(Qt.ItemDataRole.UserRole)) for item in items]
-    assert keys[dialog._tray_icon_list.currentRow()] == "leaf-pink.svg"
+    assert keys[dialog.form_widgets.tray_icon_list.currentRow()] == "leaf-pink.svg"
     assert all(item.text() == "" for item in items)
     assert "leaf-green.svg" in keys
 
-    dialog._tray_icon_list.setCurrentRow(keys.index("leaf-green.svg"))
+    dialog.form_widgets.tray_icon_list.setCurrentRow(keys.index("leaf-green.svg"))
 
     assert dialog.current_config().icon_name == "leaf-green.svg"
     dialog.close()
@@ -664,7 +739,7 @@ def test_the_settings_window_does_not_import_the_mpris_provider():
     import ast
     from pathlib import Path
 
-    source = Path("src/kotonoha/settings_dialog.py").read_text(encoding="utf-8")
+    source = Path("src/kotonoha/ui/settings/settings_dialog.py").read_text(encoding="utf-8")
     imported = {
         node.module
         for node in ast.walk(ast.parse(source))
@@ -731,6 +806,41 @@ def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
     dialog.close()
 
 
+def test_settings_window_stays_visible_when_a_platform_adapter_is_injected(qapp) -> None:
+    """A platform prepare that changes flags must happen before the dialog maps."""
+    from kotonoha.platform.overlay_contracts import OverlayPlatformAdapters
+    from kotonoha.platform.qt_window import QtWindowPlatform
+
+    def factory(host):
+        adapter = QtWindowPlatform(host)
+        return OverlayPlatformAdapters(
+            surface=adapter,
+            input_region=adapter,
+            blur=adapter,
+            placement=adapter,
+            output_binding=None,
+            drag=adapter,
+        )
+
+    baseline = SettingsDialog(Config())
+    baseline.show()
+    qapp.processEvents()
+
+    dialog = SettingsDialog(Config(), platform_factory=factory)
+    dialog.show()
+    qapp.processEvents()
+
+    assert dialog.isVisible()
+    assert dialog.size() == baseline.size()
+    assert not dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+    assert dialog.windowFlags() & Qt.WindowType.Dialog
+    close_button = next(button for button in dialog.findChildren(QPushButton) if button.text() == "✕")
+    assert close_button.isVisible()
+    dialog.close()
+    baseline.close()
+    qapp.processEvents()
+
+
 def test_the_suite_runs_on_the_platform_its_assertions_describe(qapp) -> None:
     # Several tests here assert what an offscreen platform does. conftest used to
     # set QT_QPA_PLATFORM with setdefault, so a Wayland session's value won and
@@ -790,8 +900,8 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
     from PyQt6.QtCore import Qt
 
     dialog = SettingsDialog(Config())
-    for index in range(dialog._sources_list.count()):
-        row = dialog._sources_list.item(index)
+    for index in range(dialog.form_widgets.sources_list.count()):
+        row = dialog.form_widgets.sources_list.item(index)
         assert row is not None
         row.setCheckState(Qt.CheckState.Unchecked)
 

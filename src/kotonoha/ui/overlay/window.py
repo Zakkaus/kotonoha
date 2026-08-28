@@ -26,11 +26,12 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ..config import Config
-from ..display.models import DisplayFrame
-from ..platform import OverlayPlatformFactory, QtWindowHost
-from ..platform.overlay_contracts import DragMode, SurfacePort, SurfaceResult
-from ..state import LyricsState
+from ...app.intents import ChangePosition, ChangeTrackOffset
+from ...config import Config
+from ...display.models import DisplayFrame
+from ...platform import OverlayPlatformFactory, QtWindowHost
+from ...platform.overlay_contracts import DragMode, SurfacePort, SurfaceResult
+from ...state import LyricsState
 from .chrome import OverlayChromeController
 from .content import OverlayContentController
 from .geometry import ScreenLike
@@ -49,8 +50,8 @@ class LyricsOverlay(QWidget):
     # Emitted after a drag, with the edge margin, horizontal offset relative to
     # the target output's center, and output name. The offset is output-local;
     # virtual-desktop origins are deliberately excluded.
-    position_changed = pyqtSignal(int, int, str)
-    track_offset_changed = pyqtSignal(str, int)
+    position_changed = pyqtSignal(object)
+    track_offset_changed = pyqtSignal(object)
 
     _container: QWidget
     _control_bar: QWidget
@@ -388,7 +389,7 @@ class LyricsOverlay(QWidget):
 
     def _emit_track_offset_changed(self, track_key: str, offset_ms: int) -> None:
         """Publish an offset applied by the content owner."""
-        self.track_offset_changed.emit(track_key, offset_ms)
+        self.track_offset_changed.emit(ChangeTrackOffset(track_key, offset_ms))
 
     def _apply_blur(self) -> None:
         """Blur the compositor content behind the pill for the frosted-glass style;
@@ -497,7 +498,15 @@ class LyricsOverlay(QWidget):
 
     def _emit_position_commit(self, commit: PositionCommit) -> None:
         """Emit a completed placement commit from the lifecycle callback."""
-        self.position_changed.emit(commit.margin_edge, commit.margin_x, commit.screen_name)
+        self.position_changed.emit(
+            ChangePosition(
+                commit.margin_edge,
+                commit.margin_x,
+                commit.screen_name,
+                commit.screen_width,
+                commit.screen_height,
+            )
+        )
 
     @property
     def passthrough(self) -> bool:

@@ -9,6 +9,8 @@ import sys
 import tempfile
 from typing import Any, cast
 
+from .config import Config, clamp_port
+
 # Guard against accidental PyQt5 import conflicts before importing PyQt6.
 cast(dict[str, Any], sys.modules)["PyQt5"] = None
 os.environ.setdefault("QT_API", "pyqt6")
@@ -16,9 +18,37 @@ os.environ.setdefault("QT_API", "pyqt6")
 
 def _build_app_objects(app, config):
     """Wire state, receiver, overlay and tray together. Returns the controller."""
-    from .controller import AppController
+    from .app.application_controller import AppController
+    from .app.config_service import ConfigService
+    from .app.restart import QProcessRestartLauncher
+    from .async_worker import BlockingCallRunner
+    from .config_store import ConfigStore
 
-    return AppController(app, config)
+    config = _apply_cli_port(config, app.property("cli_port"))
+    config_service = ConfigService(
+        config,
+        writer=ConfigStore(Config),
+        worker=BlockingCallRunner("kotonoha-config"),
+    )
+    return AppController(
+        app,
+        config_service,
+        restart_launcher=QProcessRestartLauncher(),
+    )
+
+
+def _apply_cli_port(config: Config, cli_port: object) -> Config:
+    """Apply the process-level port override before creating the config owner."""
+    normalized = config.clamped()
+    if not isinstance(cli_port, int) or isinstance(cli_port, bool):
+        return normalized
+    clamped = clamp_port(cli_port)
+    if clamped != cli_port:
+        logging.getLogger(__name__).warning(
+            "CLI --port %d is out of range 1..65535; using %d", cli_port, clamped
+        )
+    normalized.port = clamped
+    return normalized
 
 
 async def _run(app) -> None:

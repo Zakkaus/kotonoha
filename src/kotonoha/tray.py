@@ -1,7 +1,7 @@
 """System tray icon and menu.
 
 Deliberately lean: the detailed configuration lives in the tabbed settings panel
-(see settings_dialog.py). The tray offers only the quick toggle most useful while
+(see the Settings window). The tray offers only the quick toggle most useful while
 the overlay is click-through (lock/unlock), plus Settings and Quit. Left-clicking
 the tray icon also toggles the lock, since that is the one action you cannot
 perform on the HUD itself while it is passing clicks through.

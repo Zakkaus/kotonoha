@@ -62,8 +62,8 @@ def test_line_progress_falls_back_to_line_span():
 def test_the_sweep_follows_a_line_with_no_separators(_session_qapp):
     # KRC and YRC build the line by concatenating word texts, and the sweep assumed
     # one space between every pair: nine characters ran 24px past a 108px line.
-    from kotonoha.karaoke_label import KaraokeLabel
     from kotonoha.lyrics.models import LyricLine, LyricWord
+    from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     text = "我曾经跨过山和大海"
     words = tuple(LyricWord(i * 0.5, (i + 1) * 0.5, ch) for i, ch in enumerate(text))

@@ -8,9 +8,9 @@ from PyQt6.QtCore import QRect, Qt
 from PyQt6.QtGui import QColor, QFont, QPainter
 from PyQt6.QtWidgets import QGraphicsDropShadowEffect, QLabel, QWidget
 
-from ..config import Config
-from ..display.layout import FontFitPolicy
-from ..karaoke_label import KaraokeLabel
+from ...config import Config
+from ...display.layout import FontFitPolicy
+from .karaoke_label import KaraokeLabel
 from .style import OverlayAppearance
 
 PILL_RADIUS = 16

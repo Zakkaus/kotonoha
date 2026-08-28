@@ -6,7 +6,7 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QSpinBox, QWidget
 
 from kotonoha.config import Config
-from kotonoha.settings_dialog import SettingsDialog
+from kotonoha.ui.settings.settings_dialog import SettingsDialog
 
 
 def _widget_rgb_colors(widget: QWidget) -> set[tuple[int, int, int]]:

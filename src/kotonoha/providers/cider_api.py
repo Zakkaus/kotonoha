@@ -8,11 +8,11 @@ import logging
 import time
 from typing import Protocol
 
-from ..display.coordinator import DisplayCoordinator
+from ..app.source_contracts import SourcePublicationPort
+from ..display.contracts import CiderDisplayPort
 from ..display.models import ResolutionState
 from ..lyrics.cider_api import CiderLyricsPayloadError
 from ..lyrics.models import LyricsDocument
-from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from .cider_client import CiderApiClient, CiderApiError, CiderLyricsNotFound
 
@@ -52,8 +52,8 @@ class CiderApiProvider:
     def __init__(
         self,
         *,
-        display: DisplayCoordinator,
-        ownership: SourceOwnershipCoordinator,
+        display: CiderDisplayPort,
+        ownership: SourcePublicationPort,
         client: CiderApiPort | None = None,
         translation_language: str | None = None,
         poll_interval: float = CIDER_API_POLL_INTERVAL,

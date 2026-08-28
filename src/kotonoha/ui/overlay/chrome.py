@@ -8,8 +8,8 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QHBoxLayout, QToolButton, QWidget
 
-from ..icons import earlier_icon, later_icon, lock_icon, settings_icon
-from ..strings import t
+from ...icons import earlier_icon, later_icon, lock_icon, settings_icon
+from ...strings import t
 
 if TYPE_CHECKING:
     from .window import LyricsOverlay

@@ -7,9 +7,9 @@ from typing import Protocol
 
 from PyQt6.QtCore import QPoint, QRect
 
-from ..config import Config
-from ..display.layout import FontFitPolicy
-from ..platform.overlay_contracts import Output, WindowRectangle
+from ...config import Config
+from ...display.layout import FontFitPolicy
+from ...platform.overlay_contracts import Output, WindowRectangle
 
 
 class ScreenLike(Protocol):
@@ -28,10 +28,26 @@ class OverlayGeometry:
         self._config = config
         self._band_height = band_height
         self._fit_policy = FontFitPolicy()
+        self._committed_output: tuple[str, int, int] | None = self._output_from_config(config)
+        self._committed_position: tuple[str, int, int, int, int] | None = None
 
     def update_config(self, config: Config) -> None:
         """Use a newly applied config for subsequent calculations."""
         self._config = config
+        self._committed_output = self._output_from_config(config)
+        self._committed_position = None
+
+    def record_position_commit(
+        self,
+        screen_name: str,
+        width: int,
+        height: int,
+        margin_edge: int,
+        margin_x: int,
+    ) -> None:
+        """Remember the geometry used by the latest platform-accepted placement."""
+        self._committed_output = (screen_name, width, height)
+        self._committed_position = (screen_name, width, height, margin_edge, margin_x)
 
     def configured_screen(self, screens: Sequence[ScreenLike]) -> ScreenLike | None:
         """Find the configured output among the currently reported screens."""
@@ -135,15 +151,19 @@ class OverlayGeometry:
         geometry = screen.geometry() if screen is not None else None
         screen_width = geometry.width() if geometry is not None else 1280
         screen_height = geometry.height() if geometry is not None else 720
-        x = (screen_width - width) // 2 + self._config.margin_x
-        y = self._config.margin_edge if self._config.anchor_top else screen_height - height - self._config.margin_edge
+        committed = self._committed_output
         same_output = (
             geometry is not None
             and screen is not None
-            and screen.name() == self._config.screen_name
-            and (geometry.width(), geometry.height())
-            == (self._config.screen_width, self._config.screen_height)
+            and committed is not None
+            and screen.name() == committed[0]
+            and (geometry.width(), geometry.height()) == committed[1:]
         )
+        committed_position = self._committed_position if same_output else None
+        margin_x = self._config.margin_x if committed_position is None else committed_position[4]
+        margin_edge = self._config.margin_edge if committed_position is None else committed_position[3]
+        x = (screen_width - width) // 2 + margin_x
+        y = margin_edge if self._config.anchor_top else screen_height - height - margin_edge
         return self.clamp_to_screen(
             QPoint(x, y),
             screen=screen,
@@ -151,6 +171,13 @@ class OverlayGeometry:
             height=height,
             allow_partial=same_output,
         )
+
+    @staticmethod
+    def _output_from_config(config: Config) -> tuple[str, int, int] | None:
+        """Return a trusted persisted output geometry when one is available."""
+        if not config.screen_name or config.screen_width <= 0 or config.screen_height <= 0:
+            return None
+        return config.screen_name, config.screen_width, config.screen_height
 
     @staticmethod
     def clamp_to_screen(

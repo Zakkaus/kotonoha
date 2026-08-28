@@ -22,6 +22,7 @@ from PyQt6.QtCore import (
 from PyQt6.QtGui import (
     QCloseEvent,
     QColor,
+    QGuiApplication,
     QHideEvent,
     QIcon,
     QMouseEvent,
@@ -32,117 +33,74 @@ from PyQt6.QtGui import (
     QShowEvent,
 )
 from PyQt6.QtWidgets import (
-    QCheckBox,
-    QComboBox,
     QDialog,
     QDialogButtonBox,
-    QFontComboBox,
+    QFrame,
     QHBoxLayout,
     QLabel,
-    QLineEdit,
     QListWidget,
     QListWidgetItem,
     QPushButton,
-    QSpinBox,
+    QScrollArea,
+    QSizePolicy,
     QStackedWidget,
     QVBoxLayout,
     QWidget,
 )
 
-from . import leaf_icon, settings_theme
-from .config import Config
-from .platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
-from .players import PlayerInfo
+from ... import leaf_icon
+from ...app.intents import ApplyConfig, ClearCache, RequestRestart
+from ...config import Config
+from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
+from ...players import PlayerInfo
+from ...strings import t
+from . import settings_theme
+from .controls import SettingsWidgets
+from .form_state import PAGE_FIELDS as _FORM_PAGE_FIELDS
+from .form_state import SettingsFormState
 from .settings_pages import SettingsPageBuilder
 from .settings_widgets import IconStrip, available_font_styles, resolve_font_family
-from .strings import t
 
 _CHECKMARK_PATH = settings_theme._CHECKMARK_PATH
 _PALETTES = settings_theme._PALETTES
 _resolve_theme = settings_theme._resolve_theme
 _skin = settings_theme._skin
+# TODO: remove this forwarding name after settings tools import PAGE_FIELDS from
+# ui.settings.form_state directly.
+_PAGE_FIELDS = _FORM_PAGE_FIELDS  # compatibility export for existing settings tests/tools
 
 # Dialog corner radius, shared by the painted background and the KWin blur region.
 _RADIUS = 14
+_MINIMUM_WIDTH = 560
+_DEFAULT_WIDTH = 860
+_DEFAULT_HEIGHT = 680
+_MINIMUM_HEIGHT = 480
+_SCREEN_MARGIN = 48
 
 logger = logging.getLogger(__name__)
 
 
+class _SettingsTitleBar(QWidget):
+    """Drag the frameless settings window through the compositor system move."""
+
+    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
+        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
+            window = self.window()
+            if window is not None:
+                handle = window.windowHandle()
+                if handle is not None and handle.startSystemMove():
+                    a0.accept()
+                    return
+        super().mousePressEvent(a0)
+
+
 # Theme generation lives in settings_theme.py; the dialog owns only lifecycle
 # and painting of the resulting window.
-# The Config fields each sidebar page owns, in nav order. Used by "Reset this tab"
-# to restore just the current page's fields to their defaults, leaving the rest.
-_PAGE_FIELDS: tuple[tuple[str, ...], ...] = (
-    ("ui_language", "theme", "frost_window", "settings_opacity"),                         # General
-    ("icon_name", "window_icon_name"),                                                   # Icon
-    ("font_family", "font_style", "font_size", "context_font_size", "translation_font_size"),  # Text
-    ("panel_style", "panel_width_mode", "panel_width", "opacity", "frost_opacity", "panel_accent_tint"),  # Panel
-    ("accent_start", "accent_end", "accent_sweep", "fx_animate", "fx_transition",
-     "fx_glow", "fx_word_pop", "fx_intensity"),                                          # Effects
-    ("karaoke", "lead_ms", "show_translation", "current_line_only", "lyrics_script",
-     "interlude_style", "interlude_countdown"),                                          # Lyrics
-    ("anchor_top", "margin_edge", "margin_x", "passthrough"),                            # Position
-    (
-        "lyrics_sources", "player_lock", "prefer_best_lyrics", "fuzzy_match", "cache_enabled", "cider_api_token"
-    ),  # Sources
-)
-
-
 class SettingsDialog(QDialog):
     applied = pyqtSignal(object)  # emits Config
+    intent_requested = pyqtSignal(object)  # emits an application intent
     clear_cache_requested = pyqtSignal()
     restart_requested = pyqtSignal()
-
-    # Page controls are created by SettingsPageBuilder's explicit page factory.
-    # Declaring them at this owner boundary keeps staged UI state typed while
-    # preserving the dialog's compatibility surface for existing callers/tests.
-    _ui_language: QComboBox
-    _theme_combo: QComboBox
-    _frost_window: QCheckBox
-    _settings_opacity: QSpinBox
-    _restart_btn: QPushButton
-    _tray_icon_list: IconStrip
-    _window_icon_list: IconStrip
-    _font_family: QFontComboBox
-    _font_family_shown: str
-    _font_family_configured: str
-    _font_style: QComboBox
-    _font_size: QSpinBox
-    _context_font_size: QSpinBox
-    _translation_font_size: QSpinBox
-    _panel: QComboBox
-    _panel_width_mode: QComboBox
-    _panel_width: QSpinBox
-    _panel_opacity: dict[str, float]
-    _opacity_active_key: str
-    _opacity: QSpinBox
-    _panel_tint: QCheckBox
-    _accent: QComboBox
-    _custom_index: int
-    _accent_last_index: int
-    _fx_animate: QCheckBox
-    _fx_transition: QComboBox
-    _fx_glow: QCheckBox
-    _fx_word_pop: QCheckBox
-    _fx_intensity: QComboBox
-    _karaoke: QCheckBox
-    _lead: QSpinBox
-    _translation: QCheckBox
-    _current_line_only: QCheckBox
-    _lyrics_script: QComboBox
-    _interlude_style: QComboBox
-    _interlude_countdown: QComboBox
-    _anchor: QComboBox
-    _margin_edge: QSpinBox
-    _margin_x: QSpinBox
-    _passthrough: QCheckBox
-    _player_combo: QComboBox
-    _sources_list: QListWidget
-    _prefer_best: QCheckBox
-    _fuzzy_match: QCheckBox
-    _cache_enabled: QCheckBox
-    _cider_token: QLineEdit
-    _clear_cache: QPushButton
 
     def __init__(
         self,
@@ -153,15 +111,13 @@ class SettingsDialog(QDialog):
         platform_factory: OverlayPlatformFactory | None = None,
     ) -> None:
         super().__init__(parent)
-        self._config = config.clamped()
-        self._players = list(players or [])
-        # Every icon strip built (tray + window), each with its own {key: item} map,
-        # so accent re-renders can refresh all of them. Populated by _build_icon_picker.
-        self._icon_pickers: list[tuple[IconStrip, dict[str, QListWidgetItem]]] = []
+        self._form_state = SettingsFormState(config)
+        self._widgets = SettingsWidgets()
+        self._players = tuple(players or ())
         # The UI language only takes effect on restart, so remember what is in
         # effect now to decide when to offer the restart button.
-        self._initial_ui_language = config.ui_language
-        self._theme = _resolve_theme(config.theme)
+        self._initial_ui_language = self._config.ui_language
+        self._theme = _resolve_theme(self._config.theme)
         self._did_fade_in = False
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -173,7 +129,7 @@ class SettingsDialog(QDialog):
         # see-through in front of a backdrop that will not be blurred.
         self._platform: OverlayPlatform | None = None
         if platform_factory is not None:
-            self._platform = platform_factory(QtWindowHost(self))
+            self._platform = platform_factory(QtWindowHost(self, stay_on_top=False))
         capabilities = self._platform.capabilities if self._platform is not None else None
         self._blur_capable = capabilities is not None and capabilities.blur
         # The cause travels with the capability, so the window can say which of the
@@ -185,22 +141,23 @@ class SettingsDialog(QDialog):
         # platform name here made presentation decide a compositor fact itself, and
         # a name passed in as an argument is still that same decision.
         self._window_opacity_ok = capabilities is None or capabilities.window_opacity
-        self._frosted = self._blur_capable and config.frost_window
+        self._frosted = self._blur_capable and self._config.frost_window
         # See-through level for the window surfaces. NOT setWindowOpacity — the Qt
         # Wayland plugin ignores that (no client-side opacity protocol); instead the
         # painted window fill + card alpha carry it, so it works under KWin.
-        self._win_opacity = config.settings_opacity
-        self.setStyleSheet(_skin(config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self._win_opacity = self._config.settings_opacity
+        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
 
         # Sidebar categories drive a stacked content area (replaces top tabs).
         self._stack = QStackedWidget()
+        self._page_scrolls: list[QScrollArea] = []
         self._nav = QListWidget()
         self._nav.setObjectName("nav")
         self._nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # The page builder owns controls and page-local handlers; this dialog owns
         # their lifetime and the staged configuration they edit.
-        self._page_builder = SettingsPageBuilder(self)
+        self._page_builder = SettingsPageBuilder(self, self._widgets)
         self._page_builders = (
             self._page_builder.general_page,
             self._page_builder.icon_page,
@@ -218,11 +175,12 @@ class SettingsDialog(QDialog):
             strict=True,
         ):
             self._nav.addItem(QListWidgetItem(t(key)))
-            self._stack.addWidget(builder())
+            self._stack.addWidget(self._scroll_page(builder()))
         self._nav.setCurrentRow(0)
         self._stack.setCurrentIndex(0)
         self._nav.currentRowChanged.connect(self._stack.setCurrentIndex)
-        self.setMinimumWidth(560)
+        self.setMinimumWidth(_MINIMUM_WIDTH)
+        self.setMinimumHeight(_MINIMUM_HEIGHT)
 
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok
@@ -273,21 +231,29 @@ class SettingsDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
-        layout.addLayout(self._title_bar())
+        layout.addWidget(self._title_bar())
         layout.addWidget(header_line)
         layout.addLayout(body, 1)
         layout.addWidget(buttons)
+        self._set_default_size()
 
     # --- chrome ---
 
-    def _title_bar(self) -> QHBoxLayout:
-        bar = QHBoxLayout()
+    def _title_bar(self) -> QWidget:
+        title_bar = _SettingsTitleBar()
+        bar = QHBoxLayout(title_bar)
+        # The previous title bar was a layout nested directly in the dialog and
+        # therefore had no child-widget margins. Keep that geometry while the
+        # wrapper gives us a dedicated drag target.
+        bar.setContentsMargins(0, 0, 0, 0)
         bar.setSpacing(9)
         self._logo_badge = QLabel()
+        self._logo_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._update_logo_badge()  # accent-tinted leaf logo (falls back to the app icon)
         bar.addWidget(self._logo_badge)
         title = QLabel(t("settings.title"))
         title.setObjectName("dialogTitle")  # styled by the theme QSS
+        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         close_btn = QPushButton("✕")
         close_btn.setObjectName("closeButton")
         close_btn.setFixedSize(26, 26)
@@ -296,7 +262,31 @@ class SettingsDialog(QDialog):
         bar.addWidget(title)
         bar.addStretch(1)
         bar.addWidget(close_btn)
-        return bar
+        return title_bar
+
+    def _scroll_page(self, page: QWidget) -> QScrollArea:
+        """Put one settings page behind a bounded, independently scrollable view."""
+        scroll = QScrollArea()
+        scroll.setObjectName("settingsPageScroll")
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        scroll.setWidgetResizable(True)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        scroll.setWidget(page)
+        self._page_scrolls.append(scroll)
+        return scroll
+
+    def _set_default_size(self) -> None:
+        """Choose a useful initial size without allowing content to fill the screen."""
+        width = _DEFAULT_WIDTH
+        height = _DEFAULT_HEIGHT
+        screen = self.screen() or QGuiApplication.primaryScreen()
+        if screen is not None:
+            available = screen.availableGeometry()
+            width = min(width, max(_MINIMUM_WIDTH, available.width() - _SCREEN_MARGIN))
+            height = min(height, max(_MINIMUM_HEIGHT, available.height() - _SCREEN_MARGIN))
+        self.resize(width, height)
 
     def paintEvent(self, a0: QPaintEvent | None) -> None:  # noqa: ARG002
         palette = _PALETTES[self._theme]
@@ -364,37 +354,36 @@ class SettingsDialog(QDialog):
             return SurfaceResult.applied()
         return self._platform.surface.close()
 
-    def resizeEvent(self, a0: QResizeEvent | None) -> None:
-        super().resizeEvent(a0)
-        self._apply_blur()  # keep the blur region matched to the window size
+    def show(self) -> None:
+        """Prepare the platform surface before Qt maps the dialog window.
 
-    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
-        # Wayland forbids client-side move(); use the compositor's system move.
-        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
-            handle = self.windowHandle()
-            if handle is not None and handle.startSystemMove():
-                a0.accept()
-                return
-        super().mousePressEvent(a0)
-
-    def showEvent(self, a0: QShowEvent | None) -> None:
-        super().showEvent(a0)
+        ``surface.prepare()`` may replace the window flags. Qt hides a window when
+        its flags are changed after it has been shown, so doing this in
+        ``showEvent`` makes a settings window opened through a platform factory
+        disappear immediately.
+        """
         if self._platform is not None:
             prepared = self._platform.surface.prepare()
             if not prepared.succeeded:
                 logger.warning("Settings surface preparation failed: %s", prepared.reason)
-            else:
-                activated = self._platform.surface.activate()
-                if not activated.succeeded:
-                    logger.warning("Settings surface activation failed: %s", activated.reason)
+        super().show()
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        super().resizeEvent(a0)
+        self._apply_blur()  # keep the blur region matched to the window size
+
+    def showEvent(self, a0: QShowEvent | None) -> None:
+        super().showEvent(a0)
+        if self._platform is not None:
+            activated = self._platform.surface.activate()
+            if not activated.succeeded:
+                logger.warning("Settings surface activation failed: %s", activated.reason)
         # Now the stylesheet metrics are active: size the sidebar to its widest
-        # label (in any language) and the content to the tallest page, so switching
-        # sections never resizes the window and the nav never truncates.
+        # label (in any language), so switching sections never resizes the window and
+        # the nav never truncates. Page height belongs to its own scroll area.
         self._nav.setFixedWidth(self._nav.sizeHintForColumn(0) + 30)
         self._stack.setMinimumWidth(400)
-        widgets = (self._stack.widget(i) for i in range(self._stack.count()))
-        tallest = max((widget.sizeHint().height() for widget in widgets if widget is not None), default=0)
-        self._stack.setMinimumHeight(tallest)
+        self._stack.setMinimumHeight(0)
         needed = self._nav.width() + 1 + 400 + 46  # nav + divider + content + margins/spacing
         if self.minimumWidth() < needed:
             self.setMinimumWidth(needed)
@@ -420,14 +409,57 @@ class SettingsDialog(QDialog):
         pixmap.setDevicePixelRatio(2.0)
         self._logo_badge.setPixmap(pixmap)
 
+    @property
+    def staged_config(self) -> Config:
+        """Return the configuration currently staged by this dialog."""
+        return self._form_state.config
+
+    @property
+    def _config(self) -> Config:
+        """Expose staged settings to older page-builder callers."""
+        return self.staged_config
+
+    @property
+    def players(self) -> tuple[PlayerInfo, ...]:
+        """Return the discovered players offered by the source page."""
+        return self._players
+
+    @property
+    def blur_capable(self) -> bool:
+        """Return whether the injected platform can blur this settings window."""
+        return self._blur_capable
+
+    @property
+    def blur_reason(self) -> str | None:
+        """Return why blur is unavailable, when the platform supplied a reason."""
+        return self._blur_reason
+
+    @property
+    def theme_name(self) -> str:
+        """Return the active settings-window theme name."""
+        return self._theme
+
+    @property
+    def form_widgets(self) -> SettingsWidgets:
+        """Return the controls owned by this settings form instance."""
+        return self._widgets
+
     def _update_restart_hint(self) -> None:
         """Show restart when the staged UI language differs from the active one."""
-        self._restart_btn.setVisible(self._ui_language.currentData() != self._initial_ui_language)
+        self._widgets.restart_button.setVisible(
+            self._widgets.ui_language.currentData() != self._initial_ui_language
+        )
 
     def _request_restart(self) -> None:
         """Persist staged settings before asking the application to restart."""
         self._emit()
+        self.intent_requested.emit(RequestRestart())
         self.restart_requested.emit()
+
+    def _request_clear_cache(self) -> None:
+        """Submit a typed cache action while retaining the legacy Qt signal."""
+        self.intent_requested.emit(ClearCache())
+        self.clear_cache_requested.emit()
 
     @staticmethod
     def _resolve_font_family(font_family: str) -> str:
@@ -451,6 +483,10 @@ class SettingsDialog(QDialog):
         """Read checked lyric sources through the page-builder boundary."""
         return self._page_builder.selected_sources()
 
+    def _selected_display_sources(self) -> list[str]:
+        """Read checked display sources through the page-builder boundary."""
+        return self._page_builder.selected_display_sources()
+
     def _chosen_font_family(self) -> str:
         """Return the selected family while preserving an untouched fallback chain."""
         return self._page_builder.chosen_font_family()
@@ -458,57 +494,60 @@ class SettingsDialog(QDialog):
     def _refresh_generated_icons(self) -> None:
         """Refresh accent-dependent icon previews."""
         self._page_builder.refresh_generated_icons()
+
     def current_config(self) -> Config:
-        accent_data = self._accent.currentData()
+        w = self._widgets
+        accent_data = w.accent.currentData()
         if accent_data is None:  # the picker entry left selected — keep the current accent
             accent_data = (self._config.accent_start, self._config.accent_end, self._config.accent_sweep)
         accent_start, accent_end, accent_sweep = accent_data
-        self._panel_opacity[self._opacity_active_key] = self._opacity.value() / 100.0  # save the active slider
+        w.panel_opacity.set_value(w.opacity_active_key, w.opacity.value() / 100.0)  # save the active slider
         return replace(
             self._config,
-            ui_language=str(self._ui_language.currentData()),
-            theme=str(self._theme_combo.currentData()),
-            frost_window=self._frost_window.isChecked(),
-            settings_opacity=self._settings_opacity.value() / 100.0,
-            lyrics_script=str(self._lyrics_script.currentData()),
-            interlude_style=str(self._interlude_style.currentData()),
-            interlude_countdown=str(self._interlude_countdown.currentData()),
-            icon_name=self._picked_icon(self._tray_icon_list),
-            window_icon_name=self._picked_icon(self._window_icon_list),
+            ui_language=str(w.ui_language.currentData()),
+            theme=str(w.theme_combo.currentData()),
+            frost_window=w.frost_window.isChecked(),
+            settings_opacity=w.settings_opacity.value() / 100.0,
+            lyrics_script=str(w.lyrics_script.currentData()),
+            interlude_style=str(w.interlude_style.currentData()),
+            interlude_countdown=str(w.interlude_countdown.currentData()),
+            icon_name=self._picked_icon(w.tray_icon_list),
+            window_icon_name=self._picked_icon(w.window_icon_list),
             font_family=self._chosen_font_family(),
-            font_style=self._font_style.currentText(),
-            font_size=self._font_size.value(),
-            context_font_size=self._context_font_size.value(),
-            translation_font_size=self._translation_font_size.value(),
-            opacity=self._panel_opacity["opacity"],
-            frost_opacity=self._panel_opacity["frost_opacity"],
-            panel_style=str(self._panel.currentData()),
-            panel_width_mode=str(self._panel_width_mode.currentData()),
-            panel_width=self._panel_width.value(),
-            panel_accent_tint=self._panel_tint.isChecked(),
+            font_style=w.font_style.currentText(),
+            font_size=w.font_size.value(),
+            context_font_size=w.context_font_size.value(),
+            translation_font_size=w.translation_font_size.value(),
+            opacity=w.panel_opacity.opacity,
+            frost_opacity=w.panel_opacity.frost_opacity,
+            panel_style=str(w.panel.currentData()),
+            panel_width_mode=str(w.panel_width_mode.currentData()),
+            panel_width=w.panel_width.value(),
+            panel_accent_tint=w.panel_tint.isChecked(),
             accent_start=accent_start,
             accent_end=accent_end,
             accent_sweep=accent_sweep,
-            fx_animate=self._fx_animate.isChecked(),
-            fx_transition=str(self._fx_transition.currentData()),
-            fx_glow=self._fx_glow.isChecked(),
-            fx_word_pop=self._fx_word_pop.isChecked(),
-            fx_intensity=str(self._fx_intensity.currentData()),
-            karaoke=self._karaoke.isChecked(),
-            lead_ms=self._lead.value(),
-            show_translation=self._translation.isChecked(),
-            current_line_only=self._current_line_only.isChecked(),
-            anchor_top=bool(self._anchor.currentData()),
-            margin_edge=self._margin_edge.value(),
-            margin_x=self._margin_x.value(),
+            fx_animate=w.fx_animate.isChecked(),
+            fx_transition=str(w.fx_transition.currentData()),
+            fx_glow=w.fx_glow.isChecked(),
+            fx_word_pop=w.fx_word_pop.isChecked(),
+            fx_intensity=str(w.fx_intensity.currentData()),
+            karaoke=w.karaoke.isChecked(),
+            lead_ms=w.lead.value(),
+            show_translation=w.translation.isChecked(),
+            current_line_only=w.current_line_only.isChecked(),
+            anchor_top=bool(w.anchor.currentData()),
+            margin_edge=w.margin_edge.value(),
+            margin_x=w.margin_x.value(),
             screen_name=self._config.screen_name,
-            passthrough=self._passthrough.isChecked(),
+            passthrough=w.passthrough.isChecked(),
             lyrics_sources=self._selected_sources(),
-            prefer_best_lyrics=self._prefer_best.isChecked(),
-            fuzzy_match=self._fuzzy_match.isChecked(),
-            cache_enabled=self._cache_enabled.isChecked(),
-            cider_api_token=self._cider_token.text().strip(),
-            player_lock=str(self._player_combo.currentData()),
+            display_sources=self._selected_display_sources(),
+            prefer_best_lyrics=w.prefer_best.isChecked(),
+            fuzzy_match=w.fuzzy_match.isChecked(),
+            cache_enabled=w.cache_enabled.isChecked(),
+            cider_api_token=w.cider_token.text().strip(),
+            player_lock=str(w.player_combo.currentData()),
         ).clamped()
 
     def _reset_current_page(self) -> None:
@@ -519,12 +558,12 @@ class SettingsDialog(QDialog):
         if not 0 <= idx < len(self._page_builders):
             return
         defaults = Config()
-        self._config = self._reset_page_values(self.current_config(), defaults, idx)
+        self._form_state.reset_page(idx, defaults)
         # Drop the icon strips the page being rebuilt had registered, so _icon_tab
         # re-adding them doesn't leave stale duplicates. (Compare the underlying
         # page index explicitly: bound-method reflection would hide ownership.
         if idx == 1:
-            self._icon_pickers.clear()
+            self._widgets.icon_pickers.clear()
         new_page = self._page_builders[idx]()
         old_page = self._stack.widget(idx)
         self._stack.insertWidget(idx, new_page)
@@ -533,83 +572,9 @@ class SettingsDialog(QDialog):
             old_page.deleteLater()
         self._stack.setCurrentIndex(idx)
 
-    @staticmethod
-    def _reset_page_values(current: Config, defaults: Config, index: int) -> Config:
-        """Reset one page through explicit fields while preserving other edits."""
-        if index == 0:
-            return replace(
-                current,
-                ui_language=defaults.ui_language,
-                theme=defaults.theme,
-                frost_window=defaults.frost_window,
-                settings_opacity=defaults.settings_opacity,
-            ).clamped()
-        if index == 1:
-            return replace(current, icon_name=defaults.icon_name, window_icon_name=defaults.window_icon_name).clamped()
-        if index == 2:
-            return replace(
-                current,
-                font_family=defaults.font_family,
-                font_style=defaults.font_style,
-                font_size=defaults.font_size,
-                context_font_size=defaults.context_font_size,
-                translation_font_size=defaults.translation_font_size,
-            ).clamped()
-        if index == 3:
-            return replace(
-                current,
-                panel_style=defaults.panel_style,
-                panel_width_mode=defaults.panel_width_mode,
-                panel_width=defaults.panel_width,
-                opacity=defaults.opacity,
-                frost_opacity=defaults.frost_opacity,
-                panel_accent_tint=defaults.panel_accent_tint,
-            ).clamped()
-        if index == 4:
-            return replace(
-                current,
-                accent_start=defaults.accent_start,
-                accent_end=defaults.accent_end,
-                accent_sweep=defaults.accent_sweep,
-                fx_animate=defaults.fx_animate,
-                fx_transition=defaults.fx_transition,
-                fx_glow=defaults.fx_glow,
-                fx_word_pop=defaults.fx_word_pop,
-                fx_intensity=defaults.fx_intensity,
-            ).clamped()
-        if index == 5:
-            return replace(
-                current,
-                karaoke=defaults.karaoke,
-                lead_ms=defaults.lead_ms,
-                show_translation=defaults.show_translation,
-                current_line_only=defaults.current_line_only,
-                lyrics_script=defaults.lyrics_script,
-                interlude_style=defaults.interlude_style,
-                interlude_countdown=defaults.interlude_countdown,
-            ).clamped()
-        if index == 6:
-            return replace(
-                current,
-                anchor_top=defaults.anchor_top,
-                margin_edge=defaults.margin_edge,
-                margin_x=defaults.margin_x,
-                passthrough=defaults.passthrough,
-            ).clamped()
-        if index == 7:
-            return replace(
-                current,
-                lyrics_sources=defaults.lyrics_sources,
-                player_lock=defaults.player_lock,
-                prefer_best_lyrics=defaults.prefer_best_lyrics,
-                fuzzy_match=defaults.fuzzy_match,
-                cache_enabled=defaults.cache_enabled,
-                cider_api_token=defaults.cider_api_token,
-            ).clamped()
-        raise ValueError(f"unknown settings page index: {index}")
-
     def _emit(self) -> None:
-        self._config = self.current_config()
+        self._form_state.replace(self.current_config())
+        changed_fields = self._form_state.changed_fields()
         # Toggle the frosted backdrop live: apply/clear the KWin blur to match the
         # new setting, so the re-skin below can pick the right (translucent) card.
         frosted = self._blur_capable and self._config.frost_window
@@ -631,6 +596,8 @@ class SettingsDialog(QDialog):
         self._refresh_generated_icons()  # re-tint the accent/tile icon previews
         self.update()  # repaint the frameless background (theme / frost)
         self.applied.emit(self._config)
+        self.intent_requested.emit(ApplyConfig(self._config, changed_fields))
+        self._form_state.mark_applied()
 
     def _accept(self) -> None:
         self._emit()

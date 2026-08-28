@@ -89,7 +89,7 @@ uv run kotonoha
 
 ## Configuration
 
-Open **Settings** from the tray. Under **Sources**, providers can be reordered or disabled. The default order is `netease -> lrclib -> kugou -> cider`.
+Open **Settings** from the tray. Under **Sources**, lyric providers can be reordered or disabled. The default order is `netease -> lrclib -> kugou -> cider`. The display sources below it can also have multiple enabled entries; their order controls which live player source wins when MPRIS is unavailable.
 
 **Prefer best match** is enabled by default: cached results and matching Cider snapshots are considered first, then network sources compete by match quality. Disable it for strict ordered fallback.
 

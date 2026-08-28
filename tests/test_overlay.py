@@ -218,7 +218,7 @@ def test_current_line_only_hides_context_and_keeps_current_translation(qapp):
 
 
 def test_long_title_marquee_scrolls_then_holds(qapp):
-    from kotonoha.karaoke_label import _MARQUEE_PAUSE_S, _MARQUEE_SPEED_PX_S, KaraokeLabel
+    from kotonoha.ui.overlay.karaoke_label import _MARQUEE_PAUSE_S, _MARQUEE_SPEED_PX_S, KaraokeLabel
 
     label = KaraokeLabel()
     label.resize(100, 40)
@@ -251,7 +251,7 @@ def test_long_title_marquee_scrolls_then_holds(qapp):
 
 
 def test_transition_styles_paint_without_raising(qapp):
-    from kotonoha.karaoke_label import KaraokeLabel
+    from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     label = KaraokeLabel()
     label.resize(200, 40)
@@ -266,7 +266,7 @@ def test_transition_styles_paint_without_raising(qapp):
 
 
 def test_disabling_animations_reveals_lines_instantly(qapp):
-    from kotonoha.karaoke_label import KaraokeLabel
+    from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     label = KaraokeLabel()
     label.set_effects(glow=False, word_pop=False, intensity="subtle", animate=False)
@@ -278,7 +278,7 @@ def test_disabling_animations_reveals_lines_instantly(qapp):
 
 
 def test_rebinding_the_same_line_does_not_restart_its_transition(qapp):
-    from kotonoha.karaoke_label import KaraokeLabel
+    from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     label = KaraokeLabel()
     label.set_effects(glow=False, word_pop=False, intensity="subtle", animate=True)
@@ -316,7 +316,7 @@ def test_white_panel_flips_text_and_context_shadow_to_light(qapp):
 def test_untimed_word_does_not_freeze_sweep(qapp):
     from PyQt6.QtGui import QFont
 
-    from kotonoha.karaoke_label import KaraokeLabel
+    from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     label = KaraokeLabel()
     label.set_style(QFont(), "#FF4FA3", "#FF8FCB", "#FF6EC7")
@@ -429,8 +429,10 @@ def test_click_without_motion_does_not_persist_a_new_horizontal_offset(qapp):
     overlay = LyricsOverlay(
         LyricsState(), Config(margin_x=37), UnavailableController()
     )
-    emitted: list[tuple[int, int, str]] = []
-    overlay.position_changed.connect(lambda edge, margin_x, name: emitted.append((edge, margin_x, name)))
+    emitted = []
+    overlay.position_changed.connect(
+        lambda change: emitted.append((change.margin_edge, change.margin_x, change.screen_name))
+    )
     press = QMouseEvent(
         QEvent.Type.MouseButtonPress,
         QPointF(10, 10),
@@ -461,8 +463,11 @@ def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
         current=LyricLine(0, "line", 0.0, 4.0, "line", "", ()), current_time=1.0, is_playing=True,
     )
     overlay._on_frame(snapshot)
+    changes = []
+    overlay.track_offset_changed.connect(changes.append)
     overlay._earlier_btn.click()
-    assert overlay._config.track_offsets[overlay._track_key] == 50
+    assert changes[-1].key == overlay._track_key
+    assert changes[-1].offset_ms == 50
     assert overlay._current.text == "Sync offset: +50 ms"
     overlay.set_passthrough(True)
     assert overlay._earlier_btn.isHidden() is True

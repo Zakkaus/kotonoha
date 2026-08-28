@@ -1,6 +1,6 @@
 # Kotonoha 架构分层与重构实施计划
 
-> **状态：持续实施中；Phase 2/#14 主链路已落地，Phase 3/4 已完成并完成审查收口，Phase 5/6 尚未完成**
+> **状态：Phase 2/#14 主链路已落地，Phase 3/4 已完成并完成审查收口，Phase 5 已收口，Phase 6 尚未开始**
 >
 > 这份计划服务于仓库作者的长期重构。它先固定行为和边界，再迁移实现；不接受“发现一个 case 就在现有协调器加一个 if”作为完成方式。
 
@@ -64,7 +64,7 @@ src/kotonoha/
     clock_coordinator.py       # authoritative clock source 和 correction policy
     display_coordinator.py     # DisplayFrame publisher
     overlay_coordinator.py     # overlay state、user intent 和 platform command
-    settings_service.py        # ConfigPatch、持久化和 restart/cache intent
+    config_service.py          # 应用范围唯一 Config owner、即时持久化和配置变更
     source_gate.py             # standalone/external/Cider source ownership
 
   playback/                    # 播放功能的 contracts、规则和 MPRIS adapter
@@ -90,7 +90,7 @@ src/kotonoha/
     karaoke.py                 # line/word progress 和 font-fit policy 的纯部分
 
   config/                     # typed configuration 和持久化边界
-    models.py                  # Config、ConfigPatch 和 constraints
+    models.py                  # Config 和 constraints
     store.py                   # JSON decode/validate/atomic persistence
 
   platform/                   # toolkit-neutral contracts 与桌面/native adapters
@@ -423,7 +423,7 @@ resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff
 - [x] Layer Shell、Qt fallback、niri、X11 capability reason 分别测试；保留真实 Wayland/KWin-compatible live lifecycle test opt-in，niri 仍需真实环境验证。
 - [x] `ui/settings/` 和 `ui/overlay/` 通过同一个 `DefaultOverlayPlatformFactory` 获得 session-selected capability adapter，不自行 probe。
 - [x] surface/output/drag state machine 维护 operation-result corpus；失败、pending intent、关闭后 callback 都有正向和负向场景。
-- [x] 按责任拆分当前约 796 行的 Overlay 实现：`overlay/window.py` 保留窗口边界，surface binding、frame-to-widget binding、presentation/paint 和 drag/geometry 分别迁到独立 owner；拆分以依赖和生命周期为边界，window 文件约 523 行，其余新模块均保持在 500 行以内。
+- [x] 按责任拆分当前约 796 行的 Overlay 实现：`ui/overlay/window.py` 保留窗口边界，surface binding、frame-to-widget binding、presentation/paint 和 drag/geometry 分别迁到独立 owner；拆分以依赖和生命周期为边界，window 文件约 532 行，其余新模块均保持在 500 行以内。
 
 **退出条件**：平台 fake 能完整跑 surface/drag/output 状态机；Overlay 不导入 native bridge；失败 operation 不会被伪装为成功；分散的 output lifecycle 代码收敛到唯一 owner。
 
@@ -444,32 +444,82 @@ resolver/Cider/tray 测试 `73 passed`；`ruff check .`、`ty check`、`git diff
 
 **目的**：让配置和 UI 不再成为跨层状态的第二套 workflow。
 
-- [ ] `ConfigStore` 负责 JSON decode/validation/atomic persistence；application 只处理 typed Config/ConfigPatch。
-- [ ] `SettingsFormState` 负责控件值；字段 constraints 与 Config 共用 value object，不使用 `getattr(defaults, field)`。
-- [ ] 所有 settings action 变成 typed intents：`ApplyConfig`、`ClearCache`、`RequestRestart`、`ChangeTrackOffset`。
-- [ ] `app/application_controller.py` 只负责 wiring/start/stop 和 intent routing；不再承载 MPRIS、Overlay、Settings 的业务决策。
-- [ ] 所有 async actions 由 `app/lifecycle.py` 的 supervisor 保持 task handle，并在 stop 时 cancel/await。
-- [ ] 完成剩余 Qt signal/deferred callback 的 owner 审计；tray Settings/Quit 已在 Phase 3 收口，未完成的 Settings/Overlay callback 仍必须使用 bound method 或明确 QObject owner。
-- [ ] 将当前约 610 行的 `settings_dialog.py` 按 dialog lifecycle、`SettingsFormState`、page builder 和 widget adapter 拆分；移除 page builder 对 dialog 私有控件注册表的隐式写入，使新增或修改的 Python 文件通常保持在 500 行以内。
-- [ ] 将 `ConfigStore.save()` 的同步文件写入移出 Qt signal/UI callback 的直接执行路径，交给 application-owned persistence worker/service，并定义失败反馈与 stop 时的等待语义。
-- [ ] 明确无 MPRIS 时多个 live adapter 的 standalone 仲裁策略；当前 Cider API 与 generic adapter 都可在该模式直接发布，需收敛为一个有记录、可测试的 active owner 后再删除兼容路径。
+- [x] `ConfigStore` 负责 JSON decode/validation/atomic persistence；application 只处理 typed `Config`。应用范围内唯一的 `ConfigService` 负责变更、校验和持久化调度，不引入 `ConfigPatch` 或公开快照对象。
+- [x] `SettingsFormState` 负责控件值；字段 constraints 与 Config 共用 value object，不使用 `getattr(defaults, field)`。
+- [x] 所有 settings action 变成 typed intents：`ApplyConfig`、`ClearCache`、`RequestRestart`、`ChangeTrackOffset`。
+- [x] `app/application_controller.py` 只负责组合、启动/停止和 intent routing；配置应用、显示源仲裁与 provider 参数转发由显式 application service/owner 处理。
+- [x] 所有 async actions 由 `app/lifecycle.py` 的 supervisor 保持 task handle，并在 stop 时等待；被拒绝的 coroutine 也会显式关闭。
+- [x] 完成剩余 Qt signal/deferred callback 的 owner 审计；tray Settings/Quit 已在 Phase 3 收口，Settings/Overlay callback 使用 bound method 或明确 QObject owner。
+- [x] 将 Settings 按 dialog lifecycle、`SettingsFormState`、page builder 和显式 `SettingsWidgets` owner 拆分；移除 page builder 对 dialog 私有控件注册表的隐式写入。`settings_dialog.py` 仍略高于 500 行，因为 Qt surface lifecycle 与 painting 必须由同一窗口 owner 管理，机械拆分会增加转发层。
+- [x] Settings 可复用控件的信号只由对应 builder 在初始化时连接一次；Reset 只重建页面和刷新值，不重复注册 action signal。
+- [x] 将 `ConfigStore.save()` 的同步文件写入移出 Qt signal/UI callback 的直接执行路径，交给 application-owned `ConfigService` persistence worker；连续变更合并为最新值，`close()` 等待最后一次写入。
+- [x] `AppController` 只接收显式的必需 `ConfigService`；Apply 通过 service 合并表单实际变更字段，保留 Settings 打开期间的最新运行时位置、穿透和 track offset。
+- [x] Settings presentation 的实际实现统一迁入 `ui/settings/`，包括 dialog、page builders、sources、widgets、theme、controls 和 form state；根目录不再保留同名实现。
+- [x] 明确无 MPRIS 时多个 live adapter 的 standalone 仲裁策略：display source 由设置控制启用和顺序；仲裁按启用源优先级选择，同一源内按最新 observation 选择，并只保留一个 active owner。
 
-**退出条件**：`app/services.py` 和 `main.py` 只做 wiring；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
+**Phase 5 当前实现对账（2026-08-28）**：
+
+- `main.py` 在组合根创建并注入唯一 `ConfigService`；`ConfigStore` 仍只负责外部 JSON 与原子文件边界，Cider token 继续由 keyring 负责，运行时 token 不进入 `config.json`。
+- `SettingsFormState`、`SettingsWidgets`、page builders 和 typed intents 已分开；Settings 的显示源列表支持多个启用项，列表顺序会持久化并作为 standalone 仲裁优先级。
+- `SourceOwnershipCoordinator` 统一维护 live candidate、source priority 和 active owner；MPRIS、Cider API、generic adapter 都通过该 owner 进入显示链路。
+- `app/source_contracts.py` 提供 feature-specific source Protocol；Provider 只依赖自己需要的 source/display 能力，不再引用具体 coordinator。
+- `app/source_registry.py` 只登记 candidate、candidate revision 和 clock；`app/source_matching.py` 只负责纯匹配判断，ownership arbitration 留在 `source_gate.py`。
+- `config_schema.py` 是 Settings 页面分组与 `SETTINGS_CONFIG_FIELDS` 的唯一声明点；`Config.settings_values()`、Settings form 和 ConfigService 使用同一份顺序。
+- `ConfigService.config` 返回 detached 配置值；所有运行时变更使用替换语义，`persistence_status` 暴露 `idle/pending/failed` 和安全错误信息，失败可通过显式 retry 重试。
+- Settings builder 的 page rebuild 已与信号注册解耦：`SettingsPageBuilder` 和 `SettingsSourcesPageBuilder` 各自持有一次性连接，Reset 后 Clear Cache、source guard 和页面联动不会重复触发。
+- `ConfigService.apply_settings()` 接收完整表单值和 changed-field set，只覆盖实际改过的 Settings 字段；`AppController` 不再接受第二个 `Config` 或为配置依赖创建 fallback。
+- `src/kotonoha/ui/settings/` 是 Settings presentation 的当前 owner；其主题继续使用包级共享 assets，目录迁移不会改变资源路径。
+- 本阶段没有引入 immutable snapshot 或 `ConfigPatch`：配置修改后立即排队落盘，关闭时等待 worker 完成；这是为保持当前设置语义而作的明确选择。
+- `QProcessRestartLauncher` 是可注入的进程边界，重启失败时当前进程保持运行；测试通过真实 `AppController` 构造验证该失败路径。
+
+**Phase 5 门禁验证（2026-08-28）**：offscreen Python 测试（排除需要绑定 socket 的 receiver）为 `792 passed, 2 skipped`；在允许绑定临时 localhost 端口的环境中，receiver 为 `16 passed`，合计 `808 passed, 2 skipped`。`ruff check .`、`ty check`、`git diff --check` 和 `uv build` 均通过。受限沙箱中的 receiver socket 失败不作为代码失败结论。
+
+**明确留给 Phase 6 的事项**：
+
+- 删除 `controller.py`、`lyrics/ownership.py` 等 compatibility exports，以及 `AppController` 的可选依赖 fallback；条件是所有内部和外部调用方都改为目标模块与显式组合根注入。
+- 将 Config、store、local reader 和重复 track identity key 迁移到目标 feature package，并保持 regular-file/FIFO/大小上限、原子替换和 offset identity 行为不变。
+- 将 `lyrics/live_source.py` 从 `lyrics/ownership.py` 的 `LiveSourceMatch` compatibility import 迁到正式 contract；所有调用方迁移后删除兼容导出。
+- 删除 `lyrics/match.py` 对 `lyrics/titles.py` 私有 helper 的依赖，按真实依赖拆分 titles/match；迁移完成前不得复制 grammar/matching helper 形成第二套规则。
+- 把 `display/coordinator.py` 的 Qt publisher compatibility bridge 移到明确的 application/UI boundary，让 timeline/policy package 完全脱离 Qt。
+- 统一组合根定义：当前主要 concrete object graph 仍在 `AppController`，而 `main.py` 创建 `ConfigService`，与“`app/services.py` 是唯一组装点”的计划表述不一致；Phase 6 明确最终 owner、文档和实现，只按依赖边界搬运，不为目录形式机械移动代码。
+- 完成 Python 3.11-3.15 CI、Cider `pnpm test/build`、live compositor opt-in 和真实 Cider/MPRIS 联调验证，并继续收紧结构门禁。
+
+**退出条件**：Settings 的状态与 signal owner 唯一，`ConfigService` 是配置变更和持久化的唯一 application owner，`main.py`/`AppController` 的当前组合边界已被明确记录；Settings/Overlay/MPRIS 的单元测试可以使用窄 Protocol fake，不需要 `object.__new__` 填私有字段。
+
+### Phase 5 审查收口（2026-08-28）
+
+以下事项属于当前 Phase 5 的实现收口，完成后才进入 Phase 6；它们不改变用户可见的配置、歌词优先级或播放器行为：
+
+- [x] 将顶层 `overlay/` 和 `karaoke_label.py` 迁移到 `ui/overlay/`，保持 Overlay 的 Qt 行为和 `platform/` contract 依赖不变；`state.py` 与 display publisher bridge 仍按 Phase 6 的边界任务处理。
+- [x] 为 Provider 与 source ownership/display 建立窄的、feature-specific Protocol；Provider 不再依赖 `SourceOwnershipCoordinator` 或 `DisplayCoordinator` 具体类。
+- [x] 将 `SourceOwnershipCoordinator` 的候选登记、匹配判断和 ownership arbitration 拆成清晰职责，保持现有优先级和 active owner 语义。
+- [x] 收紧 `ConfigService` 的 Config ownership：不引入 snapshot/`ConfigPatch`，但变更统一使用替换语义，读取不得暴露可绕过持久化的内部 mutable model；减少 Settings 字段 contract 漂移。
+- [x] 为 Config persistence failure 提供可观察结果或状态，并覆盖写入失败、关闭等待和连续变更合并路径。
+- [x] 将架构门禁从仅检查 `>800` 行扩展为默认 `<=500` 行、明确 allowlist，并把 matcher 源码字符串检查改为 AST 结构检查。
+- [x] 同步本阶段实际模块路径、文件规模、CI 覆盖和验证数量，确保计划不把已存在的 CI 工作误标为未实现。
+
+**Phase 5 审查收口退出条件**：上述项已通过行为测试、架构测试、Ruff、ty、构建和完整 Python 测试；原计划明确属于 Phase 6 的事项仍未在本收口中提前实现。
 
 ### Phase 6：删除被替代路径、收紧质量门禁
+
+Phase 6 执行前置计划（本轮只记录，不实现）：
+
+- 完成 Phase 5 审查收口后，再处理 compatibility、组合根统一、feature package 归属和剩余跨层 bridge。
 
 - [x] 删除现有 `MprisProvider` 中已经迁移到新 owner 的 resolver/clock/display policy 分支；剩余 facade 只负责 wiring 和配置转发。
 - [ ] 删除实际 `lyrics/match.py` 对 `lyrics/titles.py` 私有 helper 的依赖，改为公开 feature result，并在目标目录迁移时保留 title grammar/matching 的 owner 边界。
 - [ ] 合并实际 `config_store.py` 与 `lyrics/local.py` 重复的 bounded regular-file reader，删除重复边界实现；迁移到目标 `config/store.py` 时保留 regular-file、FIFO、大小上限和原子替换语义。
 - [ ] 收敛 `config.py:track_identity_key` 与 `display/presentation.py` 的重复 track offset key 生成，放入中立的 typed track identity/value owner，避免配置与展示对同一身份规则各自解释。
 - [ ] 将 `display/coordinator.py` 当前持有的 `QtDisplayPublisher` 兼容桥迁到明确的 application/UI boundary；保留唯一 publisher，同时让 display timeline/policy package 完全脱离 Qt。
-- [ ] 删除临时 compatibility exports/fallback，并为每个删除记录对应迁移完成条件。
+- [ ] 删除临时 compatibility exports/fallback（包括 `controller.py`、`lyrics/ownership.py`、`lyrics/live_source.py` 的过渡导入和 `AppController` 可选依赖），并为每个删除记录对应迁移完成条件。
+- [ ] 统一组合根定义：在 `AppController`、`main.py` 和 `app/services.py` 之间选定并记录唯一 concrete object graph owner；只按依赖边界迁移实现，不为目录形式机械搬运代码。
 - [x] 逐步增加 Ruff/ty/architecture checks：feature contract transport imports、provider/display direction、
   unique publisher、D-Bus dynamic values、oversized module scope、broad exception handlers 和 public annotations。
 - [ ] 完整验证 Python 3.11-3.15 CI、offscreen Qt、Cider test/build、`uv build`、live compositor opt-in。
 - [ ] 更新仓库规范、运行文档和开发规则，使文档描述目标架构、边界和验证命令。
+- [ ] 完整登记并删除 `lyrics/select.py`、`karaoke.py`、`LyricsPresentationAdapter`、`MprisTimeline` 和 Settings page forwarding 等剩余兼容入口。
 - [ ] 将当前约 588 行的 `lyrics/titles.py` 与约 452 行的 `lyrics/match.py` 按 grammar、normalization、evidence 和 ranking 的实际依赖拆分；迁移完成前不得通过复制 helper 形成第二套规则。
-- [ ] 将当前约 386 行的 `controller.py` 收敛为组合根 wiring；Settings persistence、restart/cache intent 和 provider policy 必须分别归 application service/feature owner。
+- [ ] 将当前约 396 行的 `app/application_controller.py` 收敛为组合根 wiring；`controller.py` 仅作为迁移期兼容导出，Settings persistence、restart/cache intent 和 provider policy 必须分别归 application service/feature owner。
 
 **退出条件**：没有重复 state publisher、重复 task owner 或重复 platform decision path；所有门禁和 behavior contract 通过。
 

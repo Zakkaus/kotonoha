@@ -6,10 +6,10 @@ import logging
 import time
 from dataclasses import dataclass, replace
 
+from ..app.source_contracts import SourceClockPort
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..lyrics.hint import from_player
 from ..lyrics.http import LyricsSession
-from ..lyrics.ownership import SourceOwnershipCoordinator
 from ..lyrics.workflow import (
     LyricsResolutionWorkflow,
     NoLyricsResolution,
@@ -40,7 +40,7 @@ class MprisResolutionSession:
     def __init__(
         self,
         *,
-        ownership: SourceOwnershipCoordinator,
+        ownership: SourceClockPort,
         resolver: ResolverPort,
         playback_adapter: MprisPlaybackAdapter,
         lyrics_sources: list[str] | None = None,

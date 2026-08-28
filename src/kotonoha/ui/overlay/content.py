@@ -7,12 +7,12 @@ from collections.abc import Callable
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QWidget
 
-from ..config import TRACK_OFFSET_STEP_MS, Config, set_track_offset, track_identity_key
-from ..display.models import EMPTY_FRAME, DisplayFrame, DisplayState
-from ..karaoke_label import KaraokeLabel
-from ..lyrics.models import LyricLine
-from ..state import LyricsState
-from ..strings import t
+from ...config import TRACK_OFFSET_STEP_MS, Config, clamp_track_offset, track_identity_key
+from ...display.models import EMPTY_FRAME, DisplayFrame, DisplayState
+from ...lyrics.models import LyricLine
+from ...state import LyricsState
+from ...strings import t
+from .karaoke_label import KaraokeLabel
 
 INTERLUDE_SCALE = 0.62
 
@@ -138,7 +138,7 @@ class OverlayContentController:
         if not self._track_key:
             return
         current = self._config.track_offsets.get(self._track_key, 0)
-        offset = set_track_offset(self._config, self._track_key, current + delta_ms)
+        offset = clamp_track_offset(current + delta_ms)
         self._on_offset_changed(self._track_key, offset)
         self.show_offset_feedback(offset)
         self.refresh_media_time()

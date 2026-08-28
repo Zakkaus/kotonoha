@@ -180,6 +180,22 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "歌詞ソースの優先順位：上から順に、最初に歌詞が見つかったものを使用。"
               "ドラッグで並べ替え、チェックを外すと無効。",
     },
+    "set.lyrics_sources": {
+        "en": "Lyric lookup sources", "zh-Hans": "歌词查询来源",
+        "zh-Hant": "歌詞查詢來源", "ja": "歌詞検索ソース",
+    },
+    "set.display_sources": {
+        "en": "Display sources", "zh-Hans": "显示来源",
+        "zh-Hant": "顯示來源", "ja": "表示ソース",
+    },
+    "set.display_sources_hint": {
+        "en": "Choose which integrations may publish to the overlay. When MPRIS is unavailable, "
+              "the first enabled source with matching lyrics owns the display.",
+        "zh-Hans": "选择哪些集成可以发布到浮窗。MPRIS 不可用时，第一个有匹配歌词的启用来源拥有显示权。",
+        "zh-Hant": "選擇哪些整合可以發佈到浮窗。MPRIS 不可用時，第一個有匹配歌詞的啟用來源擁有顯示權。",
+        "ja": "オーバーレイに表示できる連携を選択します。MPRIS が利用できない場合、"
+              "歌詞が一致する最初の有効なソースが表示を所有します。",
+    },
     "set.cider_token": {
         "en": "Cider API token",
         "zh-Hans": "Cider API Token",
@@ -220,6 +236,12 @@ STRINGS: dict[str, dict[str, str]] = {
     "src.kugou": {"en": "Kugou", "zh-Hans": "酷狗", "zh-Hant": "酷狗", "ja": "酷狗（Kugou）"},
     "src.cider": {"en": "Cider", "zh-Hans": "Cider 自带", "zh-Hant": "Cider 自帶", "ja": "Cider 内蔵"},
     "src.qqmusic": {"en": "QQ Music", "zh-Hans": "QQ 音乐", "zh-Hant": "QQ 音樂", "ja": "QQ 音楽"},
+    "src.display.mpris": {"en": "MPRIS", "zh-Hans": "MPRIS", "zh-Hant": "MPRIS", "ja": "MPRIS"},
+    "src.display.cider": {"en": "Cider API", "zh-Hans": "Cider API", "zh-Hant": "Cider API", "ja": "Cider API"},
+    "src.display.adapter": {
+        "en": "External adapters", "zh-Hans": "外部适配器",
+        "zh-Hant": "外部適配器", "ja": "外部アダプター",
+    },
     "set.prefer_best": {
         "en": "Prefer best-matching lyrics",
         "zh-Hans": "优先匹配最佳歌词",

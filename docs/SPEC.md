@@ -197,7 +197,15 @@ src/kotonoha/
 ├── __main__.py
 ├── main.py                  # entry_point: 装配 QApplication + qasync 事件循环
 ├── config.py                # 配置模型、验证与兼容入口
+├── config_schema.py         # Settings 字段与页面分组的唯一中立契约
 ├── config_store.py          # XDG 路径、受限读取与原子写入
+├── app/                     # application-owned lifecycle, ports, and policy
+│   ├── config_service.py     # 唯一配置 owner、异步持久化与状态
+│   ├── config_merge.py       # Settings changed-field 的纯合并变换
+│   ├── source_contracts.py   # live source 的窄 Protocol 与值对象
+│   ├── source_registry.py    # candidate/clock 登记生命周期
+│   ├── source_matching.py    # candidate 匹配纯规则
+│   └── source_gate.py        # source priority 与 ownership arbitration
 ├── platform/                # 平台判定归属处（Issue #16 的分层约束）
 │   ├── detect.py            # layer-shell .so 定位/降级判定（原 lyrics_loader.py）
 │   ├── native.py            # libkoto-layer.so 的 ctypes 包装
@@ -211,6 +219,7 @@ src/kotonoha/
 │   ├── rules.py             # current/interlude/sweep 纯规则
 │   ├── karaoke.py           # line/word/interlude progress 纯规则
 │   ├── layout.py            # 无 Qt 的字体/宽度 fit policy
+│   ├── contracts.py          # adapter-specific display publication Protocol
 │   └── publisher.py         # 唯一 DisplayFrame -> Qt state publisher
 ├── playback/models.py       # normalized playback facts 与播放器端口
 ├── providers/mpris_playback.py      # MPRIS session、选择、poll 和稳定化生命周期
@@ -224,7 +233,7 @@ src/kotonoha/
 ├── lyrics/sources.py        # local/exact/network source contracts
 ├── state.py                 # LyricsState：持有 DisplayFrame，发 frame_changed
 ├── receiver.py              # AdapterReceiver：aiohttp app，把 adapter message 灌进 frame path
-├── overlay/                 # LyricsOverlay(QWidget) 与其 UI 生命周期协作者
+├── ui/overlay/              # LyricsOverlay(QWidget) 与其 UI 生命周期协作者
 │   ├── __init__.py          # 稳定导出 LyricsOverlay
 │   ├── window.py            # 透明窗口、Qt 事件与 frame 绑定
 │   ├── surface.py           # layer-shell surface、output 与 surface 生命周期
@@ -236,9 +245,9 @@ src/kotonoha/
 │   ├── geometry.py          # 尺寸与输出相关的几何规则
 │   ├── drag.py              # 拖动策略与结果映射
 │   └── view.py              # Qt widget tree 构造
-├── karaoke_label.py         # KaraokeLabel：逐字渐变高亮的自绘 QWidget
+├── ui/overlay/karaoke_label.py # KaraokeLabel：逐字渐变高亮的自绘 QWidget
 ├── tray.py                  # 托盘菜单：穿透开关 / 锁定位置 / 设置 / 退出
-├── settings_dialog.py       # 设置对话框（字体、位置、不透明度、是否双语）
+├── ui/settings/settings_dialog.py  # 设置对话框（字体、位置、不透明度、是否双语）
 └── assets/
     └── icon.png
 ```
@@ -366,7 +375,7 @@ class AdapterReceiver:
 - 设置…（打开下面的设置面板）
 - 退出
 
-**Tab 设置面板**（`settings_dialog.py`，`QTabWidget`，更专业）：
+**Tab 设置面板**（`ui/settings/settings_dialog.py`，`QTabWidget`，更专业）：
 - **外观**：字号、不透明度、背板样式（玻璃面板 / 纯文字）
 - **歌词**：逐字高亮开关、显示翻译、**翻译语言**（自动跟随系统 / 简中 / 繁中 / EN / JA / …）
 - **位置**：顶部/底部、距边缘、水平偏移、默认穿透
@@ -424,9 +433,9 @@ GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函
 
 1. **M0 — 项目脚手架对齐**：升级 `pyproject.toml`（build hook + 依赖）、建包结构、移植 `build_bridge.sh` + `layer_shell_bridge.cpp`（改 scope/产物名）、`platform/detect.py` + 测试。
 2. **M1 — 数据链路打通（WS）**：`model.py` 解析 + `state.py` + `receiver.py`（aiohttp WS 服务端）；**改造探针 `main.ts` 为 WS 客户端**（连接/全量同步/心跳/退避重连）；端到端 smoke：探针推送能进 state（先 print，不画 UI）。
-3. **M2 — 透明浮窗**：`overlay/window.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
-4. **M3 — 逐字卡拉 OK + 现代样式**：`karaoke_label.py` 扫光高亮、三行布局、翻译行、阴影/发光、切行动画。
-5. **M4 — 托盘与设置**：穿透切换、拖动定位、`settings_dialog.py`、config 持久化。
+3. **M2 — 透明浮窗**：`ui/overlay/window.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
+4. **M3 — 逐字卡拉 OK + 现代样式**：`ui/overlay/karaoke_label.py` 扫光高亮、三行布局、翻译行、阴影/发光、切行动画。
+5. **M4 — 托盘与设置**：穿透切换、拖动定位、`ui/settings/settings_dialog.py`、config 持久化。
 6. **M5 — 降级与打磨**：GNOME/X11 回退、空状态/暂停、README + 系统依赖文档、打包验证。
 
 ---

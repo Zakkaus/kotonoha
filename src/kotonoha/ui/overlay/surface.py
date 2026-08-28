@@ -9,8 +9,8 @@ from PyQt6.QtCore import QPoint, QRect
 from PyQt6.QtGui import QScreen
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from ..config import Config
-from ..platform.overlay_contracts import (
+from ...config import Config
+from ...platform.overlay_contracts import (
     DragMode,
     Output,
     OverlayPlatform,
@@ -21,8 +21,8 @@ from ..platform.overlay_contracts import (
     WindowPoint,
     WindowRectangle,
 )
-from ..platform.qt_host import QtWindowHost
-from ..platform.surface_lifecycle import SurfaceLifecycleOwner
+from ...platform.qt_host import QtWindowHost
+from ...platform.surface_lifecycle import SurfaceLifecycleOwner
 from .drag import DragRelease
 from .geometry import OverlayGeometry, ScreenLike
 from .position import OverlayPositionController, PositionCommit

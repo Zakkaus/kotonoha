@@ -203,7 +203,8 @@ async def test_resolver_does_not_change_display_ownership():
 
     assert await resolver.resolve(SESSION, TRACK, ["unknown"]) is None
 
-    assert ownership.accepts("external-player") is True
+    assert ownership.mode == "standalone"
+    assert ownership.accepts("external-player") is False
 
 
 async def test_exact_netease_hint_bypasses_matching(monkeypatch):
