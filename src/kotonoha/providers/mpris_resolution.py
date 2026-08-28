@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass, replace
 
 from ..app.source_contracts import SourceClockPort
+from ..async_task import create_owned_task, wait_for_owned
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..lyrics.hint import from_player
 from ..lyrics.http import LyricsSession
@@ -66,17 +68,63 @@ class MprisResolutionSession:
 
     async def start(self) -> None:
         """Reopen resolver workers and create the shared HTTP session."""
-        self._resolver.start()
-        if self._lyrics_session is None:
-            self._lyrics_session = new_lyrics_session()
+        new_session: LyricsSession | None = None
+        try:
+            if self._lyrics_session is None:
+                new_session = new_lyrics_session()
+            self._resolver.start()
+        except (OSError, RuntimeError, TimeoutError, ValueError):
+            if new_session is not None:
+                await self._close_failed_start_session(new_session)
+            raise
+        if new_session is not None:
+            self._lyrics_session = new_session
+
+    async def _close_failed_start_session(self, session: LyricsSession) -> None:
+        """Finish closing a session acquired by a failed startup attempt.
+
+        Startup owns this temporary session before it is assigned to the long-lived
+        field.  Shielding the close keeps a caller cancellation from leaking it;
+        the cancellation is reported again after the close has completed.
+        """
+        close_task = create_owned_task(session.close(), name="kotonoha-mpris-http-rollback")
+        cancellation_requested = False
+        try:
+            cancellation_requested = await wait_for_owned(close_task)
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            logger.warning("Could not close MPRIS HTTP session after startup failure: %s", exc)
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         """Cancel workflow tasks and close all resolver-owned resources."""
-        await self._workflow.cancel_all()
-        await self._resolver.close()
-        if self._lyrics_session is not None:
-            await self._lyrics_session.close()
-            self._lyrics_session = None
+        cancellation_requested = False
+        try:
+            workflow_stop = create_owned_task(
+                self._workflow.cancel_all(),
+                name="kotonoha-mpris-workflow-stop",
+            )
+            cancellation_requested = await wait_for_owned(workflow_stop)
+        finally:
+            try:
+                resolver_close = create_owned_task(
+                    self._resolver.close(),
+                    name="kotonoha-mpris-resolver-close",
+                )
+                cancellation_requested |= await wait_for_owned(resolver_close)
+            finally:
+                if self._lyrics_session is not None:
+                    session = self._lyrics_session
+                    try:
+                        session_close = create_owned_task(
+                            session.close(),
+                            name="kotonoha-mpris-http-close",
+                        )
+                        cancellation_requested |= await wait_for_owned(session_close)
+                    finally:
+                        self._lyrics_session = None
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def set_lyrics_sources(self, sources: list[str]) -> None:
         """Replace the ordered source plan for future resolution generations."""

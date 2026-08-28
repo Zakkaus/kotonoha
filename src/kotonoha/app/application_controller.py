@@ -10,33 +10,25 @@ import asyncio
 import contextlib
 import logging
 import sys
+from collections.abc import Callable, Coroutine
 
-from PyQt6.QtWidgets import QApplication
-
-from ..async_worker import BlockingCallRunner
+from ..async_task import create_owned_task, wait_for_owned
 from ..config import Config
-from ..display.coordinator import DisplayCoordinator
-from ..i18n import resolve_translation_language
 from ..lyrics.cache import LyricsCacheError
-from ..lyrics.catalog import LyricsSourceCatalog
-from ..lyrics.resolver import LyricsResolver
-from ..platform import (
-    DefaultOverlayPlatformFactory,
-    LayerShellController,
-    default_package_dir,
-)
-from ..providers.cider_api import CiderApiProvider
-from ..providers.cider_client import CiderApiClient
-from ..providers.cider_credentials import CiderApiTokenStore, KeyringCiderApiTokenStore
-from ..providers.mpris import MprisProvider
 from ..providers.mpris_session import MprisSessionError
-from ..receiver import AdapterReceiver
-from ..state import LyricsState
-from ..strings import set_language
-from ..tray import KotonohaTray, load_icon
-from ..ui.overlay import LyricsOverlay
-from ..ui.settings.settings_dialog import SettingsDialog
-from .config_service import ConfigService
+from .components import (
+    ApplicationComponents,
+    ApplicationQuitPort,
+    CiderPort,
+    ConfigServicePort,
+    DisplayLifecyclePort,
+    MprisPort,
+    OverlayPort,
+    ReceiverPort,
+    RestartLauncher,
+    RuntimeConfigPort,
+    TrayPort,
+)
 from .intents import (
     ApplyConfig,
     ChangePosition,
@@ -46,97 +38,37 @@ from .intents import (
     SettingsIntent,
 )
 from .lifecycle import TaskSupervisor
-from .restart import QProcessRestartLauncher, RestartLauncher
-from .services import RuntimeConfigApplier, display_options
-from .source_gate import SourceOwnershipCoordinator
+from .services import display_options
+from .settings_port import SettingsDialogFactory, SettingsDialogPort
 
 logger = logging.getLogger(__name__)
 
 
 class AppController:
-    def __init__(
-        self,
-        app: QApplication,
-        config_service: ConfigService,
-        *,
-        cider_token_store: CiderApiTokenStore | None = None,
-        restart_launcher: RestartLauncher | None = None,
-    ) -> None:
-        self._app = app
-        self._cider_token_store = cider_token_store if cider_token_store is not None else KeyringCiderApiTokenStore()
-        self._cider_token_worker = BlockingCallRunner("kotonoha-cider-token")
-        self._cider_token_tasks = TaskSupervisor("cider-token")
-        self._cider_token_save_lock = asyncio.Lock()
-        self._settings_tasks = TaskSupervisor("settings")
-        self._cache_tasks = TaskSupervisor("lyrics-cache")
+    """Own one composed application's lifecycle and typed intent routing."""
+
+    def __init__(self, quit_port: ApplicationQuitPort, components: ApplicationComponents) -> None:
+        """Own application lifecycle and intent routing for one composed graph."""
+        self._quit_port: ApplicationQuitPort = quit_port
+        self._restart_launcher: RestartLauncher = components.restart_launcher
+        self._config_service: ConfigServicePort = components.config_service
+        self._display: DisplayLifecyclePort = components.display
+        self._overlay: OverlayPort = components.overlay
+        self._receiver: ReceiverPort = components.receiver
+        self._cider: CiderPort = components.cider
+        self._mpris: MprisPort = components.mpris
+        self._tray: TrayPort = components.tray
+        self._runtime_config: RuntimeConfigPort = components.runtime_config
+        self._settings_factory: SettingsDialogFactory = components.settings_factory
+        self._settings_tasks: TaskSupervisor = TaskSupervisor("settings")
+        self._cache_tasks: TaskSupervisor = TaskSupervisor("lyrics-cache")
         self._clear_cache_task: asyncio.Task[None] | None = None
-        # TODO: remove this fallback after every composition-root caller injects
-        # the process boundary explicitly (Phase 6 compatibility cleanup).
-        self._restart_launcher = (
-            restart_launcher if restart_launcher is not None else QProcessRestartLauncher()
-        )
-        self._config_service = config_service
-        self._config = self._config_service.config
-        set_language(self._config.ui_language)  # before any UI strings are created
-        self._app.setWindowIcon(
-            load_icon(self._config.window_icon_name, accent=self._config.accent_start)
-        )
-
-        self._state = LyricsState()
-        self._display = DisplayCoordinator(self._state, options=display_options(self._config))
-        platform_name = app.platformName()
-        desktop = str(app.property("xdg_current_desktop") or "")
-        layer_shell = LayerShellController(default_package_dir(), platform_name, desktop)
-        self._platform_factory = DefaultOverlayPlatformFactory(
-            layer_shell,
-            platform_name=platform_name,
-            current_desktop=desktop,
-        )
-        self._overlay = LyricsOverlay(self._state, self._config, platform_factory=self._platform_factory)
-        ownership = SourceOwnershipCoordinator(display_sources=self._config.display_sources)
-        self._ownership = ownership
-        resolver = LyricsResolver(
-            catalog=LyricsSourceCatalog.default(ownership),
-            cache_enabled=self._config.cache_enabled,
-        )
-        self._receiver = AdapterReceiver(self._display, port=self._config.port, ownership=ownership)
-        self._cider = CiderApiProvider(
-            display=self._display,
-            ownership=ownership,
-            client=CiderApiClient(token=self._config.cider_api_token),
-            translation_language=resolve_translation_language(self._config.translation_language),
-            enabled="cider" in self._config.lyrics_sources,
-        )
-        self._mpris = MprisProvider(
-            self._display,
-            lyrics_sources=self._config.lyrics_sources,
-            ownership=ownership,
-            resolver=resolver,
-        )
-        self._mpris.set_player_lock(self._config.player_lock)
-        self._mpris.set_cache_enabled(self._config.cache_enabled)
-        self._mpris.set_prefer_best(self._config.prefer_best_lyrics)
-        self._mpris.set_fuzzy(self._config.fuzzy_match)
-        self._settings_dialog: SettingsDialog | None = None
+        self._config: Config = self._config_service.config
+        self._settings_dialog: SettingsDialogPort | None = None
         self._settings_open_task: asyncio.Task[None] | None = None
-
-        self._tray = KotonohaTray(
-            icon_name=self._config.icon_name,
-            accent=self._config.accent_start,
-            passthrough=self._config.passthrough,
-            on_toggle_passthrough=self._on_toggle_passthrough,
-            on_open_settings=self._open_settings,
-            on_quit=self._app.quit,
-        )
-        self._runtime_config = RuntimeConfigApplier(
-            self._app,
-            self._display,
-            self._overlay,
-            self._tray,
-            self._mpris,
-            self._cider,
-            self._ownership,
-        )
+        self._lifecycle_lock: asyncio.Lock = asyncio.Lock()
+        self._started: bool = False
+        self._stopped: bool = False
 
         self._overlay.passthrough_toggle_requested.connect(self._toggle_passthrough)
         self._overlay.settings_requested.connect(self._open_settings)
@@ -144,50 +76,100 @@ class AppController:
         self._overlay.track_offset_changed.connect(self._handle_intent)
 
     async def start(self) -> None:
-        await self._load_cider_token()
-        # Promote to a layer surface BEFORE show(): once the window is mapped as a
-        # normal xdg surface, LayerShellQt can no longer convert it.
-        self._overlay.activate_layer_shell()
-        self._overlay.show()
-        self._tray.show()
-        await self._display.start()
-        # The generic adapter receiver is optional: a port bind failure — a stale
-        # instance or double-launch already holding 28745 — must only disable
-        # external WS adapters, not take down the overlay/tray.
-        try:
-            await self._receiver.start()
-        except OSError as exc:
-            logger.warning("External adapter receiver unavailable: %s", exc)
-        try:
-            await self._cider.start()
-        except OSError as exc:
-            logger.warning("Cider API provider unavailable: %s", exc)
-        # MPRIS is best-effort: a missing session bus / dbus must not stop the app.
-        try:
-            await self._mpris.start()
-        except (MprisSessionError, OSError) as exc:
-            logger.warning("MPRIS provider unavailable: %s", exc)
-        logger.info("Kotonoha started on port %d", self._config.port)
+        """Start the composed providers and presentation workflow once."""
+        async with self._lifecycle_lock:
+            if self._stopped:
+                raise RuntimeError("application controller is stopped")
+            if self._started:
+                return
+            startup_succeeded = False
+            try:
+                # Promote to a layer surface BEFORE show(): once the window is mapped as a
+                # normal xdg surface, LayerShellQt can no longer convert it.
+                self._overlay.activate_layer_shell()
+                self._overlay.show()
+                self._tray.show()
+                await self._display.start()
+                # The generic adapter receiver is optional: a port bind failure — a stale
+                # instance or double-launch already holding 28745 — must only disable
+                # external WS adapters, not take down the overlay/tray.
+                try:
+                    await self._receiver.start()
+                except OSError as exc:
+                    logger.warning("External adapter receiver unavailable: %s", exc)
+                try:
+                    await self._cider.start()
+                except OSError as exc:
+                    logger.warning("Cider API provider unavailable: %s", exc)
+                # MPRIS is best-effort: a missing session bus / dbus must not stop the app.
+                try:
+                    await self._mpris.start()
+                except (MprisSessionError, OSError) as exc:
+                    logger.warning("MPRIS provider unavailable: %s", exc)
+                startup_succeeded = True
+            finally:
+                if not startup_succeeded:
+                    # A startup failure is terminal for this composed graph.
+                    # Cleanup runs for every exception and cancellation without
+                    # replacing the original failure with a catch-all handler.
+                    await self._stop_locked()
+            self._started = True
+            logger.info("Kotonoha started on port %d", self._config.port)
 
     async def stop(self) -> None:
-        await self._finish_settings_open()
+        """Stop owned producers in order and release every composed resource."""
+        async with self._lifecycle_lock:
+            if self._stopped:
+                return
+            await self._stop_locked()
+
+    async def _stop_locked(self) -> None:
+        """Release the graph while the lifecycle lock is already held."""
+        cancellation_requested = await self._stop_component("settings tasks", self._finish_settings_open)
         if self._settings_dialog is not None:
-            self._settings_dialog.close()
-            self._settings_dialog = None
-        surface_result = self._overlay.shutdown()
-        if not surface_result.succeeded:
-            logger.warning("Overlay surface shutdown was incomplete: %s", surface_result.reason)
-        await self._mpris.stop()
-        await self._cider.stop()
-        await self._receiver.stop()
-        await self._display.stop()
-        await self._finish_clear_cache()
-        await self._finish_cider_token_save()
-        self._cider_token_worker.close()
-        await self._config_service.close()
+            try:
+                self._settings_dialog.close()
+            except (OSError, RuntimeError) as exc:
+                logger.warning("Could not close settings: %s", exc)
+            finally:
+                self._settings_dialog = None
+        # Producers may publish their final empty frame during shutdown. Keep
+        # the Qt surface alive until every publisher and the display clock have
+        # stopped, then release the surface-owned platform resources.
+        cancellation_requested |= await self._stop_component("MPRIS provider", self._mpris.stop)
+        cancellation_requested |= await self._stop_component("Cider provider", self._cider.stop)
+        cancellation_requested |= await self._stop_component("adapter receiver", self._receiver.stop)
+        cancellation_requested |= await self._stop_component("display coordinator", self._display.stop)
+        try:
+            surface_result = self._overlay.shutdown()
+        except (OSError, RuntimeError) as exc:
+            logger.warning("Could not shut down overlay: %s", exc)
+        else:
+            if not surface_result.succeeded:
+                logger.warning("Overlay surface shutdown was incomplete: %s", surface_result.reason)
+        cancellation_requested |= await self._stop_component("lyrics cache tasks", self._finish_clear_cache)
+        cancellation_requested |= await self._stop_component("configuration service", self._config_service.close)
         self._settings_tasks.close()
         self._cache_tasks.close()
-        self._cider_token_tasks.close()
+        self._started = False
+        self._stopped = True
+        if cancellation_requested:
+            raise asyncio.CancelledError
+
+    async def _stop_component(self, name: str, operation: Callable[[], Coroutine[object, object, None]]) -> bool:
+        """Release one owned async resource while preserving the rest of shutdown."""
+        operation_task = create_owned_task(
+            operation(),
+            name=f"kotonoha-stop-{name.lower().replace(' ', '-')}",
+        )
+        try:
+            cancellation_requested = await wait_for_owned(operation_task)
+        except (LyricsCacheError, MprisSessionError, OSError, RuntimeError, TimeoutError) as exc:
+            logger.warning("Could not stop %s cleanly: %s", name, exc)
+            return False
+        if cancellation_requested:
+            logger.warning("Cancellation requested while stopping %s; continuing shutdown", name)
+        return cancellation_requested
 
     async def _finish_settings_open(self) -> None:
         """Cancel and await settings discovery before the controller is closed."""
@@ -201,44 +183,6 @@ class AppController:
             await task
         await self._settings_tasks.wait()
 
-    async def _load_cider_token(self) -> None:
-        """Load the Cider credential off the UI loop before starting the client."""
-        try:
-            token = await self._cider_token_worker.run(self._cider_token_store.load)
-        except (OSError, RuntimeError) as exc:
-            logger.warning("Could not load the Cider API token: %s", exc)
-            token = self._config.cider_api_token
-        self._config = self._config_service.set_runtime_token(token)
-        self._cider.set_token(token)
-
-    async def _save_cider_token(self, token: str) -> None:
-        """Persist one settings change through the owned worker task."""
-        async with self._cider_token_save_lock:
-            await self._cider_token_worker.run(self._cider_token_store.save, token)
-
-    def _schedule_cider_token_save(self, token: str) -> None:
-        """Retain the credential write task until it completes or shutdown."""
-        task = self._cider_token_tasks.create(
-            self._save_cider_token(token),
-            name="kotonoha-cider-token-save",
-        )
-        task.add_done_callback(self._cider_token_save_finished)
-
-    def _cider_token_save_finished(self, task: asyncio.Task[None]) -> None:
-        self._cider_token_tasks.discard(task)
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except (OSError, RuntimeError) as exc:
-            logger.warning("Could not save the Cider API token: %s", exc)
-
-    async def _finish_cider_token_save(self) -> None:
-        # Do not cancel to_thread wrappers: the keyring call may still be running
-        # after cancellation, and a later token could otherwise be overwritten by
-        # an older write. The lock orders writes and gather keeps shutdown owned.
-        await self._cider_token_tasks.wait()
-
     async def _finish_clear_cache(self) -> None:
         task = self._clear_cache_task
         if task is None:
@@ -250,6 +194,14 @@ class AppController:
 
     # --- passthrough / lock ---
 
+    def open_settings(self) -> None:
+        """Open the Settings dialog through the controller-owned workflow."""
+        self._open_settings()
+
+    def on_toggle_passthrough(self, checked: bool) -> None:
+        """Apply a tray passthrough command through the controller."""
+        self._on_toggle_passthrough(checked)
+
     def _toggle_passthrough(self) -> None:
         self._on_toggle_passthrough(not self._config.passthrough)
 
@@ -258,7 +210,6 @@ class AppController:
             self._overlay.set_passthrough(checked)
             return
         self._overlay.set_passthrough(checked)
-        self._tray.set_passthrough_checked(checked)
         self._config = self._config_service.set_passthrough(checked)
 
     def _handle_intent(self, intent: SettingsIntent) -> None:
@@ -324,13 +275,7 @@ class AppController:
         except (MprisSessionError, OSError, TimeoutError) as exc:
             logger.debug("MPRIS player discovery failed: %s", exc)
             players = []
-        dialog = SettingsDialog(
-            self._config,
-            players=players,
-            # Use the same session capability registry, but its ordinary-window
-            # branch: Layer Shell and top-most stacking belong only to the overlay.
-            platform_factory=self._platform_factory.for_regular_window,
-        )
+        dialog = self._settings_factory.create(self._config, players)
         dialog.intent_requested.connect(self._handle_intent)
         dialog.finished.connect(self._clear_dialog)
         self._settings_dialog = dialog
@@ -351,14 +296,12 @@ class AppController:
             logger.error("Could not start the replacement process; staying up")
             return
         logger.info("Restarting to apply settings")
-        self._app.quit()
+        self._quit_port.quit()
 
     def _apply_config(self, config: Config, changed_fields: frozenset[str]) -> None:
         previous = self._config
         self._config = self._config_service.apply_settings(config, changed_fields)
-        changes = self._runtime_config.apply(previous, self._config)
-        if changes.cider_token_changed:
-            self._schedule_cider_token_save(changes.cider_token)
+        self._runtime_config.apply(previous, self._config)
 
     def _clear_lyrics_cache(self) -> None:
         if self._clear_cache_task is not None and not self._clear_cache_task.done():
@@ -384,13 +327,11 @@ class AppController:
     # --- accessors for tests ---
 
     @property
-    def overlay(self) -> LyricsOverlay:
+    def overlay(self) -> OverlayPort:
+        """Return the injected overlay port for integration callers and tests."""
         return self._overlay
 
     @property
-    def state(self) -> LyricsState:
-        return self._state
-
-    @property
-    def receiver(self) -> AdapterReceiver:
+    def receiver(self) -> ReceiverPort:
+        """Return the injected external-adapter receiver port."""
         return self._receiver

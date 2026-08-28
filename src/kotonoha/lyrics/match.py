@@ -39,19 +39,17 @@ from dataclasses import dataclass, replace
 from difflib import SequenceMatcher
 from enum import StrEnum
 
+from .artist_grammar import artist_tokens, artist_variants, primary_artist
 from .hanzi_fold import fold_to_simplified
-from .titles import (
-    _CJK_ONE,
-    _LYRIC_NEUTRAL_TAGS,
-    _artist_variants,
-    _is_bracket_only,
-    artist_tokens,
+from .title_grammar import (
+    LYRIC_NEUTRAL_TAGS,
     base_title,
-    noisy_title_queries,
+    cjk_runs,
+    is_bracket_only_title,
     normalize,
-    primary_artist,
     split_title,
 )
+from .title_queries import noisy_title_queries
 
 
 class MatchConfidence(StrEnum):
@@ -137,7 +135,7 @@ def _fuzzy_contains(candidate: Candidate, track: TrackMetadata) -> bool:
     title = normalize(split_title(candidate.title, candidate.artist)[0])
     if not haystack or not title or title not in haystack:
         return False
-    cjk_chars = len(_CJK_ONE.findall(title))
+    cjk_chars = sum(len(run) for run in cjk_runs(title))
     if cjk_chars < 2 and len(title) < 5:
         return False
     # At least one substantial artist token must also appear in the title. "Any",
@@ -177,7 +175,7 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
     # A title that is nothing but a bracketed span ("(intro)", "【七月上】") is kept
     # rather than stripped to nothing, but two such titles must agree exactly:
     # "(intro)" and "(outro)" are different interludes that a ratio would pair up.
-    if _is_bracket_only(track.title) and _is_bracket_only(candidate.title) and not title_exact:
+    if is_bracket_only_title(track.title) and is_bracket_only_title(candidate.title) and not title_exact:
         title_strong = False
         title_ratio = 0.0  # no partial credit either: they are different names
 
@@ -203,8 +201,8 @@ def evaluate_match(candidate: Candidate, track: TrackMetadata, *, fuzzy: bool = 
         else None
     )
     # Only lyric-changing tags conflict; a remaster shares the studio lyrics.
-    track_lyric_tags = track_tags - _LYRIC_NEUTRAL_TAGS
-    candidate_lyric_tags = candidate_tags - _LYRIC_NEUTRAL_TAGS
+    track_lyric_tags = track_tags - LYRIC_NEUTRAL_TAGS
+    candidate_lyric_tags = candidate_tags - LYRIC_NEUTRAL_TAGS
     version_conflict = bool(track_lyric_tags or candidate_lyric_tags) and track_lyric_tags != candidate_lyric_tags
     catalog_identity = title_exact and artist_identity and album_match
     # Fuzzy containment: for a cluttered browser title that carries both names in one
@@ -368,7 +366,7 @@ def ranked_matches(
         # showing; the forms all come from the reported title, so this admits what
         # was searched for rather than anything new.
         titles = (track.title, *(q for q in noisy_title_queries(track.title) if q != track.title))
-        artists = [track.artist, *_artist_variants(track.artist)]
+        artists = [track.artist, *artist_variants(track.artist)]
         # A reported artist that no candidate shares a single name with is not the
         # performer: YouTube fills the field with the uploading channel ("1theK
         # (원더케이)") or, on a "Song - Film" title, with the song itself — Kesariya
@@ -384,7 +382,7 @@ def ranked_matches(
             if (title, artist) != (track.title, track.artist)
         ]
         _, reported_tags = split_title(track.title, track.artist)
-        reported_versions = reported_tags - _LYRIC_NEUTRAL_TAGS
+        reported_versions = reported_tags - LYRIC_NEUTRAL_TAGS
         for index, match in enumerate(matches):
             if match.confidence is not MatchConfidence.NONE:
                 continue
@@ -393,7 +391,7 @@ def ranked_matches(
             # DJ cut the studio recording's words, or the studio take a live one's.
             # The version is read from the reported title, never from the salvage.
             _, candidate_tags = split_title(candidates[index].title, candidates[index].artist)
-            if reported_versions != candidate_tags - _LYRIC_NEUTRAL_TAGS:
+            if reported_versions != candidate_tags - LYRIC_NEUTRAL_TAGS:
                 continue
             for variant in salvaged:
                 rescored = evaluate_match(candidates[index], variant, fuzzy=True)

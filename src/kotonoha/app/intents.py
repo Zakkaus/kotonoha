@@ -6,16 +6,16 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from ..config import Config
-from ..config_schema import SETTINGS_CONFIG_FIELDS
+from ..config.schema import SETTINGS_CONFIG_FIELDS
 
 
 @dataclass(frozen=True, slots=True)
 class ApplyConfig:
     """Apply a complete form value set and its effective user changes.
 
-    The complete ``Config`` keeps the intent easy to inspect and compatible
-    with existing callers. ``changed_fields`` lets the application merge the
-    form with newer runtime-owned values when the dialog stayed open.
+    The complete ``Config`` keeps the intent easy to inspect. ``changed_fields``
+    lets the application merge the form with newer runtime-owned values when the
+    dialog stayed open.
     """
 
     config: Config

@@ -9,7 +9,7 @@ from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QHBoxLayout, QToolButton, QWidget
 
 from ...icons import earlier_icon, later_icon, lock_icon, settings_icon
-from ...strings import t
+from ...strings import Translator
 
 if TYPE_CHECKING:
     from .window import LyricsOverlay
@@ -39,8 +39,9 @@ class IconFactory(Protocol):
 class OverlayChromeController:
     """Own construction, icon refresh, and visibility of overlay controls."""
 
-    def __init__(self, overlay: LyricsOverlay) -> None:
+    def __init__(self, overlay: LyricsOverlay, translator: Translator) -> None:
         self._overlay = overlay
+        self._translator = translator
 
     def build(self, container: QWidget) -> QWidget:
         """Build the control bar inside the supplied overlay container."""
@@ -71,7 +72,7 @@ class OverlayChromeController:
         overlay._settings_btn.setIconSize(QSize(15, 15))
         overlay._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         overlay._settings_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
-        overlay._settings_btn.setToolTip(t("overlay.settings"))
+        overlay._settings_btn.setToolTip(self._translator.text("overlay.settings"))
         overlay._settings_btn.clicked.connect(overlay.settings_requested.emit)
         bar.addWidget(overlay._settings_btn)
         self.update_icons()
@@ -82,7 +83,11 @@ class OverlayChromeController:
         overlay = self._overlay
         color = self._control_icon_color()
         overlay._lock_btn.setIcon(lock_icon(overlay._passthrough, color))
-        overlay._lock_btn.setToolTip(t("overlay.locked") if overlay._passthrough else t("overlay.unlocked"))
+        overlay._lock_btn.setToolTip(
+            self._translator.text("overlay.locked")
+            if overlay._passthrough
+            else self._translator.text("overlay.unlocked")
+        )
         overlay._earlier_btn.setIcon(earlier_icon(color))
         overlay._later_btn.setIcon(later_icon(color))
         overlay._settings_btn.setIcon(settings_icon(color))
@@ -106,7 +111,7 @@ class OverlayChromeController:
         button.setIcon(icon_factory(CONTROL_ICON_COLOR))
         button.setCursor(Qt.CursorShape.PointingHandCursor)
         button.setStyleSheet(CONTROL_BUTTON_STYLE)
-        button.setToolTip(t(tooltip_key))
+        button.setToolTip(self._translator.text(tooltip_key))
         return button
 
 

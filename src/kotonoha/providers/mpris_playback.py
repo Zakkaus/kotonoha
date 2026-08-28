@@ -3,17 +3,17 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Protocol
 
+from ..async_task import create_owned_task, wait_for_owned
 from ..playback.models import MprisPlayerPort, MprisPropertyChange, PlaybackObservation
 from ..players import PlayerInfo
 from .mpris_adapter import MprisPlaybackAdapter
-from .mpris_session import MprisSession, MprisSessionError
+from .mpris_session import MprisSessionError
 from .mpris_track import TrackCommit, TrackInfo, TrackObservation, TrackStabilizer
 from .player_selection import PlayerRecord, PlayerSelector
 
@@ -76,8 +76,8 @@ class MprisPlaybackCoordinator:
         self,
         *,
         poll_interval: float = 0.2,
-        session: MprisSessionPort | None = None,
-        playback_adapter: MprisPlaybackAdapter | None = None,
+        session: MprisSessionPort,
+        playback_adapter: MprisPlaybackAdapter,
         on_sample: PlaybackListener | None = None,
         on_commit: CommitListener | None = None,
         on_no_player: NoPlayerListener | None = None,
@@ -85,8 +85,8 @@ class MprisPlaybackCoordinator:
         if poll_interval <= 0.0:
             raise ValueError("MPRIS poll interval must be positive")
         self._poll_interval = poll_interval
-        self._session = session if session is not None else MprisSession()
-        self._playback_adapter = playback_adapter if playback_adapter is not None else MprisPlaybackAdapter()
+        self._session = session
+        self._playback_adapter = playback_adapter
         self._on_sample = on_sample
         self._on_commit = on_commit
         self._on_no_player = on_no_player
@@ -158,23 +158,57 @@ class MprisPlaybackCoordinator:
 
     async def start(self) -> None:
         """Connect the session and start the owned poll task."""
-        if self._task is not None and not self._task.done():
-            return
+        task = self._task
+        if task is not None:
+            if not task.done():
+                return
+            self._task = None
         self.reset()
-        await self._session.connect()
-        self._task = asyncio.create_task(self._run(), name="kotonoha-mpris-playback")
+        try:
+            await self._session.connect()
+            task = create_owned_task(self._run(), name="kotonoha-mpris-playback")
+        except asyncio.CancelledError:
+            self._close_failed_start_session()
+            raise
+        except (MprisSessionError, OSError, TimeoutError, RuntimeError, TypeError, ValueError):
+            self._close_failed_start_session()
+            raise
+        self._task = task
+        task.add_done_callback(self._playback_task_finished)
+
+    def _close_failed_start_session(self) -> None:
+        """Release a session acquired by a failed playback startup."""
+        try:
+            self._session.close()
+        except (MprisSessionError, OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            logger.warning("Could not close MPRIS session after startup failure: %s", exc)
+
+    def _playback_task_finished(self, task: asyncio.Task[None]) -> None:
+        """Observe unexpected poll-task failures when no later stop occurs."""
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error("MPRIS playback task failed: %s", error)
 
     async def stop(self) -> None:
         """Cancel polling, close the session, and reset restartable state."""
         task = self._task
         self._task = None
-        if task is not None:
-            task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
-        self._subscribed_name = None
-        self._session.close()
-        self.reset()
+        cancellation_requested = False
+        try:
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                cancellation_requested = await wait_for_owned(task)
+        finally:
+            self._subscribed_name = None
+            try:
+                self._session.close()
+            finally:
+                self.reset()
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     async def poll_once(self, *, now: float | None = None) -> None:
         """Sample the selected player once; exposed for deterministic tests."""

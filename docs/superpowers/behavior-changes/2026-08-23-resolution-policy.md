@@ -1,14 +1,14 @@
 # 歌词 resolution policy
 
-## `resolution.default-ordered-first`
+## `resolution.default-best-confidence`
 
-- `case_id`: `resolution.default-ordered-first`
+- `case_id`: `resolution.default-best-confidence`
 - `status`: `Accepted`
 - `owner`: application lyrics workflow
 - `old_behavior`: Config 默认 `prefer_best_lyrics=True`，resolver 默认并发竞争多个网络来源并选择较高置信度结果。
-- `new_contract`: 默认 `ordered_first`；来源顺序决定同一可接受等级的结果，`best_confidence` 作为显式可选 policy。
-- `user_impact`: 默认本地优先、请求数量和结果选择更可预测；需要更高匹配置信度的用户可以主动选择另一策略。
-- `reason`: 当前默认并发竞争与“来源优先级”冲突，且 resolver 内部决定 policy 会让配置和测试无法表达真实意图。
+- `new_contract`: 默认 `best_confidence`；启用 `prefer_best_lyrics` 时来源竞争并按置信度选择，关闭后使用 `ordered_first`，来源顺序决定结果。
+- `user_impact`: 默认优先匹配质量最高的歌词；需要严格按来源顺序查询的用户可以在 Settings 中关闭该开关。
+- `reason`: 用户需要在质量优先和顺序优先之间作出明确选择，来源顺序本身仍由 Settings 配置并持久化。
 - `replacement_tests`: source plan precedence corpus、ordered/best policy contract tests。
 - `removal_condition`: 迁移完成后删除 resolver 内部 `prefer_best` 分支和旧配置字段的直接解释逻辑。
 

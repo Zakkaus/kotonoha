@@ -3,11 +3,14 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Literal, Protocol, TypeAlias
+from typing import TYPE_CHECKING, Literal, Protocol, TypeAlias
 
 from ..lyrics.match import MatchConfidence, TrackMetadata
 from ..lyrics.models import LyricsDocument
 from ..playback.models import PlaybackObservation
+
+if TYPE_CHECKING:
+    from ..lyrics.live_contracts import LiveSourceMatch
 
 SourceClientId: TypeAlias = int | str
 SourceMode: TypeAlias = Literal["standalone", "external", "live"]
@@ -21,16 +24,6 @@ class LiveSourceCandidate:
     observation: PlaybackObservation
     document: LyricsDocument | None
     confidence: MatchConfidence = MatchConfidence.HIGH
-
-
-@dataclass(frozen=True)
-class LiveSourceMatch:
-    """A live candidate that matches the currently selected player track."""
-
-    client_id: SourceClientId
-    observation: PlaybackObservation
-    document: LyricsDocument
-    confidence: MatchConfidence
 
 
 @dataclass(frozen=True)
@@ -108,7 +101,6 @@ class MprisSourcePort(SourceResolutionPort, SourceClockPort, Protocol):
 
 __all__ = [
     "LiveSourceCandidate",
-    "LiveSourceMatch",
     "LiveSourceTiming",
     "SourceClientId",
     "SourceClockPort",

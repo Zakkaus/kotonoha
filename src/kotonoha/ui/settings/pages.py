@@ -2,38 +2,34 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import QSize, Qt
-from PyQt6.QtGui import QColor, QFont, QIcon, QPixmap
+from PyQt6.QtGui import QColor, QFont
 from PyQt6.QtWidgets import (
-    QAbstractItemView,
     QColorDialog,
     QFormLayout,
     QLabel,
-    QListView,
     QListWidgetItem,
     QSpinBox,
     QVBoxLayout,
     QWidget,
 )
 
-from ... import leaf_icon
-from ...config import ACCENT_PRESETS, DEFAULT_ICON_NAME, LEAD_MS_LIMIT, Config
-from ...strings import UI_LANGUAGES, t
-from ...tray import discover_icon_paths
+from ...config import ACCENT_PRESETS, LEAD_MS_LIMIT, Config
+from ...strings import UI_LANGUAGES, Translator
 from .controls import OpacityKey, PanelOpacityState, SettingsWidgets
-from .settings_sources import SettingsSourcesPageBuilder
-from .settings_widgets import (
+from .icons import SettingsIconPageBuilder
+from .sources import SettingsSourcesPageBuilder
+from .widgets import (
     FontNameDelegate,
-    IconStrip,
     available_font_styles,
-    no_tint_icon,
     resolve_font_family,
 )
 
 if TYPE_CHECKING:
-    from .settings_dialog import SettingsDialog
+    from .dialog import SettingsDialog
 
 
 class SettingsPageBuilder:
@@ -43,10 +39,24 @@ class SettingsPageBuilder:
     chrome, staged configuration, and commit behavior.
     """
 
-    def __init__(self, dialog: SettingsDialog, widgets: SettingsWidgets) -> None:
+    def __init__(
+        self,
+        dialog: SettingsDialog,
+        widgets: SettingsWidgets,
+        *,
+        on_clear_cache: Callable[[], None],
+        translator: Translator,
+    ) -> None:
         self._dialog = dialog
         self._widgets = widgets
-        self._sources = SettingsSourcesPageBuilder(dialog, widgets)
+        self._translator = translator
+        self._sources = SettingsSourcesPageBuilder(
+            dialog,
+            widgets,
+            on_clear_cache=on_clear_cache,
+            translator=translator,
+        )
+        self._icons = SettingsIconPageBuilder(dialog, widgets, translator=translator)
         self._connect_signals()
 
     def _connect_signals(self) -> None:
@@ -66,6 +76,7 @@ class SettingsPageBuilder:
 
     def general_page(self) -> QWidget:
         """Build the language, theme, blur, and settings-opacity page."""
+        t = self._translator.text
         d = self._dialog
         w = self._widgets
         page, form = self._form_page()
@@ -104,21 +115,11 @@ class SettingsPageBuilder:
 
     def icon_page(self) -> QWidget:
         """Build the independent tray and window icon pickers."""
-        w = self._widgets
-        page, form = self._form_page()
-        w.tray_icon_list = self.build_icon_picker(self._config.icon_name)
-        form.addRow(QLabel(t("set.tray_icon")))
-        form.addRow(w.tray_icon_list)
-        form.addRow(self._hint(t("set.tray_icon_hint")))
-
-        w.window_icon_list = self.build_icon_picker(self._config.window_icon_name)
-        form.addRow(QLabel(t("set.window_icon")))
-        form.addRow(w.window_icon_list)
-        form.addRow(self._hint(t("set.window_icon_hint")))
-        return page
+        return self._icons.build()
 
     def text_page(self) -> QWidget:
         """Build font-family, font-style, and size controls."""
+        t = self._translator.text
         w = self._widgets
         page, form = self._form_page()
         w.font_family.setEditable(False)
@@ -142,6 +143,7 @@ class SettingsPageBuilder:
 
     def panel_page(self) -> QWidget:
         """Build panel style, width, opacity, and tint controls."""
+        t = self._translator.text
         w = self._widgets
         page, form = self._form_page()
         w.panel.clear()
@@ -179,6 +181,7 @@ class SettingsPageBuilder:
 
     def effects_page(self) -> QWidget:
         """Build accent and visual-effect controls."""
+        t = self._translator.text
         w = self._widgets
         page, form = self._form_page()
         w.accent.clear()
@@ -225,6 +228,7 @@ class SettingsPageBuilder:
 
     def lyrics_page(self) -> QWidget:
         """Build lyric timing, translation, script, and interlude controls."""
+        t = self._translator.text
         page, form = self._form_page()
         w = self._widgets
         w.karaoke.setText(t("set.karaoke"))
@@ -271,6 +275,7 @@ class SettingsPageBuilder:
 
     def position_page(self) -> QWidget:
         """Build edge anchor, margin, and input-mode controls."""
+        t = self._translator.text
         page, form = self._form_page()
         w = self._widgets
         w.anchor.clear()
@@ -294,71 +299,12 @@ class SettingsPageBuilder:
 
     def refresh_generated_icons(self) -> None:
         """Re-render accent-dependent icon previews after Apply."""
-        w = self._widgets
-        dark = self._dialog.theme_name == "dark"
-        for _list, items in w.icon_pickers:
-            for key in leaf_icon.PICKER_STYLES:
-                item = items.get(key)
-                if item is not None:
-                    pixmap = leaf_icon.render_leaf(
-                        key, self._config.accent_start, dark_panel=dark, size=64
-                    )
-                    item.setIcon(no_tint_icon(pixmap))
-
-    def build_icon_picker(self, selected_key: str) -> IconStrip:
-        """Build one independently selectable icon strip."""
-        icon_list = IconStrip()
-        icon_list.setObjectName("iconPicker")
-        icon_list.setViewMode(QListView.ViewMode.IconMode)
-        icon_list.setFlow(QListView.Flow.LeftToRight)
-        icon_list.setMovement(QListView.Movement.Static)
-        icon_list.setResizeMode(QListView.ResizeMode.Adjust)
-        icon_list.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        icon_list.setWrapping(True)
-        icon_list.setIconSize(QSize(40, 40))
-        icon_list.setGridSize(QSize(54, 54))
-        icon_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        icon_list.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        items: dict[str, QListWidgetItem] = {}
-        selected_item: QListWidgetItem | None = None
-        default_item: QListWidgetItem | None = None
-
-        def add(key: str, pixmap: QPixmap) -> QListWidgetItem:
-            item = QListWidgetItem(no_tint_icon(pixmap), "")
-            item.setData(Qt.ItemDataRole.UserRole, key)
-            item.setTextAlignment(Qt.AlignmentFlag.AlignCenter)
-            icon_list.addItem(item)
-            items[key] = item
-            return item
-
-        dark = self._dialog.theme_name == "dark"
-        offered = leaf_icon.PICKER_STYLES
-        if leaf_icon.is_generated(selected_key) and selected_key not in offered:
-            offered = (*offered, selected_key)
-        for key in offered:
-            item = add(
-                key,
-                leaf_icon.render_leaf(key, self._config.accent_start, dark_panel=dark, size=64),
-            )
-            if key == selected_key:
-                selected_item = item
-        for choice in discover_icon_paths():
-            source = QIcon(str(choice.path))
-            if source.isNull():
-                continue
-            item = add(choice.key, source.pixmap(QSize(64, 64)))
-            if choice.key == selected_key:
-                selected_item = item
-            if choice.key == DEFAULT_ICON_NAME:
-                default_item = item
-        icon_list.setCurrentItem(selected_item or default_item)
-        self._widgets.icon_pickers.append((icon_list, items))
-        return icon_list
+        self._icons.refresh_generated_icons()
 
     def set_custom_accent(self, triple: tuple[str, str, str]) -> None:
         """Show a picked accent in the reusable custom combo entry."""
         w = self._widgets
-        label = f"{t('set.accent.custom')} {triple[0].upper()}"
+        label = f"{self._translator.text('set.accent.custom')} {triple[0].upper()}"
         if w.custom_index >= 0:
             w.accent.setItemText(w.custom_index, label)
             w.accent.setItemData(w.custom_index, triple)
@@ -391,7 +337,11 @@ class SettingsPageBuilder:
         if w.accent.itemData(index) is not None:
             w.accent_last_index = index
             return
-        chosen = QColorDialog.getColor(QColor(self._config.accent_start), self._dialog, t("set.accent"))
+        chosen = QColorDialog.getColor(
+            QColor(self._config.accent_start),
+            self._dialog,
+            self._translator.text("set.accent"),
+        )
         if not chosen.isValid():
             w.accent.setCurrentIndex(w.accent_last_index)
             return
@@ -456,11 +406,6 @@ class SettingsPageBuilder:
         label.setWordWrap(True)
         return label
 
-    def _spin(self, low: int, high: int, value: int, suffix: str) -> QSpinBox:
-        spin = QSpinBox()
-        self._configure_spin(spin, low, high, value, suffix)
-        return spin
-
     @staticmethod
     def _configure_spin(spin: QSpinBox, low: int, high: int, value: int, suffix: str) -> None:
         """Apply one numeric control's range, value, and display suffix."""
@@ -468,22 +413,5 @@ class SettingsPageBuilder:
         spin.setValue(value)
         if suffix:
             spin.setSuffix(suffix)
-
-    @staticmethod
-    def picked_icon(icon_list: IconStrip) -> str:
-        """Read the selected icon key from an icon strip."""
-        item = icon_list.currentItem()
-        return str(item.data(Qt.ItemDataRole.UserRole)) if item is not None else DEFAULT_ICON_NAME
-
-    @staticmethod
-    def resolve_font_family(font_family: str) -> str:
-        """Expose font-family resolution for the dialog compatibility boundary."""
-        return resolve_font_family(font_family)
-
-    @staticmethod
-    def available_styles(family: str) -> list[str]:
-        """Expose installed styles for the dialog compatibility boundary."""
-        return available_font_styles(family)
-
 
 __all__ = ["SettingsPageBuilder"]

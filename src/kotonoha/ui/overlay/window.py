@@ -31,11 +31,12 @@ from ...config import Config
 from ...display.models import DisplayFrame
 from ...platform import OverlayPlatformFactory, QtWindowHost
 from ...platform.overlay_contracts import DragMode, SurfacePort, SurfaceResult
-from ...state import LyricsState
+from ...strings import Translator
 from .chrome import OverlayChromeController
 from .content import OverlayContentController
 from .geometry import ScreenLike
 from .presentation import OverlayPresentationController
+from .state import LyricsState
 from .surface import OverlaySurfaceController, PositionCommit
 from .view import OverlayViewBuilder
 
@@ -69,14 +70,22 @@ class LyricsOverlay(QWidget):
     _closed: bool
     _closing: bool
 
-    def __init__(self, state: LyricsState, config: Config, *, platform_factory: OverlayPlatformFactory) -> None:
+    def __init__(
+        self,
+        state: LyricsState,
+        config: Config,
+        *,
+        platform_factory: OverlayPlatformFactory,
+        translator: Translator | None = None,
+    ) -> None:
         super().__init__()
         self._state = state
         self._config = config
+        self._translator = translator if translator is not None else Translator(config.ui_language)
         self._closed = False
         self._closing = False
         self._passthrough = config.passthrough
-        self._chrome = OverlayChromeController(self)
+        self._chrome = OverlayChromeController(self, self._translator)
         app = QApplication.instance()
         self._activation_timer = QTimer(self)
         self._activation_timer.setSingleShot(True)
@@ -227,12 +236,8 @@ class LyricsOverlay(QWidget):
             timer_parent=self,
             on_input_region_refresh=self._refresh_input_region,
             on_offset_changed=self._emit_track_offset_changed,
+            translator=self._translator,
         )
-
-    @property
-    def _track_key(self) -> str:
-        """Expose the content owner's normalized offset key to existing callers."""
-        return self._content.track_key
 
     def _update_lock_icon(self) -> None:
         self._chrome.update_icons()

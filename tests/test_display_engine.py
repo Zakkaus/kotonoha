@@ -72,12 +72,11 @@ def test_display_engine_preserves_pause_and_reports_empty_available_documents():
     assert paused.diagnostic.code == "empty_document"
 
 
-def test_legacy_projection_normalizes_an_empty_document_without_a_track():
-    frame = DisplayEngine().project(
-        LyricsDocument("test", timing=TimingKind.LINE, lines=()),
-        1.0,
-        track=None,
-        is_playing=True,
+def test_display_engine_projects_no_track_without_a_legacy_projection():
+    frame = DisplayEngine().project_observation(
+        PlaybackObservation("test", "player", None, PlaybackStatus.STOPPED, None, None, 1.0),
+        None,
+        ResolutionState.NO_TRACK,
     )
 
     assert frame.state is DisplayState.NO_TRACK

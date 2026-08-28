@@ -3,15 +3,15 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 from dataclasses import dataclass, replace
 from enum import StrEnum
 from typing import Protocol
 
-from ..async_worker import BlockingCallRunner
+from ..async_task import create_owned_task, wait_for_owned
+from ..async_worker import BlockingWorkerPort
 from ..config import Config, set_track_offset
-from ..config_schema import SETTINGS_CONFIG_FIELDS
+from ..config.schema import SETTINGS_CONFIG_FIELDS
 from .config_merge import merge_settings
 
 logger = logging.getLogger(__name__)
@@ -55,7 +55,7 @@ class ConfigService:
         config: Config,
         *,
         writer: ConfigWriter,
-        worker: BlockingCallRunner,
+        worker: BlockingWorkerPort,
     ) -> None:
         self._config = config.clamped()
         self._writer = writer
@@ -99,12 +99,6 @@ class ConfigService:
             return self.config
         self._config = merge_settings(self._config, config, changed_fields)
         self._schedule_persist()
-        return self.config
-
-    def set_runtime_token(self, token: str) -> Config:
-        """Update the in-memory Cider token without writing it to JSON."""
-        self._ensure_open()
-        self._config = replace(self._config, cider_api_token=token.strip()).clamped()
         return self.config
 
     def set_passthrough(self, enabled: bool) -> Config:
@@ -154,8 +148,10 @@ class ConfigService:
         self._ensure_open()
         task = self._save_task
         if task is not None:
-            with contextlib.suppress(asyncio.CancelledError):
-                await task
+            # A caller may cancel its wait, but the service still owns the save
+            # task and must not lose the latest configuration as a side effect.
+            if await wait_for_owned(task):
+                raise asyncio.CancelledError
 
     async def close(self) -> None:
         """Wait for the latest scheduled save and release the worker."""
@@ -163,12 +159,16 @@ class ConfigService:
             return
         self._closed = True
         task = self._save_task
+        cancellation_requested = False
         try:
             if task is not None:
-                with contextlib.suppress(asyncio.CancelledError):
-                    await task
+                # Complete the owned write before releasing its worker, then
+                # restore caller cancellation below.
+                cancellation_requested = await wait_for_owned(task)
         finally:
             self._worker.close()
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def _ensure_open(self) -> None:
         if self._closed:
@@ -202,7 +202,7 @@ class ConfigService:
             self._pending_config = None
             self._persistence_status = ConfigPersistenceStatus(ConfigPersistenceState.IDLE)
             return
-        task = asyncio.create_task(self._drain_persistence(), name="kotonoha-config-save")
+        task = create_owned_task(self._drain_persistence(), name="kotonoha-config-save")
         self._save_task = task
         task.add_done_callback(self._persistence_finished)
 

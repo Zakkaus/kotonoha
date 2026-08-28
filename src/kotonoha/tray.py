@@ -20,7 +20,7 @@ from PyQt6.QtWidgets import QMenu, QSystemTrayIcon, QWidget
 
 from . import leaf_icon
 from .config import DEFAULT_ICON_NAME
-from .strings import t
+from .strings import Translator
 
 ASSETS_DIR = Path(__file__).with_name("assets")
 DEFAULT_ICON_PATH = ASSETS_DIR / "icon.png"
@@ -120,42 +120,65 @@ class KotonohaTray(QSystemTrayIcon):
         icon_name: str = DEFAULT_ICON_NAME,
         accent: str = "#FF4FA3",
         passthrough: bool,
-        on_toggle_passthrough: Callable[[bool], None],
-        on_open_settings: Callable[[], None],
+        on_toggle_passthrough: Callable[[bool], None] | None = None,
+        on_open_settings: Callable[[], None] | None = None,
         on_quit: Callable[[], None],
+        translator: Translator | None = None,
     ) -> None:
         super().__init__(parent)
+        self._translator = translator if translator is not None else Translator()
         self._on_toggle_passthrough = on_toggle_passthrough
         self._on_open_settings = on_open_settings
+        self._handlers_bound = on_toggle_passthrough is not None and on_open_settings is not None
         self._on_quit = on_quit
         self.setIcon(load_icon(icon_name, accent=accent))
-        self.setToolTip(t("tray.tooltip"))
+        self.setToolTip(self._translator.text("tray.tooltip"))
 
         menu = QMenu()
 
-        self._lock_action = QAction(t("tray.lock"), menu)
+        self._lock_action = QAction(self._translator.text("tray.lock"), menu)
         self._lock_action.setCheckable(True)
         self._lock_action.setChecked(passthrough)
-        self._lock_action.toggled.connect(on_toggle_passthrough)
+        self._lock_action.toggled.connect(self._handle_toggle_passthrough)
         menu.addAction(self._lock_action)
 
         menu.addSeparator()
 
-        settings_action = QAction(t("tray.settings"), menu)
+        settings_action = QAction(self._translator.text("tray.settings"), menu)
         settings_action.triggered.connect(self._open_settings)
         menu.addAction(settings_action)
 
-        quit_action = QAction(t("tray.quit"), menu)
+        quit_action = QAction(self._translator.text("tray.quit"), menu)
         quit_action.triggered.connect(self._quit)
         menu.addAction(quit_action)
 
         self.setContextMenu(menu)
         self.activated.connect(self._on_activated)
 
+    def set_action_handlers(
+        self,
+        *,
+        on_toggle_passthrough: Callable[[bool], None],
+        on_open_settings: Callable[[], None],
+    ) -> None:
+        """Bind application actions once before the tray is shown."""
+        if self._handlers_bound:
+            raise RuntimeError("tray action handlers are already bound")
+        self._on_toggle_passthrough = on_toggle_passthrough
+        self._on_open_settings = on_open_settings
+        self._handlers_bound = True
+
+    def _handle_toggle_passthrough(self, checked: bool) -> None:
+        callback = self._on_toggle_passthrough
+        if callback is not None:
+            callback(checked)
+
     def _open_settings(self, checked: bool = False) -> None:
         """Forward the menu action through a bound receiver-owned slot."""
         del checked
-        self._on_open_settings()
+        callback = self._on_open_settings
+        if callback is not None:
+            callback()
 
     def _quit(self, checked: bool = False) -> None:
         """Forward the quit action through a bound receiver-owned slot."""
@@ -166,7 +189,9 @@ class KotonohaTray(QSystemTrayIcon):
         # Left-click toggles the lock — the quick unlock affordance for a
         # click-through overlay.
         if reason == QSystemTrayIcon.ActivationReason.Trigger:
-            self._on_toggle_passthrough(not self._lock_action.isChecked())
+            callback = self._on_toggle_passthrough
+            if callback is not None:
+                callback(not self._lock_action.isChecked())
 
     def set_passthrough_checked(self, checked: bool) -> None:
         self._lock_action.setChecked(checked)

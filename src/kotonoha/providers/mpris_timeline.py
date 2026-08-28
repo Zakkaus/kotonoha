@@ -96,8 +96,4 @@ class MprisPositionCalibrator:
         self._calibration_offset = None
 
 
-# TODO(phase-6): remove this compatibility alias after provider tests and callers
-# migrate to the explicit calibrator name.
-MprisTimeline = MprisPositionCalibrator
-
-__all__ = ["MprisPositionCalibrator", "MprisTimeline"]
+__all__ = ["MprisPositionCalibrator"]

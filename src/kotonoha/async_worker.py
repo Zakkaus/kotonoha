@@ -6,11 +6,27 @@ import asyncio
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
-from typing import ParamSpec, TypeVar
+from typing import ParamSpec, Protocol, TypeVar
 
 _P = ParamSpec("_P")
 _R = TypeVar("_R")
 DEFAULT_BLOCKING_CALL_TIMEOUT_S = 30.0
+
+
+class BlockingWorkerPort(Protocol):
+    """Typed boundary for one owner-managed blocking worker."""
+
+    async def run(self, function: Callable[_P, _R], /, *args: _P.args, **kwargs: _P.kwargs) -> _R:
+        """Run one blocking call without blocking the application loop."""
+        ...
+
+    def close(self) -> None:
+        """Release the worker and cancel queued calls."""
+        ...
+
+    def reopen(self) -> None:
+        """Allow a stopped worker to allocate a fresh executor on demand."""
+        ...
 
 
 class BlockingCallRunner:
@@ -81,7 +97,7 @@ class BlockingCallRunner:
         except asyncio.CancelledError:
             # Do not call future.cancel(): a caller cancelling this awaitable must
             # not be mistaken for cancelling an already-running filesystem,
-            # SQLite, or keyring operation.
+            # SQLite or another external blocking operation.
             raise
 
     def close(self) -> None:
@@ -105,4 +121,4 @@ class BlockingCallRunner:
         self._closed = False
 
 
-__all__ = ["BlockingCallRunner", "DEFAULT_BLOCKING_CALL_TIMEOUT_S"]
+__all__ = ["BlockingCallRunner", "BlockingWorkerPort", "DEFAULT_BLOCKING_CALL_TIMEOUT_S"]

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 
 from ..app.source_contracts import MprisSourcePort
@@ -11,7 +12,7 @@ from ..lyrics.workflow import ResolverPort
 from ..players import PlayerInfo
 from .mpris_adapter import MprisPlaybackAdapter
 from .mpris_lyrics import MprisLyricsCoordinator
-from .mpris_playback import MprisPlaybackCoordinator, PlaybackSample
+from .mpris_playback import MprisPlaybackCoordinator, MprisSessionPort, PlaybackSample
 from .mpris_track import TrackCommit
 
 logger = logging.getLogger(__name__)
@@ -28,12 +29,13 @@ class MprisProvider:
         lyrics_sources: list[str] | None = None,
         ownership: MprisSourcePort,
         resolver: ResolverPort,
-        playback_adapter: MprisPlaybackAdapter | None = None,
+        playback_adapter: MprisPlaybackAdapter,
+        playback_session: MprisSessionPort,
     ) -> None:
         """Create the MPRIS facade from the composition root's dependencies."""
         self._ownership = ownership
         self._resolver: ResolverPort = resolver
-        self._playback_adapter = playback_adapter if playback_adapter is not None else MprisPlaybackAdapter()
+        self._playback_adapter = playback_adapter
         self._lyrics = MprisLyricsCoordinator(
             display,
             ownership=self._ownership,
@@ -43,6 +45,7 @@ class MprisProvider:
         )
         self._playback = MprisPlaybackCoordinator(
             poll_interval=poll_interval,
+            session=playback_session,
             playback_adapter=self._playback_adapter,
             on_sample=self._on_playback_sample,
             on_commit=self._on_playback_commit,
@@ -95,13 +98,48 @@ class MprisProvider:
     async def start(self) -> None:
         """Start MPRIS polling and lyric HTTP resources."""
         await self._playback.start()
-        await self._lyrics.start()
+        lyrics_started = False
+        try:
+            await self._lyrics.start()
+            lyrics_started = True
+        finally:
+            if not lyrics_started:
+                await self._rollback_playback_start()
         logger.info("MPRIS provider started")
 
     async def stop(self) -> None:
         """Stop polling before closing lyric workflow resources."""
-        await self._playback.stop()
-        await self._lyrics.stop()
+        first_error: Exception | None = None
+        cancelled = False
+        try:
+            await self._playback.stop()
+        except asyncio.CancelledError:
+            cancelled = True
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            logger.warning("Could not stop MPRIS playback coordinator: %s", exc)
+            first_error = exc
+        finally:
+            try:
+                await self._lyrics.stop()
+            except asyncio.CancelledError:
+                cancelled = True
+            except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+                logger.warning("Could not stop MPRIS lyrics coordinator: %s", exc)
+                if first_error is None:
+                    first_error = exc
+        if cancelled:
+            raise asyncio.CancelledError
+        if first_error is not None:
+            raise first_error
+
+    async def _rollback_playback_start(self) -> None:
+        """Release playback resources when lyric startup fails halfway through."""
+        try:
+            await self._playback.stop()
+        except asyncio.CancelledError:
+            raise
+        except (OSError, RuntimeError, TimeoutError, ValueError) as exc:
+            logger.warning("Could not roll back MPRIS playback startup: %s", exc)
 
     def _on_playback_commit(self, commit: TrackCommit) -> None:
         """Forward stable playback transitions to the lyric coordinator."""

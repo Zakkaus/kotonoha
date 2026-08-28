@@ -14,16 +14,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Any, TypeVar
 
-from . import config_store
-from .config_schema import SETTINGS_CONFIG_FIELDS
-
-APP_DIR_NAME = config_store.APP_DIR_NAME
-CONFIG_FILE_NAME = config_store.CONFIG_FILE_NAME
-MAX_CONFIG_BYTES = config_store.MAX_CONFIG_BYTES
-ConfigStore = config_store.ConfigStore
-_read_config_bytes = config_store._read_config_bytes
-config_dir = config_store.config_dir
-config_path = config_store.config_path
+from .schema import SETTINGS_CONFIG_FIELDS
 
 logger = logging.getLogger(__name__)
 
@@ -168,8 +159,8 @@ class Config:
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
     lyrics_sources: list[str] = field(default_factory=lambda: list(DEFAULT_LYRICS_SOURCES))
     display_sources: list[str] = field(default_factory=lambda: list(DEFAULT_DISPLAY_SOURCES))
-    # Loaded from the OS keyring at startup; never serialized to config.json.
-    cider_api_token: str = field(default="", repr=False, compare=False, kw_only=True)
+    # Kept out of repr output, but persisted with the rest of config.json.
+    cider_api_token: str = field(default="", repr=False, kw_only=True)
     player_lock: str = ""
     prefer_best_lyrics: bool = True  # query sources concurrently and pick the best-quality match
     fuzzy_match: bool = True          # salvage noisy browser titles (strip 【HD】/[歌詞]/channel tails)
@@ -260,9 +251,8 @@ class Config:
         return tuple(values[field_name] for field_name in SETTINGS_CONFIG_FIELDS)
 
     def to_dict(self) -> dict[str, object]:
-        """Serialize safe settings fields into the external JSON shape."""
+        """Serialize the validated configuration into the external JSON shape."""
         data: dict[str, object] = asdict(self)
-        data.pop("cider_api_token", None)
         for key in _ENUM_FIELDS:
             value = data[key]
             if isinstance(value, StrEnum):
@@ -274,8 +264,8 @@ class Config:
         """Parse an untrusted JSON object, ignoring unknown configuration keys."""
         if not isinstance(data, Mapping):
             return cls()
-        known = {f.name for f in fields(cls)} - {"cider_api_token"}
-        # ``Any`` is isolated to this compatibility boundary: JSON values are
+        known = {f.name for f in fields(cls)}
+        # ``Any`` is isolated to this JSON boundary: decoded values are
         # deliberately untyped until ``clamped`` validates every field.
         filtered: dict[str, Any] = {
             k: v for k, v in data.items() if isinstance(k, str) and k in known
@@ -300,16 +290,6 @@ _ENUM_FIELDS = frozenset(
         "fx_intensity",
     }
 )
-
-
-def load_config(path: Path | None = None) -> Config:
-    """Load configuration through the typed file-storage boundary."""
-    return ConfigStore(Config, path).load()
-
-
-def save_config(config: Config, path: Path | None = None) -> None:
-    """Save configuration through the typed file-storage boundary."""
-    ConfigStore(Config, path).save(config)
 
 
 #: Bound on the global sync offset, shared with the control that edits it so the
@@ -396,11 +376,6 @@ def _clean_track_offsets(value: object) -> dict[str, int]:
         if isinstance(key, str) and key:
             cleaned[key] = _clamp_int(offset, -10_000, 10_000, 0)
     return dict(list(cleaned.items())[-TRACK_OFFSET_CAP:])
-
-
-def track_identity_key(title: str, artist: str, duration_s: float | None = None) -> str:
-    del duration_s  # Source-specific duration reporting must not split one recording's key.
-    return "\x1f".join((title.strip().casefold(), artist.strip().casefold()))
 
 
 def set_track_offset(config: Config, key: str, offset_ms: int) -> int:

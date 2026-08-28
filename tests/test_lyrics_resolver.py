@@ -1,23 +1,33 @@
 import asyncio
 import contextlib
 import logging
+from collections.abc import Mapping
 from pathlib import Path
 from typing import cast
 
 import pytest
 
+from kotonoha.app.source_gate import SourceOwnershipCoordinator
+from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.lyrics import netease, qqmusic
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.cache import LyricsCacheError
 from kotonoha.lyrics.catalog import LyricsSourceCatalog
 from kotonoha.lyrics.hint import LyricsHint
 from kotonoha.lyrics.http import LyricsSession
+from kotonoha.lyrics.live_contracts import LiveSourceMatch
+from kotonoha.lyrics.live_source import LiveLyricsSource, LiveSourcePort
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
 from kotonoha.lyrics.network_sources import NetworkLyricsSource
-from kotonoha.lyrics.ownership import LiveSourceMatch, SourceOwnershipCoordinator
 from kotonoha.lyrics.resolver import LyricsResolver
-from kotonoha.lyrics.sources import LyricsSourceKind
+from kotonoha.lyrics.sources import (
+    EmbeddedLyricsSource,
+    LocalLyricsSource,
+    LyricsSource,
+    LyricsSourceKind,
+    SidecarLyricsSource,
+)
 from kotonoha.lyrics.workflow import ResolverLookup
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
@@ -88,6 +98,19 @@ class FakeGate:
         return None
 
 
+def catalog_for(providers: Mapping[str, LyricsSource], ownership: LiveSourcePort) -> LyricsSourceCatalog:
+    """Build an explicit resolver catalog for tests without hidden defaults."""
+    return LyricsSourceCatalog(
+        providers,
+        live_source=LiveLyricsSource(ownership),
+        local_source=LocalLyricsSource(
+            SidecarLyricsSource(),
+            EmbeddedLyricsSource(),
+            worker=BlockingCallRunner("test-local-lyrics"),
+        ),
+    )
+
+
 def resolver_with_fakes(
     calls,
     *,
@@ -105,41 +128,10 @@ def resolver_with_fakes(
             calls.append(f"network:{name}")
             return network_hits.get(name)
 
-        exact_fetch = None
-        if name == "netease":
-            async def exact_netease(session, track, song_id):
-                payload = await netease.fetch_payload(session, song_id)
-                lines = netease.parse_payload(payload)
-                return LyricsArtifact(
-                    provider=name,
-                    provider_song_id=song_id,
-                    title=track.title,
-                    artist=track.artist,
-                    album=track.album,
-                    duration_s=track.duration_s,
-                    payload=payload,
-                    lines=lines,
-                    confidence=MatchConfidence.HIGH,
-                )
-
-            exact_fetch = exact_netease
-        elif name == "qqmusic":
-            async def exact_qqmusic(session, track, song_id):
-                payload = await qqmusic.fetch_payload_for_song_id(session, song_id)
-                lines = qqmusic.parse_payload(payload)
-                return LyricsArtifact(
-                    provider=name,
-                    provider_song_id=song_id,
-                    title=track.title,
-                    artist=track.artist,
-                    album=track.album,
-                    duration_s=track.duration_s,
-                    payload=payload,
-                    lines=lines,
-                    confidence=MatchConfidence.HIGH,
-                )
-
-            exact_fetch = exact_qqmusic
+        exact_fetch = {
+            "netease": netease.fetch_artifact_for_song_id,
+            "qqmusic": qqmusic.fetch_artifact_for_song_id,
+        }.get(name)
         return NetworkLyricsSource(
             source_id=name,
             fetch=fetch,
@@ -148,11 +140,10 @@ def resolver_with_fakes(
         )
 
     gate = FakeGate(calls, cider_match)
+    selected_cache = cache if cache is not None else FakeCache(calls, cache_hits)
     return LyricsResolver(
-        catalog=LyricsSourceCatalog.from_providers(
-            {name: adapter(name) for name in ("netease", "qqmusic", "lrclib")}, gate
-        ),
-        cache=cache or FakeCache(calls, cache_hits),
+        catalog=catalog_for({name: adapter(name) for name in ("netease", "qqmusic", "lrclib")}, gate),
+        cache=selected_cache,
         cache_enabled=cache_enabled,
         negative_ttl=30.0,
         prefer_best=prefer_best,
@@ -196,7 +187,7 @@ async def test_resolver_logs_source_candidates_and_final_selection(caplog):
 async def test_resolver_does_not_change_display_ownership():
     ownership = SourceOwnershipCoordinator()
     resolver = LyricsResolver(
-        catalog=LyricsSourceCatalog.from_providers({}, ownership),
+        catalog=catalog_for({}, ownership),
         cache=FakeCache([]),
         cache_enabled=False,
     )
@@ -388,9 +379,7 @@ async def test_concurrent_identical_requests_share_network_work():
 
     gate = FakeGate(calls)
     resolver = LyricsResolver(
-        catalog=LyricsSourceCatalog.from_providers(
-            {"netease": NetworkLyricsSource("netease", fetch, lambda _payload: ())}, gate
-        ),
+        catalog=catalog_for({"netease": NetworkLyricsSource("netease", fetch, lambda _payload: ())}, gate),
         cache=FakeCache(calls),
         cache_enabled=False,
     )
@@ -425,7 +414,7 @@ async def test_resolver_cancels_shared_network_work_on_shutdown():
 
     ownership = SourceOwnershipCoordinator()
     resolver = LyricsResolver(
-        catalog=LyricsSourceCatalog.from_providers(
+        catalog=catalog_for(
             {"netease": NetworkLyricsSource("netease", fetch, lambda _payload: ())}, ownership
         ),
         cache=FakeCache([]),
@@ -447,9 +436,7 @@ async def test_network_timeout_log_includes_exception_type(caplog):
 
     gate = FakeGate([])
     resolver = LyricsResolver(
-        catalog=LyricsSourceCatalog.from_providers(
-            {"netease": NetworkLyricsSource("netease", timeout, lambda _payload: ())}, gate
-        ),
+        catalog=catalog_for({"netease": NetworkLyricsSource("netease", timeout, lambda _payload: ())}, gate),
         cache=FakeCache([]),
         cache_enabled=False,
     )
@@ -606,6 +593,58 @@ async def test_best_mode_duplicate_source_fetches_once():
     assert calls.count("network:netease") == 1
 
 
+async def test_best_mode_cleans_tasks_when_network_task_creation_fails(monkeypatch):
+    from kotonoha.lyrics import resolver as resolver_module
+
+    async def pending_fetch(
+        session: LyricsSession,
+        track: TrackMetadata,
+        *,
+        fuzzy: bool,
+    ) -> LyricsArtifact | None:
+        del session, track, fuzzy
+        await asyncio.Event().wait()
+        return None
+
+    gate = FakeGate([])
+    resolver = LyricsResolver(
+        catalog=catalog_for(
+            {
+                "netease": NetworkLyricsSource("netease", pending_fetch, lambda _payload: ()),
+                "lrclib": NetworkLyricsSource("lrclib", pending_fetch, lambda _payload: ()),
+            },
+            gate,
+        ),
+        cache=FakeCache([]),
+        cache_enabled=False,
+        prefer_best=True,
+    )
+    original_create_owned_task = resolver_module.create_owned_task
+    created: list[asyncio.Task[object]] = []
+    calls = 0
+
+    def create_with_failure(coroutine, *, name):
+        nonlocal calls
+        calls += 1
+        if calls == 3:
+            coroutine.close()
+            raise RuntimeError("network task creation failed")
+        task = original_create_owned_task(coroutine, name=name)
+        created.append(task)
+        return task
+
+    monkeypatch.setattr(resolver_module, "create_owned_task", create_with_failure)
+    try:
+        with pytest.raises(RuntimeError, match="network task creation failed"):
+            await resolver.resolve(SESSION, TRACK, ["netease", "lrclib"])
+    finally:
+        await resolver.close()
+
+    assert len(created) == 2
+    assert created[0].done()
+    assert created[1].cancelled()
+
+
 async def test_a_local_lyric_read_does_not_hold_the_event_loop(monkeypatch):
     # The sidecar read and the mutagen tag parse are filesystem and CPU work on the
     # qasync loop that also drives the UI and the MPRIS poll. Called inline they held
@@ -630,7 +669,8 @@ async def test_a_local_lyric_read_does_not_hold_the_event_loop(monkeypatch):
     beat = asyncio.create_task(ticker())
     try:
         resolved = await LyricsResolver(
-            catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator())
+            catalog=catalog_for({}, SourceOwnershipCoordinator()),
+            cache=FakeCache([]),
         ).resolve_hint(
             SESSION, TRACK, ("netease",), LyricsHint("local", local_path=Path("/music/song.flac"))
         )
@@ -658,7 +698,10 @@ async def test_one_caller_leaving_does_not_cancel_the_other():
             await asyncio.sleep(0.2)
             return ResolverLookup(None)
 
-    resolver = SlowResolver(catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator()))
+    resolver = SlowResolver(
+        catalog=catalog_for({}, SourceOwnershipCoordinator()),
+        cache=FakeCache([]),
+    )
     first = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
     second = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
@@ -687,7 +730,10 @@ async def test_the_resolver_can_stop_the_work_it_started():
             await asyncio.Event().wait()
             return ResolverLookup(None)
 
-    resolver = NeverResolver(catalog=LyricsSourceCatalog.default(SourceOwnershipCoordinator()))
+    resolver = NeverResolver(
+        catalog=catalog_for({}, SourceOwnershipCoordinator()),
+        cache=FakeCache([]),
+    )
     caller = asyncio.create_task(resolver.resolve(SESSION, TRACK, ("netease",)))
     await started.wait()
 

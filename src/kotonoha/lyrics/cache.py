@@ -9,11 +9,11 @@ import time
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from ..async_worker import BlockingCallRunner
+from ..async_worker import BlockingWorkerPort
 from .artifact import LyricsArtifact
 from .match import Candidate, MatchConfidence, MatchEvidence, TrackMetadata, evaluate_match
 from .models import LyricLine
-from .titles import NORMALIZER_VERSION
+from .title_grammar import NORMALIZER_VERSION
 
 CACHE_SCHEMA_VERSION = 1
 DEFAULT_MAX_ENTRIES = 1000
@@ -50,10 +50,16 @@ def cache_path() -> Path:
 
 
 class LyricsCache:
-    def __init__(self, path: Path | None = None, *, max_entries: int = DEFAULT_MAX_ENTRIES) -> None:
+    def __init__(
+        self,
+        path: Path | None = None,
+        *,
+        max_entries: int = DEFAULT_MAX_ENTRIES,
+        worker: BlockingWorkerPort,
+    ) -> None:
         self._path = path or cache_path()
         self._max_entries = max(1, max_entries)
-        self._worker = BlockingCallRunner("kotonoha-lyrics-cache")
+        self._worker = worker
 
     def start(self) -> None:
         """Reopen the owned worker after a previous provider shutdown."""

@@ -18,13 +18,15 @@ from kotonoha.display.models import (
     DisplayState,
     Interlude,
     LineProgress,
+    ResolutionState,
     WordProgress,
 )
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
 from kotonoha.platform.overlay_contracts import SurfaceResult
-from kotonoha.playback.models import TrackIdentity
-from kotonoha.state import LyricsState
+from kotonoha.playback.identity import track_identity_key
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
+from kotonoha.ui.overlay.state import LyricsState
 
 
 def display_frame(
@@ -102,6 +104,33 @@ def display_frame(
         around=around,
         interlude=interlude,
     )
+
+
+def project_document(
+    document: LyricsDocument,
+    position: float,
+    options: DisplayOptions | None = None,
+) -> DisplayFrame:
+    """Project a test document through the public display input contract."""
+    track = TrackIdentity(
+        "test",
+        "player",
+        stable_id=document.song_id,
+        title=document.title or "",
+        artist=document.artist or "",
+        album=document.album or "",
+        duration_s=document.duration_s,
+    )
+    playback = PlaybackObservation(
+        "test",
+        "player",
+        track,
+        PlaybackStatus.PLAYING,
+        position,
+        document.duration_s,
+        0.0,
+    )
+    return DisplayEngine(options).project_observation(playback, document, ResolutionState.AVAILABLE)
 
 
 def test_fixed_panel_pins_pill_width_independent_of_text(qapp):
@@ -361,12 +390,12 @@ def test_lyric_script_converts_displayed_line(qapp):
     converted = DisplayEngine(
         DisplayOptions(lyrics_script=DisplayScript.ZH_HANT)
     )
-    out = converted.project(document, 0.5, track=None, is_playing=True).current
+    out = project_document(document, 0.5, converted.options).current
     assert out is not None
     assert out.text == "簡體字"  # display converted to Traditional
     assert out.words[0].text == "簡"  # words converted too (for the karaoke sweep)
     off = DisplayEngine(DisplayOptions(lyrics_script=DisplayScript.OFF))
-    assert off.project(document, 0.5, track=None, is_playing=True).current is line
+    assert project_document(document, 0.5, off.options).current is line
 
 
 def test_accent_tinted_black_panel_uses_accent_hue(qapp):
@@ -466,7 +495,7 @@ def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
     changes = []
     overlay.track_offset_changed.connect(changes.append)
     overlay._earlier_btn.click()
-    assert changes[-1].key == overlay._track_key
+    assert changes[-1].key == track_identity_key("Song", "Artist", 180.0)
     assert changes[-1].offset_ms == 50
     assert overlay._current.text == "Sync offset: +50 ms"
     overlay.set_passthrough(True)
@@ -485,7 +514,7 @@ def test_track_without_offset_uses_global_lead(qapp):
         artist="Artist",
         lines=(LyricLine(0, "line", 0.0, 4.0, "line", "", ()),),
     )
-    frame = DisplayEngine(DisplayOptions(lead_ms=120)).project(document, 1.0, track=None, is_playing=True)
+    frame = project_document(document, 1.0, DisplayOptions(lead_ms=120))
     assert frame.current_time == pytest.approx(1.12)
     overlay.deleteLater()
     qapp.processEvents()

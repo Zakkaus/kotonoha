@@ -8,12 +8,16 @@ pytest.importorskip("aiohttp")
 
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
-from kotonoha.display.coordinator import DisplayCoordinator  # noqa: E402
+from kotonoha.app.display_coordinator import DisplayCoordinator  # noqa: E402
+from kotonoha.app.source_gate import SourceOwnershipCoordinator  # noqa: E402
 from kotonoha.display.models import DisplayState  # noqa: E402
+from kotonoha.display.presentation import DisplayEngine  # noqa: E402
+from kotonoha.display.timeline import TimelineEngine  # noqa: E402
 from kotonoha.lyrics.match import TrackMetadata  # noqa: E402
-from kotonoha.lyrics.ownership import SourceOwnershipCoordinator  # noqa: E402
+from kotonoha.lyrics.protocol import AdapterProtocolDecoder  # noqa: E402
 from kotonoha.receiver import WS_PATH, AdapterReceiver  # noqa: E402
-from kotonoha.state import LyricsState  # noqa: E402
+from kotonoha.ui.overlay.publisher import QtDisplayPublisher  # noqa: E402
+from kotonoha.ui.overlay.state import LyricsState  # noqa: E402
 
 FRAME = {
     "protocol": "kotonoha.adapter",
@@ -65,9 +69,18 @@ CLOCK = {
 }
 
 
+def _display(state: LyricsState) -> DisplayCoordinator:
+    """Build the application display coordinator with its Qt test publisher."""
+    return DisplayCoordinator(
+        QtDisplayPublisher(state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
+
+
 async def _client(state, **kwargs):
     ownership = kwargs.pop("ownership", SourceOwnershipCoordinator())
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=ownership, **kwargs)
+    receiver = AdapterReceiver(_display(state), ownership=ownership, **kwargs)
     server = TestServer(receiver.build_app())
     client = TestClient(server)
     await client.start_server()
@@ -120,7 +133,7 @@ async def test_clock_message_updates_the_canonical_frame():
 
 def test_clock_before_snapshot_is_rejected():
     state = LyricsState()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(state), ownership=SourceOwnershipCoordinator())
 
     assert receiver.ingest(json.dumps(CLOCK), client_id=20) is False
     assert state.frame.state is DisplayState.NO_TRACK
@@ -128,7 +141,7 @@ def test_clock_before_snapshot_is_rejected():
 
 def test_stale_snapshot_does_not_replace_the_latest_frame():
     state = LyricsState()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(state), ownership=SourceOwnershipCoordinator())
 
     assert receiver.ingest(json.dumps(FRAME), client_id=21) is True
     playback = FRAME["playback"]
@@ -145,7 +158,7 @@ def test_stale_snapshot_does_not_replace_the_latest_frame():
 
 def test_clock_for_another_track_is_rejected_without_consuming_sequence():
     state = LyricsState()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(state), ownership=SourceOwnershipCoordinator())
 
     assert receiver.ingest(json.dumps(FRAME), client_id=22) is True
     wrong_track = {**CLOCK, "trackRef": "cider:cider:other-song"}
@@ -172,7 +185,7 @@ async def test_post_debug_bypass_updates_state():
 async def test_stop_clears_post_session_and_resets_its_sequence_namespace():
     state = LyricsState()
     ownership = SourceOwnershipCoordinator()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=ownership)
+    receiver = AdapterReceiver(_display(state), ownership=ownership)
 
     assert receiver.ingest(json.dumps(FRAME), client_id=0) is True
     assert ownership.current_match(TrackMetadata("Song", "X")) is not None
@@ -197,9 +210,21 @@ async def test_post_malformed_frame_returns_400():
     assert state.frame.state is DisplayState.NO_TRACK
 
 
+async def test_post_rejects_payloads_above_the_decoder_budget():
+    receiver = AdapterReceiver(
+        _display(LyricsState()),
+        ownership=SourceOwnershipCoordinator(),
+        decoder=AdapterProtocolDecoder(max_message_bytes=128),
+    )
+    async with TestClient(TestServer(receiver.build_app())) as client:
+        response = await client.post(WS_PATH, data=json.dumps(FRAME))
+
+    assert response.status == 413
+
+
 def test_build_app_registers_generic_adapter_route():
     app = AdapterReceiver(
-        DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator()
+        _display(LyricsState()), ownership=SourceOwnershipCoordinator()
     ).build_app()
     assert any(getattr(route.resource, "canonical", "") == WS_PATH for route in app.router.routes())
 
@@ -209,7 +234,7 @@ async def test_start_bind_failure_resets_runner_and_reraises(monkeypatch):
         raise OSError(98, "Address already in use")
 
     monkeypatch.setattr(web.TCPSite, "start", boom)
-    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(LyricsState()), ownership=SourceOwnershipCoordinator())
 
     with pytest.raises(OSError):
         await receiver.start()
@@ -217,11 +242,45 @@ async def test_start_bind_failure_resets_runner_and_reraises(monkeypatch):
     assert receiver._runner is None
 
 
+async def test_start_setup_failure_cleans_the_unowned_runner(monkeypatch):
+    from kotonoha import receiver as receiver_module
+
+    runner_instances = []
+
+    class FakeRunner:
+        def __init__(self, _app):
+            self.cleanup_calls = 0
+            runner_instances.append(self)
+
+        async def setup(self):
+            raise RuntimeError("runner setup failed")
+
+        async def cleanup(self):
+            self.cleanup_calls += 1
+
+    class FakeSite:
+        def __init__(self, _runner, _host, _port):
+            pass
+
+        async def start(self):
+            return None
+
+    monkeypatch.setattr(receiver_module.web, "AppRunner", FakeRunner)
+    monkeypatch.setattr(receiver_module.web, "TCPSite", FakeSite)
+    receiver = AdapterReceiver(_display(LyricsState()), ownership=SourceOwnershipCoordinator())
+
+    with pytest.raises(RuntimeError, match="runner setup failed"):
+        await receiver.start()
+
+    assert runner_instances[0].cleanup_calls == 1
+    assert receiver._runner is None
+
+
 def test_closed_gate_retains_tick_without_publishing_external_content():
     state = LyricsState()
     gate = SourceOwnershipCoordinator()
     gate.select_external()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=gate)
+    receiver = AdapterReceiver(_display(state), ownership=gate)
 
     assert receiver.ingest(json.dumps(FRAME), client_id=10) is True
     assert receiver.ingest(json.dumps({**CLOCK, "positionS": 3.0}), client_id=10)
@@ -234,7 +293,7 @@ def test_closed_gate_retains_tick_without_publishing_external_content():
 
 async def test_a_web_page_cannot_drive_the_overlay():
     state = LyricsState()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(state), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
         blocked = await client.post(
             WS_PATH,
@@ -253,14 +312,14 @@ async def test_a_web_page_cannot_drive_the_overlay():
 
 
 async def test_a_frame_that_is_not_text_is_rejected_not_a_server_error():
-    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(LyricsState()), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
         response = await client.post(WS_PATH, data=b"\xff\xfe")
         assert response.status == 400
 
 
 async def test_non_finite_snapshot_position_is_rejected():
-    receiver = AdapterReceiver(DisplayCoordinator(LyricsState()), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(LyricsState()), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
         response = await client.post(
             WS_PATH,
@@ -277,7 +336,7 @@ async def test_non_finite_snapshot_position_is_rejected():
 
 async def test_a_clock_carrying_nan_is_rejected():
     state = LyricsState()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=SourceOwnershipCoordinator())
+    receiver = AdapterReceiver(_display(state), ownership=SourceOwnershipCoordinator())
     async with TestClient(TestServer(receiver.build_app())) as client:
         response = await client.post(
             WS_PATH,
@@ -295,7 +354,7 @@ async def test_a_clock_carrying_nan_is_rejected():
 async def test_disconnect_drops_gate_client():
     state = LyricsState()
     gate = SourceOwnershipCoordinator()
-    receiver = AdapterReceiver(DisplayCoordinator(state), ownership=gate)
+    receiver = AdapterReceiver(_display(state), ownership=gate)
     async with TestClient(TestServer(receiver.build_app())) as client:
         ws = await client.ws_connect(WS_PATH)
         await ws.send_str(json.dumps(FRAME))

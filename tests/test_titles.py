@@ -6,16 +6,9 @@ which is the point of keeping the rules where every ingest path can reach them.
 
 from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
-from kotonoha.lyrics.titles import (
-    _TITLE_QUOTE,
-    artist_tokens,
-    clean_title,
-    noisy_title_queries,
-    normalize,
-    performing_artist,
-    recover_artist,
-    split_title,
-)
+from kotonoha.lyrics.artist_grammar import artist_tokens, performing_artist
+from kotonoha.lyrics.title_grammar import clean_title, normalize, recover_artist, split_title
+from kotonoha.lyrics.title_queries import noisy_title_queries
 
 
 def test_normalize_strips_notes_and_punctuation():
@@ -37,8 +30,6 @@ def test_ascii_bar_selects_the_title_segment_directly():
 
 
 def test_parenthesized_artist_name_survives_platform_cleanup():
-    from kotonoha.lyrics.titles import split_title
-
     assert split_title("(G)I-DLE")[0] == "(G)I-DLE"
 
 
@@ -98,8 +89,6 @@ def test_accent_fold_does_not_touch_japanese_dakuten():
     assert normalize("がっこう") != normalize("かっこう")
     assert normalize("バラ") != normalize("ハラ")
 def test_fixture_recovers_artists_carried_by_titles():
-    from kotonoha.lyrics.titles import recover_artist
-
     unsupported_recovery_rows = {12, 15, 16, 54, 55, 57, 64, 65, 69, 73, 75, 76, 77, 106}
     for index, case in enumerate(MPRIS_TITLE_CASES):
         if case.artist_recovery and index not in unsupported_recovery_rows:
@@ -108,8 +97,6 @@ def test_fixture_recovers_artists_carried_by_titles():
 
 
 def test_fixture_title_pairs_are_never_split():
-    from kotonoha.lyrics.titles import recover_artist
-
     for case in MPRIS_TITLE_CASES:
         if case.category == "title_pair":
             assert recover_artist(case.raw_title, case.raw_artist) == case.raw_artist, case.raw_title
@@ -167,12 +154,8 @@ def test_a_contraction_does_not_close_a_quoted_title():
     # Channels wrap the song in typographic quotes, and the non-greedy close landed
     # on the apostrophe inside the song's own name: ILLIT (아일릿) ‘It’s Me’ Official
     # MV was searched for as "It s Me’" and matched nothing.
-    contracted = _TITLE_QUOTE.search("ILLIT (아일릿) ‘It’s Me’ Official MV")
-    plain = _TITLE_QUOTE.search("ILLIT (아일릿) ‘Magnetic’ Official MV")
-
-    assert contracted is not None and plain is not None
-    assert contracted.group(2) == "It’s Me"
-    assert plain.group(2) == "Magnetic"
+    assert split_title("ILLIT (아일릿) ‘It’s Me’ Official MV")[0] == "It’s Me"
+    assert split_title("ILLIT (아일릿) ‘Magnetic’ Official MV")[0] == "Magnetic"
 
 
 def test_lyric_video_brackets_and_topic_channels_are_shared_grammar():

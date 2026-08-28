@@ -280,8 +280,8 @@ strategy 由 platform lifecycle owner 持有。
 1. **来源优先级**：用户确认歌词 -> 同一音频的 sidecar -> embedded artifact -> 可信 provider hint
    -> 已选 Cider session -> 按配置顺序的 network search。自动 cache 是每个 source 的存储加速，不是独立的
    来源，也不能改变来源优先级；用户确认结果才是最高优先级的本地歌词。
-2. **默认竞争策略**：默认使用 `ordered_first`，保证请求数量、结果选择和失败诊断可预测；`best_confidence`
-   只能作为显式配置，且必须有总预算、取消规则和确定性的 tie-breaker。
+2. **默认竞争策略**：默认使用 `best_confidence`，优先保留匹配质量最高的结果；关闭 Settings 中的
+   `prefer_best_lyrics` 后使用 `ordered_first`。两者都必须有总预算、取消规则和确定性的 tie-breaker。
 3. **置信度处理**：`EXACT/HIGH` 才能成为自动 active document；`MEDIUM` 等待其他来源后只作为 fallback，
    不写自动持久 cache；`LOW` 直接 `Rejected`。用户确认后可以保存任意候选为本地歌词。
 4. **播放状态**：没有可提交曲目身份时输出 `NoTrack`；身份已提交但尚未完成解析时输出 `Resolving`；解析完成

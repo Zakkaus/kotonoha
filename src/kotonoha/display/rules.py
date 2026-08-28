@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from collections.abc import Sequence
-from dataclasses import replace
 from statistics import median
 
 from ..lyrics.models import LyricLine
@@ -76,27 +75,10 @@ def sweep_end(line: LyricLine, typical: float) -> float:
     return min(line.end, line.start + _SWEEP_CAP_FACTOR * typical)
 
 
-def swept_line(line: LyricLine, typical: float) -> LyricLine:
-    """Compatibility projection for callers that still expect a shortened line.
-
-    DisplayEngine itself never uses this helper; it returns a separate progress
-    value so the canonical document line remains unchanged.
-    """
-    end = sweep_end(line, typical)
-    return line if end == line.end else replace(line, end=end)
-
-
-def song_timing(lines: Sequence[LyricLine]) -> str:
-    """Return the legacy timing label for a line collection."""
-    return "Word" if any(line.has_word_timing for line in lines) else "Line"
-
-
 __all__ = [
     "find_current_index",
     "in_interlude",
     "interlude_at",
-    "song_timing",
     "sweep_end",
-    "swept_line",
     "typical_span",
 ]

@@ -1,13 +1,15 @@
 import asyncio
 import logging
 
+from kotonoha.app.display_coordinator import DisplayCoordinator
 from kotonoha.clock import MediaClock
-from kotonoha.display.coordinator import DisplayCoordinator
 from kotonoha.display.models import ResolutionState
+from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
-from kotonoha.state import LyricsState
+from kotonoha.ui.overlay.publisher import QtDisplayPublisher
+from kotonoha.ui.overlay.state import LyricsState
 
 
 class _FailingTimeline(TimelineEngine):
@@ -16,7 +18,11 @@ class _FailingTimeline(TimelineEngine):
 
 
 async def test_display_stop_observes_a_completed_clock_task_failure(caplog):
-    coordinator = DisplayCoordinator(LyricsState(), timeline=_FailingTimeline())
+    coordinator = DisplayCoordinator(
+        QtDisplayPublisher(LyricsState()),
+        presenter=DisplayEngine(),
+        timeline=_FailingTimeline(),
+    )
 
     with caplog.at_level(logging.ERROR):
         await coordinator.start()
@@ -38,7 +44,7 @@ def test_display_tick_does_not_revert_to_a_lagging_polled_line():
     monotonic = _FakeMonotonic()
     timeline = TimelineEngine(MediaClock(monotonic=monotonic))
     state = LyricsState()
-    coordinator = DisplayCoordinator(state, timeline=timeline)
+    coordinator = DisplayCoordinator(QtDisplayPublisher(state), presenter=DisplayEngine(), timeline=timeline)
     track = TrackIdentity("test", "player", stable_id="song", title="Song", artist="Artist")
     playback = PlaybackObservation("test", "player", track, PlaybackStatus.PLAYING, 4.8, 10.0, 100.0)
     document = LyricsDocument(
@@ -67,7 +73,11 @@ def test_display_tick_does_not_revert_to_a_lagging_polled_line():
 
 def test_display_logs_provider_metadata_once_per_document_and_resets_after_clear(caplog):
     state = LyricsState()
-    coordinator = DisplayCoordinator(state)
+    coordinator = DisplayCoordinator(
+        QtDisplayPublisher(state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
     track = TrackIdentity("test", "player", stable_id="song", title="Song", artist="Artist")
     playback = PlaybackObservation("test", "player", track, PlaybackStatus.PLAYING, 1.0, 10.0, 100.0)
     first_document = LyricsDocument(

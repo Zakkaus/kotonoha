@@ -53,22 +53,17 @@ from ...app.intents import ApplyConfig, ClearCache, RequestRestart
 from ...config import Config
 from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
 from ...players import PlayerInfo
-from ...strings import t
-from . import settings_theme
+from ...strings import Translator
+from . import theme
 from .controls import SettingsWidgets
-from .form_state import PAGE_FIELDS as _FORM_PAGE_FIELDS
 from .form_state import SettingsFormState
-from .settings_pages import SettingsPageBuilder
-from .settings_widgets import IconStrip, available_font_styles, resolve_font_family
+from .icons import selected_icon_name
+from .pages import SettingsPageBuilder
 
-_CHECKMARK_PATH = settings_theme._CHECKMARK_PATH
-_PALETTES = settings_theme._PALETTES
-_resolve_theme = settings_theme._resolve_theme
-_skin = settings_theme._skin
-# TODO: remove this forwarding name after settings tools import PAGE_FIELDS from
-# ui.settings.form_state directly.
-_PAGE_FIELDS = _FORM_PAGE_FIELDS  # compatibility export for existing settings tests/tools
-
+_CHECKMARK_PATH = theme._CHECKMARK_PATH
+_PALETTES = theme._PALETTES
+_resolve_theme = theme._resolve_theme
+_skin = theme._skin
 # Dialog corner radius, shared by the painted background and the KWin blur region.
 _RADIUS = 14
 _MINIMUM_WIDTH = 560
@@ -94,13 +89,11 @@ class _SettingsTitleBar(QWidget):
         super().mousePressEvent(a0)
 
 
-# Theme generation lives in settings_theme.py; the dialog owns only lifecycle
+# Theme generation lives in theme.py; the dialog owns only lifecycle
 # and painting of the resulting window.
 class SettingsDialog(QDialog):
     applied = pyqtSignal(object)  # emits Config
     intent_requested = pyqtSignal(object)  # emits an application intent
-    clear_cache_requested = pyqtSignal()
-    restart_requested = pyqtSignal()
 
     def __init__(
         self,
@@ -109,15 +102,17 @@ class SettingsDialog(QDialog):
         *,
         players: list[PlayerInfo] | None = None,
         platform_factory: OverlayPlatformFactory | None = None,
+        translator: Translator | None = None,
     ) -> None:
         super().__init__(parent)
+        self._translator = translator if translator is not None else Translator(config.ui_language)
         self._form_state = SettingsFormState(config)
         self._widgets = SettingsWidgets()
         self._players = tuple(players or ())
         # The UI language only takes effect on restart, so remember what is in
         # effect now to decide when to offer the restart button.
-        self._initial_ui_language = self._config.ui_language
-        self._theme = _resolve_theme(self._config.theme)
+        self._initial_ui_language = self.staged_config.ui_language
+        self._theme = _resolve_theme(self.staged_config.theme)
         self._did_fade_in = False
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
@@ -141,12 +136,14 @@ class SettingsDialog(QDialog):
         # platform name here made presentation decide a compositor fact itself, and
         # a name passed in as an argument is still that same decision.
         self._window_opacity_ok = capabilities is None or capabilities.window_opacity
-        self._frosted = self._blur_capable and self._config.frost_window
+        self._frosted = self._blur_capable and self.staged_config.frost_window
         # See-through level for the window surfaces. NOT setWindowOpacity — the Qt
         # Wayland plugin ignores that (no client-side opacity protocol); instead the
         # painted window fill + card alpha carry it, so it works under KWin.
-        self._win_opacity = self._config.settings_opacity
-        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self._win_opacity = self.staged_config.settings_opacity
+        self.setStyleSheet(
+            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
+        )
 
         # Sidebar categories drive a stacked content area (replaces top tabs).
         self._stack = QStackedWidget()
@@ -157,7 +154,12 @@ class SettingsDialog(QDialog):
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         # The page builder owns controls and page-local handlers; this dialog owns
         # their lifetime and the staged configuration they edit.
-        self._page_builder = SettingsPageBuilder(self, self._widgets)
+        self._page_builder = SettingsPageBuilder(
+            self,
+            self._widgets,
+            on_clear_cache=self._request_clear_cache,
+            translator=self._translator,
+        )
         self._page_builders = (
             self._page_builder.general_page,
             self._page_builder.icon_page,
@@ -174,7 +176,7 @@ class SettingsDialog(QDialog):
             self._page_builders,
             strict=True,
         ):
-            self._nav.addItem(QListWidgetItem(t(key)))
+            self._nav.addItem(QListWidgetItem(self._translator.text(key)))
             self._stack.addWidget(self._scroll_page(builder()))
         self._nav.setCurrentRow(0)
         self._stack.setCurrentIndex(0)
@@ -198,7 +200,7 @@ class SettingsDialog(QDialog):
         ):
             btn = buttons.button(std)
             if btn is not None:
-                btn.setText(t(key))
+                btn.setText(self._translator.text(key))
                 btn.setIcon(QIcon())  # drop the platform ✓/✕ glyphs; text-only, theme-safe
         apply_button = buttons.button(QDialogButtonBox.StandardButton.Apply)
         if apply_button is not None:
@@ -251,7 +253,7 @@ class SettingsDialog(QDialog):
         self._logo_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         self._update_logo_badge()  # accent-tinted leaf logo (falls back to the app icon)
         bar.addWidget(self._logo_badge)
-        title = QLabel(t("settings.title"))
+        title = QLabel(self._translator.text("settings.title"))
         title.setObjectName("dialogTitle")  # styled by the theme QSS
         title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
         close_btn = QPushButton("✕")
@@ -320,7 +322,9 @@ class SettingsDialog(QDialog):
         # backdrop — unreadable — while still reporting frosted glass as on.
         logger.warning("Frosted glass unavailable, falling back to a solid panel: %s", result.reason)
         self._frosted = False
-        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self.setStyleSheet(
+            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
+        )
         self.update()
 
     def hideEvent(self, a0: QHideEvent | None) -> None:
@@ -391,7 +395,7 @@ class SettingsDialog(QDialog):
             self.resize(needed, self.height())
         # Gentle fade-in on first show (once), if animations are enabled. Skipped on
         # Wayland, where windowOpacity is a no-op that only logs a warning per frame.
-        if self._config.fx_animate and not self._did_fade_in and self._window_opacity_ok:
+        if self.staged_config.fx_animate and not self._did_fade_in and self._window_opacity_ok:
             self._did_fade_in = True
             anim = QPropertyAnimation(self, b"windowOpacity", self)
             anim.setDuration(160)
@@ -401,11 +405,11 @@ class SettingsDialog(QDialog):
             anim.start(QAbstractAnimation.DeletionPolicy.DeleteWhenStopped)
         self._apply_blur()  # frost the window backdrop once it is shown + sized
 
-    # --- page compatibility and chrome helpers ---
+    # --- chrome and staged form helpers ---
 
     def _update_logo_badge(self) -> None:
         """Set the title-bar badge to the accent-tinted leaf logo."""
-        pixmap = leaf_icon.render_leaf(leaf_icon.ACCENT, self._config.accent_start, size=44)
+        pixmap = leaf_icon.render_leaf(leaf_icon.ACCENT, self.staged_config.accent_start, size=44)
         pixmap.setDevicePixelRatio(2.0)
         self._logo_badge.setPixmap(pixmap)
 
@@ -413,11 +417,6 @@ class SettingsDialog(QDialog):
     def staged_config(self) -> Config:
         """Return the configuration currently staged by this dialog."""
         return self._form_state.config
-
-    @property
-    def _config(self) -> Config:
-        """Expose staged settings to older page-builder callers."""
-        return self.staged_config
 
     @property
     def players(self) -> tuple[PlayerInfo, ...]:
@@ -454,56 +453,24 @@ class SettingsDialog(QDialog):
         """Persist staged settings before asking the application to restart."""
         self._emit()
         self.intent_requested.emit(RequestRestart())
-        self.restart_requested.emit()
 
     def _request_clear_cache(self) -> None:
-        """Submit a typed cache action while retaining the legacy Qt signal."""
+        """Submit the typed cache action owned by the application controller."""
         self.intent_requested.emit(ClearCache())
-        self.clear_cache_requested.emit()
-
-    @staticmethod
-    def _resolve_font_family(font_family: str) -> str:
-        """Resolve the configured fallback chain for the font picker."""
-        return resolve_font_family(font_family)
-
-    def _set_custom_accent(self, triple: tuple[str, str, str]) -> None:
-        """Delegate custom-accent selection to the page builder."""
-        self._page_builder.set_custom_accent(triple)
-
-    def _available_styles(self, family: str) -> list[str]:
-        """Return the installed styles for a font family."""
-        return available_font_styles(family)
-
-    @staticmethod
-    def _picked_icon(icon_list: IconStrip) -> str:
-        """Read an icon key through the page-builder boundary."""
-        return SettingsPageBuilder.picked_icon(icon_list)
-
-    def _selected_sources(self) -> list[str]:
-        """Read checked lyric sources through the page-builder boundary."""
-        return self._page_builder.selected_sources()
-
-    def _selected_display_sources(self) -> list[str]:
-        """Read checked display sources through the page-builder boundary."""
-        return self._page_builder.selected_display_sources()
-
-    def _chosen_font_family(self) -> str:
-        """Return the selected family while preserving an untouched fallback chain."""
-        return self._page_builder.chosen_font_family()
-
-    def _refresh_generated_icons(self) -> None:
-        """Refresh accent-dependent icon previews."""
-        self._page_builder.refresh_generated_icons()
 
     def current_config(self) -> Config:
         w = self._widgets
         accent_data = w.accent.currentData()
         if accent_data is None:  # the picker entry left selected — keep the current accent
-            accent_data = (self._config.accent_start, self._config.accent_end, self._config.accent_sweep)
+            accent_data = (
+                self.staged_config.accent_start,
+                self.staged_config.accent_end,
+                self.staged_config.accent_sweep,
+            )
         accent_start, accent_end, accent_sweep = accent_data
         w.panel_opacity.set_value(w.opacity_active_key, w.opacity.value() / 100.0)  # save the active slider
         return replace(
-            self._config,
+            self.staged_config,
             ui_language=str(w.ui_language.currentData()),
             theme=str(w.theme_combo.currentData()),
             frost_window=w.frost_window.isChecked(),
@@ -511,9 +478,9 @@ class SettingsDialog(QDialog):
             lyrics_script=str(w.lyrics_script.currentData()),
             interlude_style=str(w.interlude_style.currentData()),
             interlude_countdown=str(w.interlude_countdown.currentData()),
-            icon_name=self._picked_icon(w.tray_icon_list),
-            window_icon_name=self._picked_icon(w.window_icon_list),
-            font_family=self._chosen_font_family(),
+            icon_name=selected_icon_name(w.tray_icon_list),
+            window_icon_name=selected_icon_name(w.window_icon_list),
+            font_family=self._page_builder.chosen_font_family(),
             font_style=w.font_style.currentText(),
             font_size=w.font_size.value(),
             context_font_size=w.context_font_size.value(),
@@ -539,10 +506,10 @@ class SettingsDialog(QDialog):
             anchor_top=bool(w.anchor.currentData()),
             margin_edge=w.margin_edge.value(),
             margin_x=w.margin_x.value(),
-            screen_name=self._config.screen_name,
+            screen_name=self.staged_config.screen_name,
             passthrough=w.passthrough.isChecked(),
-            lyrics_sources=self._selected_sources(),
-            display_sources=self._selected_display_sources(),
+            lyrics_sources=self._page_builder.selected_sources(),
+            display_sources=self._page_builder.selected_display_sources(),
             prefer_best_lyrics=w.prefer_best.isChecked(),
             fuzzy_match=w.fuzzy_match.isChecked(),
             cache_enabled=w.cache_enabled.isChecked(),
@@ -577,7 +544,7 @@ class SettingsDialog(QDialog):
         changed_fields = self._form_state.changed_fields()
         # Toggle the frosted backdrop live: apply/clear the KWin blur to match the
         # new setting, so the re-skin below can pick the right (translucent) card.
-        frosted = self._blur_capable and self._config.frost_window
+        frosted = self._blur_capable and self.staged_config.frost_window
         if frosted != self._frosted and self._platform is not None:
             self._frosted = frosted
             blur = self._platform.blur
@@ -589,14 +556,16 @@ class SettingsDialog(QDialog):
         # Re-skin the dialog itself so an accent OR theme change is visible right
         # away (tab underline, checkbox fill, light/dark palette) rather than only
         # after Settings is closed and reopened.
-        self._theme = _resolve_theme(self._config.theme)
-        self._win_opacity = self._config.settings_opacity  # commit the see-through level
-        self.setStyleSheet(_skin(self._config.accent_start, self._theme, self._frosted, self._win_opacity))
+        self._theme = _resolve_theme(self.staged_config.theme)
+        self._win_opacity = self.staged_config.settings_opacity  # commit the see-through level
+        self.setStyleSheet(
+            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
+        )
         self._update_logo_badge()  # re-tint the leaf logo to the new accent
-        self._refresh_generated_icons()  # re-tint the accent/tile icon previews
+        self._page_builder.refresh_generated_icons()  # re-tint the accent/tile icon previews
         self.update()  # repaint the frameless background (theme / frost)
-        self.applied.emit(self._config)
-        self.intent_requested.emit(ApplyConfig(self._config, changed_fields))
+        self.applied.emit(self.staged_config)
+        self.intent_requested.emit(ApplyConfig(self.staged_config, changed_fields))
         self._form_state.mark_applied()
 
     def _accept(self) -> None:

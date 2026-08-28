@@ -1,7 +1,7 @@
 import time
 
 from kotonoha.lyrics.models import LyricLine
-from kotonoha.providers.mpris_timeline import MprisTimeline
+from kotonoha.providers.mpris_timeline import MprisPositionCalibrator
 from kotonoha.providers.mpris_track import TrackCommit, TrackInfo
 
 
@@ -15,7 +15,7 @@ def _commit(*, generation: int = 1, start_position: float | None = None) -> Trac
 
 
 def test_timeline_calibrates_a_stale_transition_offset():
-    timeline = MprisTimeline()
+    timeline = MprisPositionCalibrator()
     commit = _commit(start_position=500.0)
 
     timeline.observe_commit(commit)
@@ -26,7 +26,7 @@ def test_timeline_calibrates_a_stale_transition_offset():
 
 
 def test_timeline_reconciles_a_cumulative_player_position_after_resolution():
-    timeline = MprisTimeline()
+    timeline = MprisPositionCalibrator()
     commit = _commit()
     lines = (
         LyricLine(0, "line-0", 0.0, 10.0, "first", ""),
@@ -39,7 +39,7 @@ def test_timeline_reconciles_a_cumulative_player_position_after_resolution():
 
 
 def test_timeline_reset_clears_offset_and_calibration_state():
-    timeline = MprisTimeline()
+    timeline = MprisPositionCalibrator()
     timeline.observe_commit(_commit(start_position=500.0))
 
     timeline.reset()

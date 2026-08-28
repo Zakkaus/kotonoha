@@ -107,9 +107,29 @@ interpolates between calibrations, so Cider is not polled for every display
 frame.
 
 If Cider API authentication is enabled, enter the token in **Settings ->
-Sources -> Cider API token**. The token is optional, is stored in the system
-keyring rather than `config.json`, and is never written to logs. When the field
-is empty, Kotonoha omits the `apptoken` header. The optional
+Sources -> Cider API token**. The token is optional and is persisted in
+`config.json` with the rest of the settings. It is kept out of application logs.
+When the field is empty, Kotonoha omits the `apptoken` header. The optional
 `plugins/cider/lyrics/` package is a generic `kotonoha.adapter` v1 producer for
 external-player integrations; it is not required by the HTTP path and no
-Cider-specific legacy receiver route is supported.
+Cider-specific receiver route is supported. External producers must use the
+generic `/kotonoha/adapter` snapshot/clock contract.
+
+## Development checks
+
+```bash
+uv sync --extra test --extra embedded-lyrics
+QT_QPA_PLATFORM=offscreen uv run pytest -q
+uv run ruff check .
+uv run ty check
+uv build
+```
+
+The optional Cider adapter package has its own checks:
+
+```bash
+cd plugins/cider/lyrics
+pnpm install --frozen-lockfile
+pnpm test
+pnpm build
+```

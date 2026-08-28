@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..clock import MediaClock
+from ..playback.identity import PlaybackTrackKey
 from ..playback.models import PlaybackObservation, PlaybackStatus
 
 
@@ -20,7 +21,7 @@ class TimelineEngine:
     def __init__(self, clock: MediaClock | None = None) -> None:
         self._clock = clock if clock is not None else MediaClock()
         self._observation: PlaybackObservation | None = None
-        self._track_key: tuple[object, ...] | None = None
+        self._track_key: PlaybackTrackKey | None = None
 
     @property
     def observation(self) -> PlaybackObservation | None:
@@ -34,7 +35,7 @@ class TimelineEngine:
 
     def set_observation(self, observation: PlaybackObservation) -> PlaybackObservation:
         """Re-anchor the clock from a full player observation."""
-        track_key = _track_key(observation)
+        track_key = PlaybackTrackKey.from_observation(observation)
         if track_key != self._track_key:
             self._clock.reset()
             self._track_key = track_key
@@ -89,21 +90,6 @@ class TimelineEngine:
     def _sync_clock(self, position_s: float | None, status: PlaybackStatus) -> None:
         if position_s is not None:
             self._clock.sync(position_s, status is PlaybackStatus.PLAYING)
-
-
-def _track_key(observation: PlaybackObservation) -> tuple[object, ...]:
-    """Return the identity that must invalidate a previous clock anchor."""
-    track = observation.track
-    if track is None:
-        return (observation.adapter_id, observation.player_id, None)
-    return (
-        observation.adapter_id,
-        observation.player_id,
-        track.stable_id,
-        track.title,
-        track.artist,
-        track.album,
-    )
 
 
 __all__ = ["TimelineEngine"]

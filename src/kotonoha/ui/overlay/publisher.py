@@ -1,13 +1,13 @@
-"""Qt compatibility publishing for canonical display frames."""
+"""Qt publisher for canonical display frames."""
 
 from __future__ import annotations
 
-from ..state import LyricsState
-from .models import DisplayFrame
+from ...display.models import DisplayFrame
+from .state import LyricsState
 
 
 class QtDisplayPublisher:
-    """Own the only compatibility write from ``DisplayFrame`` into Qt state."""
+    """Own the only concrete write from ``DisplayFrame`` into Qt state."""
 
     def __init__(self, state: LyricsState) -> None:
         self._state = state

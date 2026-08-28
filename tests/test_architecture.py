@@ -59,7 +59,7 @@ def _absolute_imports(path: Path) -> set[str]:
 
 #: Composition roots are the only modules outside the platform package allowed
 #: to name the concrete bridge. Overlay defaults are built by the platform factory.
-_BRIDGE_NAMERS = {"controller.py", "application_controller.py"}
+_BRIDGE_NAMERS = {"application_controller.py", "composition.py"}
 
 #: The concrete native bridge, however it is spelled at the import site.
 _BRIDGE_SYMBOLS = {"LayerShellController"}
@@ -130,22 +130,26 @@ def test_settings_presentation_lives_in_the_settings_package():
     """Settings builders, widgets, and theme assets share one UI package owner."""
     settings_root = SOURCE_ROOT / "ui" / "settings"
     for name in (
-        "settings_dialog.py",
-        "settings_pages.py",
-        "settings_sources.py",
-        "settings_theme.py",
-        "settings_widgets.py",
+        "dialog.py",
+        "icons.py",
+        "pages.py",
+        "sources.py",
+        "theme.py",
+        "widgets.py",
         "controls.py",
         "form_state.py",
     ):
         assert (settings_root / name).is_file()
-    for name in (
+    legacy_names = (
         "settings_dialog.py",
+        "settings_icons.py",
         "settings_pages.py",
         "settings_sources.py",
         "settings_theme.py",
         "settings_widgets.py",
-    ):
+    )
+    for name in legacy_names:
+        assert not (settings_root / name).exists()
         assert not (SOURCE_ROOT / name).exists()
 
 
@@ -177,18 +181,24 @@ def test_desktop_environment_has_one_reader():
     assert readers == ["platform/detect.py"]
 
 
-def test_the_title_grammar_knows_nothing_about_matching():
+def test_lyric_grammar_modules_know_nothing_about_matching():
     # The grammar has to serve every ingest path — MPRIS, a browser bridge, a player
     # plugin — so it must not depend on how a candidate is scored. When the two lived
     # in one module a rule could only be reached through the matcher, and the three
     # bilibili rules ended up stranded in the MPRIS parser for exactly that reason.
-    titles = SOURCE_ROOT / "lyrics" / "titles.py"
+    grammar_paths = (
+        SOURCE_ROOT / "lyrics" / "title_grammar.py",
+        SOURCE_ROOT / "lyrics" / "artist_grammar.py",
+        SOURCE_ROOT / "lyrics" / "title_queries.py",
+        SOURCE_ROOT / "lyrics" / "player_title_grammar.py",
+    )
 
-    for node in _imports(titles):
-        module = getattr(node, "module", "") or ""
-        assert "match" not in module.split("."), f"titles.py imports {module}"
-        for alias in node.names:
-            assert "match" not in alias.name.split("."), f"titles.py imports {alias.name}"
+    for path in grammar_paths:
+        for node in _imports(path):
+            module = getattr(node, "module", "") or ""
+            assert "match" not in module.split("."), f"{path.name} imports {module}"
+            for alias in node.names:
+                assert "match" not in alias.name.split("."), f"{path.name} imports {alias.name}"
 
 
 def test_the_matcher_holds_no_platform_grammar():
@@ -211,7 +221,7 @@ def test_lyrics_contract_modules_are_toolkit_and_transport_neutral():
     """Domain/source contracts must not acquire Qt, aiohttp, or display imports."""
     contract_paths = (
         SOURCE_ROOT / "lyrics" / "models.py",
-        SOURCE_ROOT / "lyrics" / "ownership.py",
+        SOURCE_ROOT / "app" / "source_contracts.py",
         SOURCE_ROOT / "lyrics" / "sources.py",
         SOURCE_ROOT / "lyrics" / "workflow.py",
         SOURCE_ROOT / "lyrics" / "live_source.py",
@@ -227,6 +237,13 @@ def test_lyrics_contract_modules_are_toolkit_and_transport_neutral():
     assert not violations, "feature contracts must not depend on UI or concrete transports: " + ", ".join(violations)
 
 
+def test_live_source_does_not_reexport_match_contract():
+    """LiveSourceMatch has one public owner in live_contracts.py."""
+    from kotonoha.lyrics import live_source
+
+    assert "LiveSourceMatch" not in live_source.__all__
+
+
 def test_display_publisher_has_one_application_owner():
     """Provider and receiver adapters may not construct their own Qt publisher."""
     owners: list[str] = []
@@ -235,7 +252,7 @@ def test_display_publisher_has_one_application_owner():
         for node in ast.walk(tree):
             if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "QtDisplayPublisher":
                 owners.append(path.relative_to(SOURCE_ROOT).as_posix())
-    assert owners == ["display/coordinator.py"]
+    assert owners == ["app/composition.py"]
 
 
 def test_provider_boundaries_do_not_retain_legacy_display_or_gate_contracts():
@@ -257,7 +274,7 @@ def test_provider_adapters_depend_on_feature_ports_not_concrete_coordinators():
     paths = (*tuple((SOURCE_ROOT / "providers").glob("*.py")), SOURCE_ROOT / "receiver.py")
     forbidden = {
         "kotonoha.app.source_gate",
-        "kotonoha.display.coordinator",
+        "kotonoha.app.display_coordinator",
     }
     violations = [
         f"{path.relative_to(SOURCE_ROOT)} -> {imported}"
@@ -266,6 +283,161 @@ def test_provider_adapters_depend_on_feature_ports_not_concrete_coordinators():
         if imported in forbidden
     ]
     assert not violations, "adapters depend on concrete application owners: " + ", ".join(violations)
+
+
+def test_application_workflow_is_toolkit_free_outside_the_composition_root():
+    """Application orchestration depends on ports; Qt and process adapters stay in composition."""
+    forbidden = ("PyQt6", "QProcess", "platform.restart")
+    violations = [
+        f"{path.relative_to(SOURCE_ROOT)} -> {module}"
+        for path in (SOURCE_ROOT / "app").glob("*.py")
+        if path.name != "composition.py"
+        for module in _absolute_imports(path)
+        if any(part in module for part in forbidden)
+    ]
+    assert not violations, "application workflow imports toolkit/process adapters: " + ", ".join(violations)
+
+
+def test_lyrics_feature_does_not_depend_on_application_or_presentation_layers():
+    """Lyrics contracts and workflows remain usable without application wiring or Qt."""
+    forbidden = ("kotonoha.app", "PyQt6", "aiohttp.web", "kotonoha.ui")
+    violations = [
+        f"{path.relative_to(SOURCE_ROOT)} -> {module}"
+        for path in (SOURCE_ROOT / "lyrics").rglob("*.py")
+        for module in _absolute_imports(path)
+        if any(part in module for part in forbidden)
+    ]
+    assert not violations, "lyrics feature depends on outer layers: " + ", ".join(violations)
+
+
+def test_final_compatibility_modules_are_removed():
+    """The final architecture has no import-only migration modules left."""
+    removed = (
+        SOURCE_ROOT / "controller.py",
+        SOURCE_ROOT / "state.py",
+        SOURCE_ROOT / "karaoke.py",
+        SOURCE_ROOT / "lyrics" / "ownership.py",
+        SOURCE_ROOT / "lyrics" / "select.py",
+        SOURCE_ROOT / "lyrics" / "titles.py",
+        SOURCE_ROOT / "display" / "coordinator.py",
+        SOURCE_ROOT / "display" / "publisher.py",
+        SOURCE_ROOT / "config.py",
+        SOURCE_ROOT / "config_schema.py",
+        SOURCE_ROOT / "config_store.py",
+        SOURCE_ROOT / "app" / "restart.py",
+    )
+    assert not [path.relative_to(SOURCE_ROOT).as_posix() for path in removed if path.exists()]
+
+
+def test_display_package_is_free_of_toolkit_and_ui_state_dependencies():
+    """Display policy and timing cannot depend on Qt presentation state."""
+    forbidden_modules = ("PyQt6", "ui.overlay", "QtDisplayPublisher")
+    forbidden_names = {"LyricsState", "QtDisplayPublisher", "LyricsSnapshot"}
+    violations: list[str] = []
+    for path in (SOURCE_ROOT / "display").rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for module in _module_names(path):
+            if any(part in module for part in forbidden_modules):
+                violations.append(f"{path.relative_to(SOURCE_ROOT)} -> {module}")
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Name) and node.id in forbidden_names:
+                violations.append(f"{path.relative_to(SOURCE_ROOT)} -> {node.id}")
+            if isinstance(node, ast.Attribute) and node.attr in forbidden_names:
+                violations.append(f"{path.relative_to(SOURCE_ROOT)} -> {node.attr}")
+    assert not violations, "display policy depends on UI state: " + ", ".join(violations)
+
+
+def test_concrete_runtime_graph_is_assembled_in_composition_only():
+    """Concrete application services and providers have one construction owner."""
+    concrete_names = {
+        "AppController",
+        "CiderApiProvider",
+        "MprisProvider",
+        "RuntimeConfigApplier",
+        "QtDisplayPublisher",
+        "QProcessRestartLauncher",
+    }
+    owners: dict[str, list[str]] = {name: [] for name in concrete_names}
+    for path in _python_modules():
+        if path == SOURCE_ROOT / "app" / "composition.py":
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id in concrete_names:
+                owners[node.func.id].append(path.relative_to(SOURCE_ROOT).as_posix())
+    violations = [f"{name}: {paths}" for name, paths in owners.items() if paths]
+    assert not violations, "concrete graph construction escaped composition.py: " + ", ".join(violations)
+
+
+def test_runtime_config_policy_uses_ports_not_concrete_adapters():
+    """Runtime policy stays independent from Qt, providers, and UI widgets."""
+    path = SOURCE_ROOT / "app" / "services.py"
+    forbidden = ("PyQt6", "providers", "ui", "tray", "source_gate", "display_coordinator", "strings")
+    violations = [module for module in _absolute_imports(path) if any(part in module for part in forbidden)]
+    assert not violations, "runtime config policy imports concrete adapters: " + ", ".join(violations)
+
+
+def test_process_entrypoint_delegates_configuration_and_graph_assembly():
+    """The process entrypoint does not load config or construct runtime services."""
+    path = SOURCE_ROOT / "main.py"
+    forbidden_names = {"ConfigStore", "ConfigService", "load_config"}
+    names = {
+        node.id
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, ast.Name)
+    }
+    assert not names.intersection(forbidden_names)
+    forbidden_modules = {"kotonoha.config.store", "kotonoha.app.config_service"}
+    assert not _absolute_imports(path).intersection(forbidden_modules)
+
+
+def test_component_boundary_dependencies_are_required():
+    """Stateful boundaries may not silently create their collaborators."""
+    required: dict[str, tuple[str, ...]] = {
+        "providers/cider_api.py": ("client",),
+        "providers/mpris.py": ("ownership", "resolver", "playback_adapter", "playback_session"),
+        "providers/mpris_playback.py": ("session", "playback_adapter"),
+        "app/display_coordinator.py": ("presenter", "timeline"),
+        "lyrics/catalog.py": ("live_source", "local_source"),
+        "lyrics/cache.py": ("worker",),
+        "lyrics/sources.py": ("worker",),
+        "lyrics/resolver.py": ("cache",),
+    }
+    violations: list[str] = []
+    for relative, names in required.items():
+        path = SOURCE_ROOT / relative
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        constructor = next(
+            node
+            for node in ast.walk(tree)
+            if isinstance(node, ast.FunctionDef) and node.name == "__init__"
+        )
+        defaults = dict(
+            zip(
+                (argument.arg for argument in constructor.args.kwonlyargs),
+                constructor.args.kw_defaults,
+                strict=True,
+            )
+        )
+        for name in names:
+            if name not in defaults or defaults[name] is not None:
+                violations.append(f"{relative}: {name}")
+    assert not violations, "provider dependencies have concrete fallbacks: " + ", ".join(violations)
+
+
+def test_track_identity_has_one_value_owner():
+    """Every offset key is produced by the playback identity value boundary."""
+    definitions: list[str] = []
+    separator_literals: list[str] = []
+    for path in _python_modules():
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+        for node in ast.walk(tree):
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "track_identity_key":
+                definitions.append(path.relative_to(SOURCE_ROOT).as_posix())
+            if isinstance(node, ast.Constant) and node.value == "\x1f":
+                separator_literals.append(path.relative_to(SOURCE_ROOT).as_posix())
+    assert definitions == ["playback/identity.py"]
+    assert separator_literals == ["playback/identity.py"]
 
 
 def test_timeline_engine_is_clock_only():
@@ -332,10 +504,8 @@ def test_playback_domain_does_not_depend_on_player_adapters():
 
 def test_large_ui_modules_are_explicitly_scoped():
     allowed: dict[str, str] = {
-        "config.py": "flat configuration compatibility surface; planned package migration",
-        "lyrics/titles.py": "shared title grammar; planned private-helper extraction",
-        "ui/overlay/window.py": "Qt window lifecycle; planned presentation split",
-        "ui/settings/settings_dialog.py": "settings composition boundary; planned presentation split",
+        "ui/overlay/window.py": "cohesive Qt window lifecycle and signal boundary",
+        "ui/settings/dialog.py": "cohesive Qt dialog composition and signal boundary",
     }
     offenders: list[str] = []
     for path in SOURCE_ROOT.rglob("*.py"):
@@ -357,6 +527,16 @@ def test_application_code_does_not_swallow_unknown_failures():
         for node in ast.walk(tree):
             if not isinstance(node, ast.ExceptHandler):
                 continue
-            if isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"}:
-                violations.append(path.relative_to(SOURCE_ROOT).as_posix())
+            if not isinstance(node.type, ast.Name) or node.type.id not in {"Exception", "BaseException"}:
+                continue
+            relative = path.relative_to(SOURCE_ROOT).as_posix()
+            # The composition root has one deliberate cleanup-only catch around
+            # pre-controller construction. It must clean every worker and then
+            # re-raise the original failure; broad catches remain forbidden in
+            # normal application control flow.
+            if relative == "app/composition.py" and any(
+                isinstance(child, ast.Raise) and child.exc is None for child in ast.walk(node)
+            ):
+                continue
+            violations.append(relative)
     assert not violations, "catch expected boundary failures explicitly: " + ", ".join(violations)

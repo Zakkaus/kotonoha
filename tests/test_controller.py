@@ -1,7 +1,6 @@
 import asyncio
 import os
-from collections.abc import Sequence
-from typing import cast
+from collections.abc import Callable, Sequence
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -9,14 +8,16 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
-from kotonoha.app import application_controller as controller_module
+from kotonoha.app.application_controller import AppController
+from kotonoha.app.components import ApplicationComponents
 from kotonoha.app.config_service import ConfigService
 from kotonoha.app.intents import ChangeTrackOffset
 from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.config import Config
-from kotonoha.controller import AppController
-from kotonoha.providers.mpris import MprisProvider
-from kotonoha.receiver import AdapterReceiver
+from kotonoha.display.models import DisplayOptions
+from kotonoha.platform.overlay_contracts import SurfaceResult
+from kotonoha.players import PlayerInfo
+from kotonoha.ui.settings.dialog import SettingsDialog
 
 
 @pytest.fixture(scope="module")
@@ -25,36 +26,180 @@ def qapp():
     yield app
 
 
-class _FakeReceiver:
-    async def start(self):
-        raise OSError(98, "Address already in use")
+class _Signal:
+    """Small signal fake that preserves the connect/emit contract."""
 
-    async def stop(self):
-        return None
+    def __init__(self) -> None:
+        self._slots: list[Callable[..., object]] = []
+
+    def connect(self, slot: Callable[..., object]) -> None:
+        self._slots.append(slot)
+
+    def emit(self, *args: object) -> None:
+        for slot in tuple(self._slots):
+            slot(*args)
+
+
+class _FakeOverlay:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self._events = events
+        self.passthrough_toggle_requested = _Signal()
+        self.settings_requested = _Signal()
+        self.position_changed = _Signal()
+        self.track_offset_changed = _Signal()
+        self.visible = False
+        self.passthrough = False
+        self.configs: list[Config] = []
+
+    def activate_layer_shell(self) -> bool:
+        return True
+
+    def show(self) -> None:
+        self.visible = True
+
+    def shutdown(self) -> SurfaceResult:
+        if self._events is not None:
+            self._events.append("overlay.shutdown")
+        self.visible = False
+        return SurfaceResult.applied()
+
+    def set_passthrough(self, enabled: bool) -> None:
+        self.passthrough = enabled
+
+    def apply_config(self, config: Config) -> None:
+        self.configs.append(config)
+
+
+class _FakeDisplay:
+    def __init__(self, events: list[str] | None = None, *, fail_start: bool = False) -> None:
+        self._events = events
+        self._fail_start = fail_start
+        self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.options: DisplayOptions | None = None
+
+    async def start(self) -> None:
+        self.start_calls += 1
+        self.started = True
+        if self._fail_start:
+            raise RuntimeError("display start failed")
+
+    async def stop(self) -> None:
+        if self._events is not None:
+            self._events.append("display.stop")
+        self.stop_calls += 1
+        self.started = False
+
+    def set_options(self, options: DisplayOptions) -> None:
+        self.options = options
+
+
+class _FakeReceiver:
+    def __init__(self, *, fail_start: bool = False, events: list[str] | None = None) -> None:
+        self._fail_start = fail_start
+        self._events = events
+        self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+
+    async def start(self) -> None:
+        self.start_calls += 1
+        if self._fail_start:
+            raise OSError(98, "Address already in use")
+        self.started = True
+
+    async def stop(self) -> None:
+        if self._events is not None:
+            self._events.append("receiver.stop")
+        self.stop_calls += 1
+        self.started = False
 
 
 class _FakeMpris:
-    def __init__(self):
+    def __init__(
+        self,
+        *,
+        available_started: asyncio.Event | None = None,
+        available_release: asyncio.Event | None = None,
+        fail_stop: bool = False,
+        stop_started: asyncio.Event | None = None,
+        stop_release: asyncio.Event | None = None,
+        events: list[str] | None = None,
+    ) -> None:
         self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+        self._available_started = available_started
+        self._available_release = available_release
+        self._fail_stop = fail_stop
+        self._stop_started = stop_started
+        self._stop_release = stop_release
+        self._events = events
 
-    async def start(self):
+    async def start(self) -> None:
+        self.start_calls += 1
         self.started = True
 
-    async def stop(self):
+    async def stop(self) -> None:
+        if self._events is not None:
+            self._events.append("mpris.stop")
+        self.stop_calls += 1
+        if self._stop_started is not None:
+            self._stop_started.set()
+        try:
+            if self._stop_release is not None:
+                await self._stop_release.wait()
+        finally:
+            self.started = False
+        if self._fail_stop:
+            raise RuntimeError("MPRIS cleanup failed")
+
+    async def available_players(self) -> list[PlayerInfo]:
+        if self._available_started is not None:
+            self._available_started.set()
+        if self._available_release is not None:
+            await self._available_release.wait()
+        return []
+
+    async def clear_cache(self) -> None:
         return None
 
 
-class _FakeCiderTokenStore:
-    def __init__(self, token: str = "") -> None:
-        self.token = token
-        self.saved: list[str] = []
+class _FakeCider:
+    def __init__(self, events: list[str] | None = None) -> None:
+        self._events = events
+        self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+        self.token: str | None = None
 
-    def load(self) -> str:
-        return self.token
+    async def start(self) -> None:
+        self.start_calls += 1
+        self.started = True
 
-    def save(self, token: str) -> None:
+    async def stop(self) -> None:
+        if self._events is not None:
+            self._events.append("cider.stop")
+        self.stop_calls += 1
+        self.started = False
+
+    def set_token(self, token: str | None) -> None:
         self.token = token
-        self.saved.append(token)
+
+
+class _FakeTray:
+    def __init__(self) -> None:
+        self.visible = False
+        self.passthrough = False
+        self.show_calls = 0
+
+    def show(self) -> None:
+        self.show_calls += 1
+        self.visible = True
+
+    def set_passthrough_checked(self, checked: bool) -> None:
+        self.passthrough = checked
 
 
 class _FakeConfigWriter:
@@ -65,51 +210,191 @@ class _FakeConfigWriter:
         self.saved.append(config)
 
 
-def _config_service(config: Config | None = None) -> ConfigService:
-    initial = Config() if config is None else config
-    return ConfigService(
-        initial,
-        writer=_FakeConfigWriter(),
-        worker=BlockingCallRunner("test-config-service"),
-    )
+class _FakeRestartLauncher:
+    def __init__(self, started: bool = True) -> None:
+        self.started = started
+        self.calls: list[tuple[str, Sequence[str]]] = []
+
+    def start(self, executable: str, arguments: Sequence[str]) -> bool:
+        self.calls.append((executable, arguments))
+        return self.started
 
 
-class _Signal:
-    def connect(self, _slot):
-        return None
+class _SettingsFactory:
+    def __init__(self) -> None:
+        self.created: list[SettingsDialog] = []
+        self.created_event = asyncio.Event()
+
+    def create(self, config: Config, players: list[PlayerInfo]) -> SettingsDialog:
+        dialog = SettingsDialog(config, players=players)
+        self.created.append(dialog)
+        self.created_event.set()
+        return dialog
 
 
-class _FakeDialog:
-    def __init__(self):
-        self.intent_requested = _Signal()
-        self.applied = _Signal()
-        self.clear_cache_requested = _Signal()
-        self.restart_requested = _Signal()
-        self.finished = _Signal()
+class _FakeRuntimeConfig:
+    def __init__(self) -> None:
+        self.calls: list[tuple[Config, Config]] = []
 
-    def show(self):
-        return None
+    def apply(self, previous: Config, current: Config) -> None:
+        self.calls.append((previous, current))
 
-    def close(self):
-        return None
+
+class _ControllerGraph:
+    """Build a controller from ports so lifecycle tests do not own a real graph."""
+
+    def __init__(
+        self,
+        qapp: QApplication,
+        *,
+        config: Config | None = None,
+        receiver: _FakeReceiver | None = None,
+        mpris: _FakeMpris | None = None,
+        display: _FakeDisplay | None = None,
+        restart_launcher: _FakeRestartLauncher | None = None,
+        settings_factory: _SettingsFactory | None = None,
+    ) -> None:
+        self.events: list[str] = []
+        self.writer = _FakeConfigWriter()
+        self.config_service = ConfigService(
+            Config() if config is None else config,
+            writer=self.writer,
+            worker=BlockingCallRunner("test-config-service"),
+        )
+        self.overlay = _FakeOverlay(self.events)
+        self.display = display if display is not None else _FakeDisplay(self.events)
+        self.receiver = receiver if receiver is not None else _FakeReceiver(events=self.events)
+        self.mpris = mpris if mpris is not None else _FakeMpris(events=self.events)
+        self.cider = _FakeCider(self.events)
+        self.tray = _FakeTray()
+        self.settings_factory = settings_factory if settings_factory is not None else _SettingsFactory()
+        self.runtime_config = _FakeRuntimeConfig()
+        self.controller = AppController(
+            qapp,
+            ApplicationComponents(
+                config_service=self.config_service,
+                restart_launcher=restart_launcher if restart_launcher is not None else _FakeRestartLauncher(),
+                display=self.display,
+                overlay=self.overlay,
+                settings_factory=self.settings_factory,
+                receiver=self.receiver,
+                cider=self.cider,
+                mpris=self.mpris,
+                tray=self.tray,
+                runtime_config=self.runtime_config,
+            ),
+        )
+
+    async def close(self) -> None:
+        await self.controller.stop()
+        for dialog in self.settings_factory.created:
+            dialog.deleteLater()
 
 
 async def test_start_survives_optional_receiver_bind_failure(qapp):
-    # A stale instance / double-launch holding port 28745 must only disable the
-    # optional Cider receiver, not take down the already-shown overlay and tray.
-    token_store = _FakeCiderTokenStore("loaded-token")
-    service = _config_service()
-    controller = AppController(qapp, service, cider_token_store=token_store)
-    controller._receiver = cast(AdapterReceiver, _FakeReceiver())
-    fake_mpris = _FakeMpris()
-    controller._mpris = cast(MprisProvider, fake_mpris)
+    # A stale instance / double-launch holding the adapter port must only disable
+    # external WS adapters, not take down the already-shown overlay and tray.
+    graph = _ControllerGraph(
+        qapp,
+        config=Config(cider_api_token="loaded-token"),
+        receiver=_FakeReceiver(fail_start=True),
+        mpris=_FakeMpris(),
+    )
+    await graph.controller.start()
 
-    await controller.start()  # must not raise
+    assert graph.mpris.started is True
+    assert graph.config_service.config.cider_api_token == "loaded-token"
+    assert graph.overlay.visible is True
+    await graph.close()
+    qapp.processEvents()
 
-    assert fake_mpris.started is True  # reached MPRIS despite the receiver failure
-    assert controller._config.cider_api_token == "loaded-token"
-    await controller.stop()
-    controller._overlay.deleteLater()
+
+async def test_controller_start_and_stop_are_idempotent(qapp):
+    graph = _ControllerGraph(qapp)
+
+    await graph.controller.start()
+    await graph.controller.start()
+    await graph.controller.stop()
+    await graph.controller.stop()
+
+    assert graph.display.start_calls == 1
+    assert graph.display.stop_calls == 1
+    assert graph.receiver.start_calls == 1
+    assert graph.receiver.stop_calls == 1
+    assert graph.cider.start_calls == 1
+    assert graph.cider.stop_calls == 1
+    assert graph.mpris.start_calls == 1
+    assert graph.mpris.stop_calls == 1
+    assert graph.tray.show_calls == 1
+    qapp.processEvents()
+
+
+async def test_controller_rolls_back_required_components_when_startup_fails(qapp):
+    graph = _ControllerGraph(qapp, display=_FakeDisplay(fail_start=True))
+
+    with pytest.raises(RuntimeError, match="display start failed"):
+        await graph.controller.start()
+
+    assert graph.display.stop_calls == 1
+    assert graph.mpris.stop_calls == 1
+    assert graph.cider.stop_calls == 1
+    assert graph.receiver.stop_calls == 1
+    assert graph.overlay.visible is False
+    await graph.close()
+    qapp.processEvents()
+
+
+async def test_controller_shutdown_continues_after_provider_failure(qapp, caplog):
+    graph = _ControllerGraph(qapp, mpris=_FakeMpris(fail_stop=True))
+
+    await graph.controller.start()
+    await graph.controller.stop()
+
+    assert graph.mpris.stop_calls == 1
+    assert graph.cider.stop_calls == 1
+    assert graph.receiver.stop_calls == 1
+    assert graph.display.stop_calls == 1
+    assert "Could not stop MPRIS provider cleanly" in caplog.text
+    qapp.processEvents()
+
+
+async def test_controller_shutdown_continues_after_cancellation(qapp):
+    stop_started = asyncio.Event()
+    stop_release = asyncio.Event()
+    mpris = _FakeMpris(stop_started=stop_started, stop_release=stop_release)
+    graph = _ControllerGraph(qapp, mpris=mpris)
+
+    await graph.controller.start()
+    stop_task = asyncio.create_task(graph.controller.stop())
+    await stop_started.wait()
+    stop_task.cancel()
+    await asyncio.sleep(0)
+    assert not stop_task.done()
+    stop_release.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await stop_task
+
+    assert mpris.started is False
+    assert graph.cider.stop_calls == 1
+    assert graph.receiver.stop_calls == 1
+    assert graph.display.stop_calls == 1
+    assert graph.overlay.visible is False
+    await graph.close()
+    qapp.processEvents()
+
+
+async def test_controller_keeps_overlay_alive_until_publishers_stop(qapp):
+    graph = _ControllerGraph(qapp)
+
+    await graph.controller.start()
+    graph.events.clear()
+    await graph.controller.stop()
+
+    assert graph.events.index("mpris.stop") < graph.events.index("overlay.shutdown")
+    assert graph.events.index("cider.stop") < graph.events.index("overlay.shutdown")
+    assert graph.events.index("receiver.stop") < graph.events.index("overlay.shutdown")
+    assert graph.events.index("display.stop") < graph.events.index("overlay.shutdown")
     qapp.processEvents()
 
 
@@ -127,8 +412,10 @@ async def test_run_stops_controller_when_startup_fails(qapp, monkeypatch):
             self.stopped = True
 
     controller = _StartupFailureController()
-    monkeypatch.setattr(main_module, "_build_app_objects", lambda _app, _config: controller)
-    monkeypatch.setattr("kotonoha.config.load_config", Config)
+    async def build_app_objects(_app, _cli_port):
+        return controller
+
+    monkeypatch.setattr(main_module, "_build_app_objects", build_app_objects)
 
     with pytest.raises(RuntimeError, match="startup failed"):
         await main_module._run(qapp)
@@ -136,106 +423,118 @@ async def test_run_stops_controller_when_startup_fails(qapp, monkeypatch):
     assert controller.stopped is True
 
 
+async def test_main_task_failure_is_logged_and_quits(caplog):
+    from kotonoha import main as main_module
+
+    async def fail() -> None:
+        raise RuntimeError("startup task failed")
+
+    task = asyncio.create_task(fail())
+    with pytest.raises(RuntimeError, match="startup task failed"):
+        await task
+    quit_calls: list[bool] = []
+    main_module._main_task_finished(task, lambda: quit_calls.append(True))
+
+    assert quit_calls == [True]
+    assert "Kotonoha application task failed: startup task failed" in caplog.text
+
+
 def test_out_of_range_cli_port_is_clamped(qapp):
     # argparse accepts any int; an unclamped 70000 reaches socket.bind() and raises
     # OverflowError (not an OSError), crashing startup. It must be clamped instead.
-    from kotonoha.main import _apply_cli_port
+    from kotonoha.app.composition import apply_cli_port
 
-    assert _apply_cli_port(Config(), 70000).port == 65535
+    assert apply_cli_port(Config(), 70000).port == 65535
 
 
-async def test_settings_discovery_does_not_open_two_dialogs(qapp, monkeypatch):
-    service = _config_service()
-    controller = AppController(qapp, service)
+async def test_settings_discovery_does_not_open_two_dialogs(qapp):
     started = asyncio.Event()
     release = asyncio.Event()
-    created = []
-
-    class _DeferredMpris:
-        async def available_players(self):
-            started.set()
-            await release.wait()
-            return []
-
-        async def stop(self):
-            return None
-
-    def make_dialog(*_args, **_kwargs):
-        created.append(True)
-        return _FakeDialog()
-
-    controller._mpris = cast(MprisProvider, _DeferredMpris())
-    monkeypatch.setattr(controller_module, "SettingsDialog", make_dialog)
+    mpris = _FakeMpris(available_started=started, available_release=release)
+    factory = _SettingsFactory()
+    graph = _ControllerGraph(qapp, mpris=mpris, settings_factory=factory)
     try:
-        controller._open_settings()
-        await started.wait()
-        controller._open_settings()
+        graph.controller.open_settings()
+        await asyncio.wait_for(started.wait(), timeout=1.0)
+        graph.controller.open_settings()
         release.set()
-        await asyncio.sleep(0)
-        await asyncio.sleep(0)
-        assert len(created) == 1
+        await asyncio.wait_for(factory.created_event.wait(), timeout=1.0)
+        assert len(factory.created) == 1
     finally:
-        await controller.stop()
-        controller._overlay.deleteLater()
+        await graph.close()
         qapp.processEvents()
 
 
-async def test_tray_settings_action_opens_a_normal_visible_dialog(qapp):
-    service = _config_service()
-    controller = AppController(qapp, service)
+async def test_settings_action_opens_a_normal_visible_dialog(qapp):
+    graph = _ControllerGraph(qapp)
     try:
-        # The menu owns a real QAction; triggering it exercises tray -> controller
-        # -> supervised settings task instead of calling the controller directly.
-        menu = controller._tray.contextMenu()
-        if menu is None:
-            raise AssertionError("tray context menu was not created")
-        settings_action = menu.actions()[2]
-        settings_action.trigger()
-        task = controller._settings_open_task
-        assert task is not None
-        await task
+        graph.controller.open_settings()
+        await asyncio.wait_for(graph.settings_factory.created_event.wait(), timeout=1.0)
 
-        dialog = controller._settings_dialog
-        assert dialog is not None
+        dialog = graph.settings_factory.created[-1]
         assert dialog.isVisible()
         assert not dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        assert dialog.windowFlags() & Qt.WindowType.Dialog
     finally:
-        await controller.stop()
-        controller._overlay.deleteLater()
+        await graph.close()
         qapp.processEvents()
 
 
 async def test_controller_persists_track_offset(qapp):
-    writer = _FakeConfigWriter()
-    service = ConfigService(
-        Config(),
-        writer=writer,
-        worker=BlockingCallRunner("test-config-service"),
-    )
-    controller = AppController(qapp, service)
-    controller._handle_intent(ChangeTrackOffset("track", 50))
-    await service.close()
-    assert controller._config.track_offsets == {"track": 50}
-    assert writer.saved[-1].track_offsets == {"track": 50}
-    await controller.stop()
-    controller._overlay.deleteLater()
+    graph = _ControllerGraph(qapp)
+    graph.overlay.track_offset_changed.emit(ChangeTrackOffset("track", 50))
+    await graph.close()
+
+    assert graph.config_service.config.track_offsets == {"track": 50}
+    assert graph.writer.saved[-1].track_offsets == {"track": 50}
     qapp.processEvents()
 
 
 async def test_a_restart_that_cannot_start_the_replacement_stays_up(qapp):
-    # The result was discarded and this instance quit regardless, so a replacement
-    # that could not be spawned looked exactly like a successful restart — and left
-    # the user with nothing running.
-    class _FailedRestartLauncher:
-        def start(self, executable: str, arguments: Sequence[str]) -> bool:
-            del executable, arguments
-            return False
-
-    service = _config_service()
-    controller = AppController(qapp, service, restart_launcher=_FailedRestartLauncher())
+    # A failed replacement launch must not quit the current process.
+    launcher = _FakeRestartLauncher(started=False)
+    graph = _ControllerGraph(qapp, restart_launcher=launcher)
     try:
-        controller._restart()
+        graph.controller._restart()
+        assert launcher.calls
+        assert graph.overlay.visible is False
     finally:
-        await controller.stop()
-        controller._overlay.deleteLater()
+        await graph.close()
         qapp.processEvents()
+
+
+@pytest.mark.parametrize("error_type", (RuntimeError, KeyError))
+def test_composition_closes_workers_when_graph_construction_fails(qapp, monkeypatch, error_type):
+    from kotonoha.app import composition as composition_module
+
+    closed: list[str] = []
+
+    class _RecordingWorker(BlockingCallRunner):
+        def __init__(self, name: str) -> None:
+            super().__init__(name)
+            self.name = name
+
+        def close(self) -> None:
+            closed.append(self.name)
+            super().close()
+
+    def worker_factory(name: str) -> _RecordingWorker:
+        return _RecordingWorker(name)
+
+    def fail_overlay(*_args: object, **_kwargs: object) -> None:
+        raise error_type("overlay construction failed")
+
+    monkeypatch.setattr(composition_module, "BlockingCallRunner", worker_factory)
+    monkeypatch.setattr(composition_module, "LyricsOverlay", fail_overlay)
+    composition = composition_module.ApplicationComposition(
+        qapp,
+        Config(),
+        config_writer=_FakeConfigWriter(),
+        config_worker=_RecordingWorker("configuration"),
+        restart_launcher=_FakeRestartLauncher(),
+    )
+
+    with pytest.raises(error_type, match="overlay construction failed"):
+        composition.build()
+
+    assert sorted(closed) == ["configuration", "kotonoha-local-lyrics", "kotonoha-lyrics-cache"]

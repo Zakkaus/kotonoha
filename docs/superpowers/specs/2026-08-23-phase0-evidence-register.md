@@ -85,7 +85,7 @@ Python/Vitest 测试执行；`target` 场景只验证决策记录和当前实现
 | `title.raw-noise-and-version` | title corpus；`tests/test_titles.py::test_noisy_title_queries_strip_fused_cjk_upload_noise`; `tests/test_lyrics.py::test_explicit_live_version_conflict_is_rejected` | corpus |
 | `resolution.exact-id` | `tests/test_lyrics_resolver.py::test_exact_netease_hint_bypasses_matching`; `tests/test_lyrics_resolver.py::test_failed_exact_hint_falls_back_to_search`; `tests/test_lyrics_resolver.py::test_exact_qqmusic_hint_fetches_only_when_source_is_enabled` | covered |
 | `resolution.local-sources` | `tests/test_lyrics_resolver.py::test_local_hint_wins_without_using_sources_or_network`; `tests/test_lyrics_resolver.py::test_local_hint_falls_back_to_normal_resolution_when_sidecar_is_empty`; local source tests | covered |
-| `resolution.default-ordered-first` | `tests/test_lyrics_resolver.py::test_default_order_is_cache_network_per_provider_then_cider`; policy BehaviorChangeRecord | corpus/target |
+| `resolution.default-best-confidence` | `tests/test_lyrics_resolver.py::test_best_mode_prefers_higher_confidence_over_first_source`; policy BehaviorChangeRecord | corpus/target |
 | `resolution.manual-selection-priority` | `docs/superpowers/behavior-changes/2026-08-23-manual-lyrics-selection.md` | target |
 | `resolution.medium-fallback` | `tests/test_lyrics_resolver.py::test_best_mode_medium_cider_does_not_block_a_network_high`; `tests/test_lyrics_resolver.py::test_best_mode_prefers_higher_confidence_over_first_source` | corpus/target |
 | `provider.payload-budget` | provider body tests；KRC decompression budget corpus | covered/corpus |

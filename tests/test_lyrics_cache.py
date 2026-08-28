@@ -2,11 +2,21 @@ import sqlite3
 
 import pytest
 
+from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.lyrics import netease
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.cache import LyricsCache, LyricsCacheError
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
 from kotonoha.lyrics.models import LyricLine
+
+
+def cache_for(path=None, *, max_entries=1000):
+    """Build a cache with an explicitly owned test worker."""
+    return LyricsCache(
+        path,
+        max_entries=max_entries,
+        worker=BlockingCallRunner("test-lyrics-cache"),
+    )
 
 
 def artifact(
@@ -34,7 +44,7 @@ def artifact(
 
 
 async def test_lookup_is_scoped_to_provider_and_matches_metadata(tmp_path):
-    cache = LyricsCache(tmp_path / "lyrics.sqlite3", max_entries=10)
+    cache = cache_for(tmp_path / "lyrics.sqlite3", max_entries=10)
     await cache.store(artifact(provider="netease", provider_song_id="1"))
     await cache.store(artifact(provider="lrclib", provider_song_id="2"))
 
@@ -48,7 +58,7 @@ async def test_lookup_is_scoped_to_provider_and_matches_metadata(tmp_path):
 
 async def test_lookup_does_not_require_player_track_or_search_key(tmp_path):
     path = tmp_path / "lyrics.sqlite3"
-    cache = LyricsCache(path)
+    cache = cache_for(path)
     await cache.store(artifact())
 
     hit = await cache.lookup("netease", TrackMetadata("Song", "Artist", "", 180.0), netease.parse_payload)
@@ -60,14 +70,14 @@ async def test_lookup_does_not_require_player_track_or_search_key(tmp_path):
 
 
 async def test_only_high_confidence_artifacts_are_persisted(tmp_path):
-    cache = LyricsCache(tmp_path / "lyrics.sqlite3")
+    cache = cache_for(tmp_path / "lyrics.sqlite3")
     await cache.store(artifact(confidence=MatchConfidence.MEDIUM))
     assert await cache.count() == 0
 
 
 async def test_invalid_payload_is_removed(tmp_path):
     path = tmp_path / "lyrics.sqlite3"
-    cache = LyricsCache(path)
+    cache = cache_for(path)
     await cache.store(artifact())
     with sqlite3.connect(path) as connection:
         connection.execute("UPDATE lyrics SET payload_json = ?", ("not json",))
@@ -79,7 +89,7 @@ async def test_invalid_payload_is_removed(tmp_path):
 
 
 async def test_clear_and_lru_pruning(tmp_path):
-    cache = LyricsCache(tmp_path / "lyrics.sqlite3", max_entries=2)
+    cache = cache_for(tmp_path / "lyrics.sqlite3", max_entries=2)
     await cache.store(artifact(provider_song_id="1"))
     await cache.store(artifact(provider_song_id="2"))
     await cache.store(artifact(provider_song_id="3"))
@@ -91,7 +101,7 @@ async def test_clear_and_lru_pruning(tmp_path):
 async def test_storage_failures_are_normalized_at_the_cache_boundary(tmp_path):
     path = tmp_path / "cache-directory"
     path.mkdir()
-    cache = LyricsCache(path)
+    cache = cache_for(path)
     try:
         with pytest.raises(LyricsCacheError):
             await cache.lookup("netease", TrackMetadata("Song", "Artist"), netease.parse_payload)

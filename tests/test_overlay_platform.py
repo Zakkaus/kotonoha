@@ -29,8 +29,8 @@ from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config, PanelStyle
 from kotonoha.platform.overlay_contracts import Output, SurfaceResult, WindowRectangle
-from kotonoha.state import LyricsState
 from kotonoha.ui.overlay.geometry import OverlayGeometry
+from kotonoha.ui.overlay.state import LyricsState
 
 
 @pytest.mark.parametrize("event_type", (QEvent.Type.Move, QEvent.Type.Resize))

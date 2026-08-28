@@ -8,8 +8,10 @@ import time
 from collections.abc import Callable, Mapping, Sequence
 from typing import Protocol, TypeAlias
 
+from ..async_task import create_owned_task, wait_for_owned
 from .artifact import LyricsArtifact
-from .cache import LyricsCache, LyricsCacheError
+from .artist_grammar import artist_tokens
+from .cache import LyricsCacheError
 from .catalog import LyricsSourceCatalog
 from .hint import LyricsHint
 from .http import LyricsSession
@@ -20,13 +22,13 @@ from .sources import (
     LyricsSourceError,
     LyricsSourceResult,
 )
-from .titles import artist_tokens, normalize, split_title
+from .title_grammar import normalize, split_title
 from .workflow import ResolverLookup
 
 logger = logging.getLogger(__name__)
 
-TrackKey: TypeAlias = tuple[str, tuple[str, ...], tuple[str, ...], str, float | None]
-RequestKey: TypeAlias = tuple[TrackKey, tuple[str, ...], bool, bool, bool]
+ResolutionCacheKey: TypeAlias = tuple[str, tuple[str, ...], tuple[str, ...], str, float | None]
+RequestKey: TypeAlias = tuple[ResolutionCacheKey, tuple[str, ...], bool, bool, bool]
 
 _CONF_RANK = {MatchConfidence.NONE: 0, MatchConfidence.MEDIUM: 1, MatchConfidence.HIGH: 2}
 
@@ -49,7 +51,7 @@ class CacheLike(Protocol):
     def close(self) -> None: ...
 
 
-def _track_key(track: TrackMetadata) -> TrackKey:
+def _resolution_cache_key(track: TrackMetadata) -> ResolutionCacheKey:
     base, tags = split_title(track.title)
     duration = round(track.duration_s, 1) if track.duration_s is not None else None
     return (
@@ -68,14 +70,14 @@ class LyricsResolver:
         self,
         *,
         catalog: LyricsSourceCatalog,
-        cache: CacheLike | None = None,
+        cache: CacheLike,
         cache_enabled: bool = True,
         negative_ttl: float = 30.0,
         prefer_best: bool = True,
         fuzzy: bool = True,
     ) -> None:
         """Create a resolver from an explicit source graph and cache policy."""
-        self._cache = LyricsCache() if cache is None else cache
+        self._cache = cache
         self._catalog = catalog
         self._sources: dict[str, LyricsSource] = dict(catalog.sources)
         self._live_source_id = catalog.live_source_id
@@ -84,7 +86,7 @@ class LyricsResolver:
         self._prefer_best = prefer_best
         self._fuzzy = fuzzy
         self._negative_ttl = negative_ttl
-        self._negative_until: dict[tuple[str, TrackKey], float] = {}
+        self._negative_until: dict[tuple[str, ResolutionCacheKey], float] = {}
         self._inflight: dict[RequestKey, asyncio.Task[ResolverLookup]] = {}
 
     def start(self) -> None:
@@ -120,10 +122,13 @@ class LyricsResolver:
     ) -> ResolverLookup:
         """Resolve one track while preserving failures for that request."""
         ordered_sources = tuple(sources)
-        key = (_track_key(track), ordered_sources, self._cache_enabled, self._prefer_best, self._fuzzy)
+        key = (_resolution_cache_key(track), ordered_sources, self._cache_enabled, self._prefer_best, self._fuzzy)
         task = self._inflight.get(key)
         if task is None:
-            task = asyncio.create_task(self._resolve_once(session, track, ordered_sources))
+            task = create_owned_task(
+                self._resolve_once(session, track, ordered_sources),
+                name="kotonoha-lyrics-resolver",
+            )
             self._inflight[key] = task
         try:
             # Shielded: the task is shared, and awaiting it directly made one
@@ -146,13 +151,18 @@ class LyricsResolver:
         self._inflight.clear()
         for task in tasks:
             task.cancel()
+        if not tasks:
+            return
+        joined = asyncio.gather(*tasks, return_exceptions=True)
+        cancellation_requested = await wait_for_owned(joined)
         for task in tasks:
-            try:
-                await task
-            except asyncio.CancelledError:
+            if task.cancelled():
                 continue
-            except (LyricsSourceError, LyricsCacheError, TimeoutError, ValueError) as exc:
-                logger.debug("lyrics resolver task ended during shutdown: %s", exc)
+            error = task.exception()
+            if isinstance(error, (LyricsSourceError, LyricsCacheError, TimeoutError, ValueError)):
+                logger.debug("lyrics resolver task ended during shutdown: %s", error)
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     async def close(self) -> None:
         """Cancel owned lookups and release cache/source workers."""
@@ -187,7 +197,7 @@ class LyricsResolver:
         sources: tuple[str, ...],
     ) -> ResolverLookup:
         failures: set[str] = set()
-        track_key = _track_key(track)
+        track_key = _resolution_cache_key(track)
         logger.debug(
             "lyrics lookup started: track=%r / %r sources=%s mode=%s cache=%s fuzzy=%s",
             track.title,
@@ -217,7 +227,7 @@ class LyricsResolver:
         session: LyricsSession | None,
         track: TrackMetadata,
         sources: tuple[str, ...],
-        track_key: TrackKey,
+        track_key: ResolutionCacheKey,
         failures: set[str],
     ) -> LyricsSourceResult | None:
         """Strict first-match in the configured order (cache then network per
@@ -270,7 +280,7 @@ class LyricsResolver:
     async def _resolved_source(
         self,
         source: str,
-        track_key: TrackKey,
+        track_key: ResolutionCacheKey,
         task: asyncio.Task[LyricsSourceResult | None],
         failures: set[str],
     ) -> LyricsSourceResult | None:
@@ -300,7 +310,7 @@ class LyricsResolver:
         session: LyricsSession | None,
         track: TrackMetadata,
         sources: tuple[str, ...],
-        track_key: TrackKey,
+        track_key: ResolutionCacheKey,
         failures: set[str],
     ) -> LyricsSourceResult | None:
         """Pick the best result across sources: highest confidence, then the
@@ -347,24 +357,24 @@ class LyricsResolver:
         #    HIGH at index i beats the current best iff (HIGH, -i) > best_score.
         now = time.monotonic()
         tasks: dict[str, asyncio.Task[LyricsSourceResult | None]] = {}
-        for index, source in enumerate(sources):
-            # `source in tasks` guards a duplicated source: a second create_task would
-            # overwrite (and orphan) the first, double-fetching and leaking a task.
-            adapter = self._sources.get(source)
-            if source in resolved or source in tasks or adapter is None or adapter.cache_parser is None:
-                continue
-            if self._negative_until.get((source, track_key), 0.0) > now:
-                continue
-            if best_score is not None and (_CONF_RANK[MatchConfidence.HIGH], -index) <= best_score:
-                continue
-            if session is None:
-                raise LyricsSourceError(f"network source {source!r} requires an HTTP session")
-            logger.debug("lyrics source requested: slot=%r transport=network", source)
-            tasks[source] = asyncio.create_task(
-                adapter.resolve(session, track, fuzzy=self._fuzzy)
-            )
-
         try:
+            for index, source in enumerate(sources):
+                # `source in tasks` guards a duplicated source: a second task would
+                # overwrite (and orphan) the first, double-fetching and leaking it.
+                adapter = self._sources.get(source)
+                if source in resolved or source in tasks or adapter is None or adapter.cache_parser is None:
+                    continue
+                if self._negative_until.get((source, track_key), 0.0) > now:
+                    continue
+                if best_score is not None and (_CONF_RANK[MatchConfidence.HIGH], -index) <= best_score:
+                    continue
+                if session is None:
+                    raise LyricsSourceError(f"network source {source!r} requires an HTTP session")
+                logger.debug("lyrics source requested: slot=%r transport=network", source)
+                tasks[source] = create_owned_task(
+                    adapter.resolve(session, track, fuzzy=self._fuzzy),
+                    name=f"kotonoha-lyrics-source-{source}",
+                )
             pending = dict(tasks)
             while pending:
                 done, _ = await asyncio.wait(pending.values(), return_when=asyncio.FIRST_COMPLETED)

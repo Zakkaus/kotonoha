@@ -5,16 +5,29 @@ from typing import cast
 import aiohttp
 import pytest
 
-from kotonoha.display.coordinator import DisplayCoordinator
+from kotonoha.app.display_coordinator import DisplayCoordinator
+from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.display.models import DisplayState
+from kotonoha.display.presentation import DisplayEngine
+from kotonoha.display.timeline import TimelineEngine
 from kotonoha.lyrics.cider_api import CiderLyricsResponseAdapter
 from kotonoha.lyrics.match import TrackMetadata
 from kotonoha.lyrics.models import LyricsDocument, TimingKind
-from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from kotonoha.providers.cider_api import CIDER_API_CLIENT_ID, CiderApiProvider
 from kotonoha.providers.cider_client import CiderApiClient, CiderPlaybackResponseAdapter
-from kotonoha.state import LyricsState
+from kotonoha.ui.overlay.publisher import QtDisplayPublisher
+from kotonoha.ui.overlay.state import LyricsState
+
+
+def _display(state: LyricsState | None = None) -> DisplayCoordinator:
+    """Build a display coordinator with all application dependencies explicit."""
+    selected_state = LyricsState() if state is None else state
+    return DisplayCoordinator(
+        QtDisplayPublisher(selected_state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
 
 
 def _playback_payload() -> dict[str, object]:
@@ -207,7 +220,7 @@ def test_changing_cider_translation_drops_the_old_live_candidate():
     ownership = SourceOwnershipCoordinator()
     ownership.observe(CIDER_API_CLIENT_ID, observation, document)
     provider = CiderApiProvider(
-        display=DisplayCoordinator(LyricsState()),
+        display=_display(),
         ownership=ownership,
         client=_FakeCiderClient(observation, document),
     )
@@ -217,6 +230,36 @@ def test_changing_cider_translation_drops_the_old_live_candidate():
     assert ownership.current_match(TrackMetadata("Song", "Artist", "Album", 180.0)) is None
 
 
+@pytest.mark.asyncio
+async def test_cider_provider_closes_client_when_poll_task_cannot_start(monkeypatch):
+    from kotonoha.providers import cider_api as provider_module
+
+    track = TrackIdentity("cider", "cider-api", "song-1", "Song", "Song", "Artist", "Album", None, 180.0)
+    observation = PlaybackObservation("cider", "cider-api", track, PlaybackStatus.PLAYING, 1.5, 180.0, 1.0)
+    document = CiderLyricsResponseAdapter().adapt(_lyrics_payload(), track=track, duration_s=180.0)
+    client = _FakeCiderClient(observation, document)
+    provider = CiderApiProvider(
+        display=_display(),
+        ownership=SourceOwnershipCoordinator(),
+        client=client,
+    )
+
+    original_create_owned_task = provider_module.create_owned_task
+
+    def fail_create_task(coroutine, *, name):
+        if name == "kotonoha-cider-playback":
+            coroutine.close()
+            raise RuntimeError(f"cannot create {name}")
+        return original_create_owned_task(coroutine, name=name)
+
+    monkeypatch.setattr(provider_module, "create_owned_task", fail_create_task)
+
+    with pytest.raises(RuntimeError, match="cannot create kotonoha-cider-playback"):
+        await provider.start()
+
+    assert client.close_calls == 1
+
+
 class _FakeCiderClient:
     def __init__(self, observation: PlaybackObservation, document: LyricsDocument) -> None:
         self.observation = observation
@@ -224,12 +267,13 @@ class _FakeCiderClient:
         self.playback_called = asyncio.Event()
         self.lyrics_called = asyncio.Event()
         self.token: str | None = None
+        self.close_calls = 0
 
     async def start(self) -> None:
         return None
 
     async def close(self) -> None:
-        return None
+        self.close_calls += 1
 
     def set_token(self, token: str | None) -> None:
         self.token = token
@@ -290,7 +334,7 @@ async def test_cider_provider_publishes_canonical_document_and_final_provider_na
     client = _FakeCiderClient(observation, document)
     state = LyricsState()
     provider = CiderApiProvider(
-        display=DisplayCoordinator(state),
+        display=_display(state),
         ownership=SourceOwnershipCoordinator(),
         client=client,
         poll_interval=60.0,
@@ -320,7 +364,7 @@ async def test_cider_provider_publishes_resolving_while_lyrics_are_pending():
     client = _BlockingCiderClient(observation, document)
     state = LyricsState()
     provider = CiderApiProvider(
-        display=DisplayCoordinator(state),
+        display=_display(state),
         ownership=SourceOwnershipCoordinator(),
         client=client,
         poll_interval=60.0,
@@ -344,7 +388,7 @@ async def test_cider_provider_stop_waits_for_a_disabled_lyrics_task():
     client.hold_cancellation = True
     state = LyricsState()
     provider = CiderApiProvider(
-        display=DisplayCoordinator(state),
+        display=_display(state),
         ownership=SourceOwnershipCoordinator(),
         client=client,
         poll_interval=60.0,

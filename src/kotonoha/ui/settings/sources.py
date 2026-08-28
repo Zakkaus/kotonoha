@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from PyQt6.QtCore import Qt
@@ -17,20 +18,29 @@ from PyQt6.QtWidgets import (
 )
 
 from ...config import VALID_DISPLAY_SOURCES, VALID_LYRICS_SOURCES, Config
-from ...strings import t
+from ...strings import Translator
 from .controls import SettingsWidgets
-from .settings_widgets import elide_player_row
+from .widgets import elide_player_row
 
 if TYPE_CHECKING:
-    from .settings_dialog import SettingsDialog
+    from .dialog import SettingsDialog
 
 
 class SettingsSourcesPageBuilder:
     """Own the player/source controls and source-specific signal handlers."""
 
-    def __init__(self, dialog: SettingsDialog, widgets: SettingsWidgets) -> None:
+    def __init__(
+        self,
+        dialog: SettingsDialog,
+        widgets: SettingsWidgets,
+        *,
+        on_clear_cache: Callable[[], None],
+        translator: Translator,
+    ) -> None:
         self._dialog = dialog
         self._widgets = widgets
+        self._on_clear_cache = on_clear_cache
+        self._translator = translator
         self._connect_signals()
 
     def _connect_signals(self) -> None:
@@ -45,6 +55,7 @@ class SettingsSourcesPageBuilder:
 
     def build(self) -> QWidget:
         """Build player selection, source ordering, cache, and token controls."""
+        t = self._translator.text
         d = self._dialog
         w = self._widgets
         page = QWidget()
@@ -134,8 +145,9 @@ class SettingsSourcesPageBuilder:
         return page
 
     def emit_clear_cache(self, _checked: bool = False) -> None:
-        """Forward the clear-cache action to the dialog's application signal."""
-        self._dialog._request_clear_cache()
+        """Submit the source page's clear-cache command to its owner."""
+        del _checked
+        self._on_clear_cache()
 
     def keep_one_source_checked(self, _item: QListWidgetItem | None = None) -> None:
         """Ensure the staged configuration always has one enabled source."""

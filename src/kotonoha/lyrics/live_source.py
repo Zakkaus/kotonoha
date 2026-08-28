@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from .hint import LyricsHint
 from .http import LyricsSession
 from .match import TrackMetadata
-from .ownership import LiveSourceMatch
 from .sources import LyricsSourceKind, LyricsSourceResult, PayloadParser
+
+if TYPE_CHECKING:
+    from .live_contracts import LiveSourceMatch
 
 
 class LiveSourcePort(Protocol):

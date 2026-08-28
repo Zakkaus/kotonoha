@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from PyQt6.QtCore import QObject, pyqtSignal
 
-from .display.models import EMPTY_FRAME, DisplayFrame
+from ...display.models import EMPTY_FRAME, DisplayFrame
 
 
 class LyricsState(QObject):
+    """Own the latest canonical display frame and notify Qt listeners on change."""
+
     frame_changed = pyqtSignal(object)  # emits DisplayFrame when display content changes
 
     def __init__(self, parent: QObject | None = None) -> None:
@@ -31,4 +33,5 @@ class LyricsState(QObject):
         return True
 
     def clear(self) -> bool:
+        """Publish the canonical empty frame and report whether it changed."""
         return self.update(EMPTY_FRAME)

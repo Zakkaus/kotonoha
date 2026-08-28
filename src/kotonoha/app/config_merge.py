@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..config import Config
-from ..config_schema import SETTINGS_CONFIG_FIELDS
+from ..config.schema import SETTINGS_CONFIG_FIELDS
 
 
 def merge_settings(

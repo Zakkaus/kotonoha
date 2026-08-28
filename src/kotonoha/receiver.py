@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import time
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ from urllib.parse import urlparse
 from aiohttp import WSMsgType, web
 
 from .app.source_contracts import SourceIngressPort
+from .async_task import create_owned_task, wait_for_owned
 from .display.contracts import AdapterDisplayPort
 from .lyrics.protocol import AdapterClock, AdapterProtocolDecoder, AdapterProtocolError, AdapterSnapshot
 from .playback.models import PlaybackObservation, PlaybackStatus
@@ -63,7 +65,7 @@ class AdapterReceiver:
 
     def build_app(self) -> web.Application:
         """Build the HTTP application without starting a listener."""
-        app = web.Application()
+        app = web.Application(client_max_size=self._decoder.max_message_bytes)
         app.router.add_get(WS_PATH, self._handle_ws)
         app.router.add_post(WS_PATH, self._handle_post)
         return app
@@ -73,15 +75,29 @@ class AdapterReceiver:
         if self._runner is not None:
             return
         runner = web.AppRunner(self.build_app())
-        await runner.setup()
-        site = web.TCPSite(runner, self._host, self._port)
         try:
+            await runner.setup()
+            site = web.TCPSite(runner, self._host, self._port)
             await site.start()
-        except OSError:
-            await runner.cleanup()
+        except asyncio.CancelledError:
+            await self._cleanup_failed_runner(runner)
+            raise
+        except (OSError, RuntimeError, ValueError):
+            await self._cleanup_failed_runner(runner)
             raise
         self._runner = runner
         logger.info("Adapter receiver listening on ws://%s:%d%s", self._host, self._port, WS_PATH)
+
+    async def _cleanup_failed_runner(self, runner: web.AppRunner) -> None:
+        """Finish cleanup after setup or bind failure without masking the failure."""
+        cleanup_task = create_owned_task(runner.cleanup(), name="kotonoha-adapter-rollback")
+        cancellation_requested = False
+        try:
+            cancellation_requested = await wait_for_owned(cleanup_task)
+        except (OSError, RuntimeError, ValueError) as exc:
+            logger.warning("Could not clean up adapter receiver after startup failure: %s", exc)
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     async def stop(self) -> None:
         """Close connections, discard all sessions, and release the runner.
@@ -92,9 +108,11 @@ class AdapterReceiver:
         """
         runner = self._runner
         self._runner = None
+        cancellation_requested = False
         try:
             if runner is not None:
-                await runner.cleanup()
+                cleanup_task = create_owned_task(runner.cleanup(), name="kotonoha-adapter-cleanup")
+                cancellation_requested = await wait_for_owned(cleanup_task)
         finally:
             client_ids = set(self._sessions)
             if self._display_client_id is not None:
@@ -103,6 +121,8 @@ class AdapterReceiver:
             for client_id in client_ids:
                 self._drop_client(client_id)
             self._clients.clear()
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def ingest(self, raw_text: str, *, client_id: int) -> bool:
         """Decode and publish one canonical adapter message."""
@@ -156,7 +176,7 @@ class AdapterReceiver:
     async def _handle_ws(self, request: web.Request) -> web.WebSocketResponse:
         if not _is_local_origin(request):
             raise web.HTTPForbidden
-        ws = web.WebSocketResponse(heartbeat=30)
+        ws = web.WebSocketResponse(heartbeat=30, max_msg_size=self._decoder.max_message_bytes)
         await ws.prepare(request)
         client_id = id(ws)
         self._clients.add(ws)

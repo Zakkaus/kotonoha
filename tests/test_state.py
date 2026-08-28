@@ -4,7 +4,7 @@ pytest.importorskip("PyQt6.QtCore")
 
 from kotonoha.display.models import DisplayFrame, DisplayState  # noqa: E402
 from kotonoha.playback.models import TrackIdentity  # noqa: E402
-from kotonoha.state import LyricsState  # noqa: E402
+from kotonoha.ui.overlay.state import LyricsState  # noqa: E402
 
 
 def frame(title: str = "", current_time: float | None = None) -> DisplayFrame:

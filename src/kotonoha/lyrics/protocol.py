@@ -68,6 +68,11 @@ class AdapterProtocolDecoder:
         self._max_lines = max_lines
         self._max_words_per_line = max_words_per_line
 
+    @property
+    def max_message_bytes(self) -> int:
+        """Return the byte limit that transport adapters must enforce."""
+        return self._max_message_bytes
+
     def decode_text(self, raw_text: str, *, observed_at: float) -> AdapterMessage:
         """Decode one UTF-8 JSON text frame under the configured size budget."""
         self.validate_text_size(raw_text)
@@ -124,7 +129,7 @@ class AdapterProtocolDecoder:
 
 
 def parse_adapter_message(payload: object, *, observed_at: float) -> AdapterMessage:
-    """Decode a payload with the default policy for compatibility callers."""
+    """Decode a payload with the default adapter protocol policy."""
     return AdapterProtocolDecoder().decode(payload, observed_at=observed_at)
 
 

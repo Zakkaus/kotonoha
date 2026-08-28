@@ -80,7 +80,7 @@ flowchart LR
 
 - 来源顺序为“用户确认歌词、sidecar、embedded、精确 provider song id、当前选中的 Cider 会话、配置的网络来源”。
 - 自动 cache 只加速所属来源，不改变顺序；用户确认的结果才成为最高优先级的本地歌词。
-- `ordered_first` 默认启用，`best_confidence` 是显式可选 policy。
+- `best_confidence` 默认启用，关闭 Settings 中的 `prefer_best_lyrics` 后使用 `ordered_first`；来源顺序始终可配置。
 - `EXACT/HIGH` 可以直接作为自动结果；`MEDIUM` 等待其他来源后只作为 fallback，不自动持久化。
 - Cider 断线时，已经找到的歌词不清空，时钟回退到 MPRIS；Position 暂不可读时保留歌词和最后已知位置。
 - 短暂空 metadata 继续由 stabilizer 的 settling window 处理；稳定确认无曲目后才进入 `NoTrack`。

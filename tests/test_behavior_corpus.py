@@ -44,14 +44,15 @@ from behavior_runtime_corpus import (
     PlatformOperationOutput,
 )
 
+from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.clock import MediaClock
+from kotonoha.display.models import ResolutionState
+from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.krc_parser import parse_krc
 from kotonoha.lyrics.lrc_parser import parse_lrc
 from kotonoha.lyrics.match import best_match
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
-from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
-from kotonoha.lyrics.select import build_frame
-from kotonoha.lyrics.titles import clean_title, recover_artist, split_title
+from kotonoha.lyrics.title_grammar import clean_title, recover_artist, split_title
 from kotonoha.lyrics.yrc_parser import parse_yrc
 from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus
@@ -123,7 +124,10 @@ def _display_projection(case: DisplayInput) -> DisplayOutput:
         ),
         lines=tuple(case.lines),
     )
-    frame = build_frame(document, case.position, is_playing=True)
+    playback = PlaybackObservation(
+        "corpus", "corpus", None, PlaybackStatus.PLAYING, case.position, case.duration_s, 0.0
+    )
+    frame = DisplayEngine().project_observation(playback, document, ResolutionState.AVAILABLE)
     interlude = None if frame.interlude is None else (frame.interlude.start, frame.interlude.end)
     return DisplayOutput(
         frame.state.value,

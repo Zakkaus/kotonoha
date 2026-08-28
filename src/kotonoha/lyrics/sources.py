@@ -8,7 +8,7 @@ from enum import StrEnum
 from pathlib import Path
 from typing import Protocol
 
-from ..async_worker import BlockingCallRunner
+from ..async_worker import BlockingWorkerPort
 from .adapter import LyricsDocumentAdapter
 from .artifact import LyricsArtifact
 from .hint import LyricsHint
@@ -135,12 +135,14 @@ class LocalLyricsSource:
 
     def __init__(
         self,
-        sidecar: SidecarLyricsSource | None = None,
-        embedded: EmbeddedLyricsSource | None = None,
+        sidecar: SidecarLyricsSource,
+        embedded: EmbeddedLyricsSource,
+        *,
+        worker: BlockingWorkerPort,
     ) -> None:
-        self._sidecar = sidecar if sidecar is not None else SidecarLyricsSource()
-        self._embedded = embedded if embedded is not None else EmbeddedLyricsSource()
-        self._worker = BlockingCallRunner("kotonoha-local-lyrics")
+        self._sidecar = sidecar
+        self._embedded = embedded
+        self._worker = worker
 
     def start(self) -> None:
         """Reopen the local reader worker after a previous provider shutdown."""

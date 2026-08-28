@@ -3,6 +3,8 @@ from typing import cast
 
 from kotonoha.config import (
     DEFAULT_LYRICS_SOURCES,
+    SETTINGS_CONFIG_FIELDS,
+    SETTINGS_PAGE_FIELDS,
     TRACK_OFFSET_CAP,
     VALID_LYRICS_SOURCES,
     Config,
@@ -16,7 +18,6 @@ from kotonoha.config import (
     save_config,
     set_track_offset,
 )
-from kotonoha.config_schema import SETTINGS_CONFIG_FIELDS, SETTINGS_PAGE_FIELDS
 
 
 def test_settings_schema_has_one_ordered_field_contract() -> None:
@@ -65,16 +66,16 @@ def test_player_lock_roundtrips_and_clamps():
     assert Config.from_dict({"player_lock": 123}).player_lock == ""
 
 
-def test_cider_api_token_is_runtime_only(tmp_path):
+def test_cider_api_token_roundtrips_in_config(tmp_path):
     path = tmp_path / "c.json"
     cfg = Config(cider_api_token="  test-token  ")
 
     assert cfg.clamped().cider_api_token == "test-token"
     save_config(cfg, path)
 
-    assert "cider_api_token" not in path.read_text(encoding="utf-8")
-    assert load_config(path).cider_api_token == ""
-    assert Config.from_dict({"cider_api_token": "from-file"}).cider_api_token == ""
+    assert '"cider_api_token": "  test-token  "' in path.read_text(encoding="utf-8")
+    assert load_config(path).cider_api_token == "test-token"
+    assert Config.from_dict({"cider_api_token": "from-file"}).cider_api_token == "from-file"
 
 
 def test_frost_panel_style_survives_clamp():
@@ -330,7 +331,7 @@ def test_an_oversized_but_valid_json_config_is_not_accepted(tmp_path, monkeypatc
     # A byte cap must reject a complete object followed by enough whitespace to
     # make the file oversized. Reading only the first cap bytes could otherwise
     # mistake that truncated prefix for a valid JSON document.
-    import kotonoha.config_store as config_store
+    import kotonoha.config.store as config_store
 
     monkeypatch.setattr(config_store, "MAX_CONFIG_BYTES", 16)
     path = tmp_path / "config.json"

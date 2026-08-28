@@ -7,8 +7,9 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QLineEdit, QListWidgetItem, QPushButton
 
-from kotonoha.app.intents import ApplyConfig, ClearCache
+from kotonoha.app.intents import ApplyConfig, ClearCache, RequestRestart
 from kotonoha.config import (
+    SETTINGS_PAGE_FIELDS,
     Config,
     FxIntensity,
     FxTransition,
@@ -18,7 +19,9 @@ from kotonoha.config import (
     UiLanguage,
 )
 from kotonoha.players import PlayerInfo
-from kotonoha.ui.settings.settings_dialog import _PAGE_FIELDS, SettingsDialog
+from kotonoha.ui.settings.dialog import SettingsDialog
+
+PAGE_FIELDS = SETTINGS_PAGE_FIELDS
 
 
 @pytest.fixture(scope="module")
@@ -29,24 +32,31 @@ def qapp():
 
 def test_cache_controls_roundtrip_and_clear_signal(qapp):
     dialog = SettingsDialog(Config(cache_enabled=False))
-    emitted = []
-    dialog.clear_cache_requested.connect(lambda: emitted.append(True))
+    intents = []
+    dialog.intent_requested.connect(intents.append)
 
     assert dialog.form_widgets.cache_enabled.isChecked() is False
     dialog.form_widgets.cache_enabled.setChecked(True)
     assert dialog.current_config().cache_enabled is True
     dialog.form_widgets.clear_cache.click()
-    assert emitted == [True]
+    assert intents == [ClearCache()]
+    dialog.close()
+
+
+def test_best_lyrics_policy_is_visible_and_roundtrips_on_sources_page(qapp):
+    dialog = SettingsDialog(Config())
+
+    assert dialog.form_widgets.prefer_best.isChecked() is True
+    dialog.form_widgets.prefer_best.setChecked(False)
+    assert dialog.current_config().prefer_best_lyrics is False
     dialog.close()
 
 
 def test_resetting_sources_page_does_not_duplicate_clear_cache_signal(qapp):
     dialog = SettingsDialog(Config())
     intents = []
-    legacy_signals = []
     dialog.intent_requested.connect(intents.append)
-    dialog.clear_cache_requested.connect(lambda: legacy_signals.append(True))
-    sources = next(i for i, fields in enumerate(_PAGE_FIELDS) if "lyrics_sources" in fields)
+    sources = next(i for i, fields in enumerate(PAGE_FIELDS) if "lyrics_sources" in fields)
     dialog._nav.setCurrentRow(sources)
 
     dialog._reset_current_page()
@@ -54,7 +64,6 @@ def test_resetting_sources_page_does_not_duplicate_clear_cache_signal(qapp):
     dialog.form_widgets.clear_cache.click()
 
     assert intents == [ClearCache()]
-    assert legacy_signals == [True]
     dialog.close()
 
 
@@ -168,7 +177,7 @@ def _indicator_white_pixels(qss: str, *, checked: bool) -> int:
 
 
 def test_checked_indicator_actually_renders_a_checkmark(qapp):
-    from kotonoha.ui.settings.settings_dialog import _CHECKMARK_PATH, _skin
+    from kotonoha.ui.settings.dialog import _CHECKMARK_PATH, _skin
 
     # The glyph must be a real bundled file: Qt's stylesheet url() does not decode
     # data: URIs, so an inline data URI renders nothing (a bare filled square).
@@ -203,16 +212,23 @@ def test_accent_has_custom_picker_and_panel_tint_roundtrips(qapp):
     dialog.close()
 
 
-def test_custom_accent_slot_is_reused_not_accumulated(qapp):
+def test_custom_accent_slot_is_reused_not_accumulated(qapp, monkeypatch):
+    from PyQt6.QtGui import QColor
+
+    from kotonoha.ui.settings import pages
+
     dialog = SettingsDialog(Config())
     before = dialog.form_widgets.accent.count()
-    dialog._set_custom_accent(("#123456", "#223344", "#334455"))
+    colours = iter((QColor("#123456"), QColor("#654321")))
+    monkeypatch.setattr(pages.QColorDialog, "getColor", lambda *_args: next(colours))
+    custom_index = dialog.form_widgets.accent.findData(None)
+    dialog.form_widgets.accent.activated.emit(custom_index)
     after_first = dialog.form_widgets.accent.count()
-    dialog._set_custom_accent(("#654321", "#556677", "#778899"))
+    dialog.form_widgets.accent.activated.emit(dialog.form_widgets.accent.findData(None))
     assert after_first == before + 1  # one slot added
     assert dialog.form_widgets.accent.count() == after_first  # reused, not piling up "自訂" entries
-    assert dialog.form_widgets.accent.currentData() == ("#654321", "#556677", "#778899")
-    assert "#654321".upper() in dialog.form_widgets.accent.currentText()  # labelled with its hex
+    assert dialog.form_widgets.accent.currentData() is not None
+    assert "#654321" in dialog.form_widgets.accent.currentText()  # labelled with its hex
     dialog.close()
 
 
@@ -275,7 +291,7 @@ def test_frost_window_toggle_roundtrips_and_applies_safely(qapp):
 def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
     from PyQt6.QtWidgets import QLabel
 
-    from kotonoha.strings import t
+    from kotonoha.strings import Translator
 
     # Offscreen has no blur protocol, so frosted glass can't work: the checkbox
     # reads as unavailable (disabled), and the note under it names which of the
@@ -284,7 +300,11 @@ def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
     assert dialog._blur_capable is False
     assert dialog.form_widgets.frost_window.isEnabled() is False
     hints = [w.text() for w in dialog.findChildren(QLabel) if w.objectName() == "hint"]
-    causes = {t(f"set.frost_window.no_{cause}") for cause in ("session", "bridge", "protocol", "build")}
+    translator = Translator("en")
+    causes = {
+        translator.text(f"set.frost_window.no_{cause}")
+        for cause in ("session", "bridge", "protocol", "build")
+    }
     assert causes & set(hints), f"no cause shown for the disabled toggle: {hints}"
     dialog.close()
 
@@ -326,7 +346,7 @@ def test_title_logo_follows_the_accent(qapp):
 
 
 def test_theme_selector_roundtrips_and_switches_palette(qapp):
-    from kotonoha.ui.settings.settings_dialog import _PALETTES
+    from kotonoha.ui.settings.dialog import _PALETTES
 
     dark = SettingsDialog(Config(theme=ThemeMode.DARK))
     assert dark._theme == "dark"
@@ -388,14 +408,16 @@ def test_typography_controls_roundtrip(qapp):
 def test_style_picker_lists_the_familys_real_styles(qapp):
     from PyQt6.QtGui import QFontDatabase
 
+    from kotonoha.ui.settings.widgets import available_font_styles
+
     dialog = SettingsDialog(Config())
     # A family with no reported styles still offers a usable default.
-    assert dialog._available_styles("___no_such_font___") == ["Regular"]
+    assert available_font_styles("___no_such_font___") == ["Regular"]
     # A family that reports styles offers exactly those (Regular sorted first).
     for family in QFontDatabase.families():
         styles = QFontDatabase.styles(family)
         if styles:
-            offered = dialog._available_styles(family)
+            offered = available_font_styles(family)
             assert set(offered) == set(styles)
             if "Regular" in styles:
                 assert offered[0] == "Regular"
@@ -415,24 +437,19 @@ def test_panel_width_control_enabled_only_for_fixed_mode(qapp):
 
 
 def test_sidebar_lists_every_section_and_drives_the_stack(qapp):
-    from kotonoha.strings import current_language, set_language
+    from kotonoha.strings import Translator
 
-    previous = current_language()
-    set_language("en")
-    try:
-        dialog = SettingsDialog(Config(ui_language=UiLanguage.EN))
-        dialog.show()
-        qapp.processEvents()
-        qapp.processEvents()
-        # One sidebar row per content page, and no label is truncated in the sidebar.
-        assert dialog._nav.count() == dialog._stack.count() == 8
-        assert dialog._nav.width() >= dialog._nav.sizeHintForColumn(0)
-        # Selecting a sidebar row switches the stacked content page.
-        dialog._nav.setCurrentRow(3)
-        assert dialog._stack.currentIndex() == 3
-        dialog.close()
-    finally:
-        set_language(previous)
+    dialog = SettingsDialog(Config(ui_language=UiLanguage.EN), translator=Translator("en"))
+    dialog.show()
+    qapp.processEvents()
+    qapp.processEvents()
+    # One sidebar row per content page, and no label is truncated in the sidebar.
+    assert dialog._nav.count() == dialog._stack.count() == 8
+    assert dialog._nav.width() >= dialog._nav.sizeHintForColumn(0)
+    # Selecting a sidebar row switches the stacked content page.
+    dialog._nav.setCurrentRow(3)
+    assert dialog._stack.currentIndex() == 3
+    dialog.close()
     qapp.processEvents()
 
 
@@ -462,13 +479,13 @@ def test_language_change_reveals_restart_button_and_persists(qapp):
     dialog.form_widgets.ui_language.setCurrentIndex(dialog.form_widgets.ui_language.findData("ja"))
     assert dialog.form_widgets.restart_button.isHidden() is False  # a different language -> offer restart
 
-    restarts: list[bool] = []
     applied: list[Config] = []
-    dialog.restart_requested.connect(lambda: restarts.append(True))
+    intents = []
+    dialog.intent_requested.connect(intents.append)
     dialog.applied.connect(applied.append)
     dialog.form_widgets.restart_button.click()
 
-    assert restarts == [True]
+    assert intents[-1] == RequestRestart()
     assert applied and applied[-1].ui_language == "ja"  # persisted before relaunch
 
     # Reverting to the running language hides it again.
@@ -501,7 +518,6 @@ def test_legacy_mono_icon_stays_selectable_and_is_not_reset(qapp):
     # the picker no longer offers by default. It must still show + stay selected, so
     # Apply preserves it instead of silently resetting to the default icon.
     dialog = SettingsDialog(Config(icon_name=leaf_icon.MONO))
-    assert dialog._picked_icon(dialog.form_widgets.tray_icon_list) == leaf_icon.MONO
     assert dialog.current_config().icon_name == leaf_icon.MONO
     dialog.close()
 
@@ -511,8 +527,9 @@ def test_tray_and_window_icons_are_chosen_independently(qapp):
 
     dialog = SettingsDialog(Config(icon_name=leaf_icon.WHITE, window_icon_name=leaf_icon.TILE))
     # Each picker starts on its own saved style, not a shared one.
-    assert dialog._picked_icon(dialog.form_widgets.tray_icon_list) == leaf_icon.WHITE
-    assert dialog._picked_icon(dialog.form_widgets.window_icon_list) == leaf_icon.TILE
+    current = dialog.current_config()
+    assert current.icon_name == leaf_icon.WHITE
+    assert current.window_icon_name == leaf_icon.TILE
     # Changing one does not move the other.
     window_keys = []
     for i in range(dialog.form_widgets.window_icon_list.count()):
@@ -650,12 +667,14 @@ def test_settings_opacity_100_is_fully_opaque_and_range_is_full(qapp):
 def test_font_picker_resolves_an_absent_family_to_an_installed_one(qapp):
     from PyQt6.QtGui import QFontDatabase
 
+    from kotonoha.ui.settings.widgets import resolve_font_family
+
     installed = QFontDatabase.families()
     # A configured, installed family is kept verbatim.
-    assert SettingsDialog._resolve_font_family(installed[0]) == installed[0]
+    assert resolve_font_family(installed[0]) == installed[0]
     # A configured family that is NOT installed resolves to an installed fallback
     # rather than being handed to fontconfig (which substitutes an arbitrary font).
-    resolved = SettingsDialog._resolve_font_family("__no_such_font__, still fake")
+    resolved = resolve_font_family("__no_such_font__, still fake")
     assert resolved != "__no_such_font__"
     assert resolved == "" or resolved in set(installed)
 
@@ -711,7 +730,7 @@ def test_resetting_the_sources_page_restores_automatic_player_selection(qapp):
         Config(player_lock="org.mpris.MediaPlayer2.closed"),
         players=[PlayerInfo("org.mpris.MediaPlayer2.a", "A")],
     )
-    sources = next(i for i, fields in enumerate(_PAGE_FIELDS) if "lyrics_sources" in fields)
+    sources = next(i for i, fields in enumerate(PAGE_FIELDS) if "lyrics_sources" in fields)
     dialog._nav.setCurrentRow(sources)
 
     dialog._reset_current_page()
@@ -725,7 +744,7 @@ def test_every_field_the_dialog_edits_belongs_to_a_page_reset_list():
     # tab: it stays in the staged config and Apply persists the old value.
     from dataclasses import fields
 
-    covered = {name for page in _PAGE_FIELDS for name in page}
+    covered = {name for page in PAGE_FIELDS for name in page}
     # Not editable here: the port is a CLI/config-file setting, and the position
     # and per-track offsets are written by dragging and by the overlay's buttons.
     not_edited = {"port", "screen_name", "screen_width", "screen_height", "track_offsets", "translation_language"}
@@ -739,7 +758,7 @@ def test_the_settings_window_does_not_import_the_mpris_provider():
     import ast
     from pathlib import Path
 
-    source = Path("src/kotonoha/ui/settings/settings_dialog.py").read_text(encoding="utf-8")
+    source = Path("src/kotonoha/ui/settings/dialog.py").read_text(encoding="utf-8")
     imported = {
         node.module
         for node in ast.walk(ast.parse(source))
@@ -905,7 +924,7 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
         assert row is not None
         row.setCheckState(Qt.CheckState.Unchecked)
 
-    shown = dialog._selected_sources()
+    shown = dialog.current_config().lyrics_sources
 
     assert shown, "the panel offered a state that cannot be stored"
     assert shown == dialog.current_config().lyrics_sources

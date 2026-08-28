@@ -1,9 +1,9 @@
 # Kotonoha 桌面歌词浮窗 — 设计规格 (Spec v0.1)
 
-> **当前实现说明（Phase 3）**：本文中早期的 Cider WebSocket/TypeScript 探针段落仅是历史设计记录，
+> **当前实现说明（Phase 6）**：本文中早期的 Cider WebSocket/TypeScript 探针段落仅是历史设计记录，
 > 不是当前协议或启动要求。当前 Python 主链路直接使用 Cider 公共 HTTP API：
 > 每首歌请求一次完整歌词时间轴，播放位置约每秒校准一次，帧间由本地 MediaClock 插值；Cider
-> API token 可选，在 Settings -> Sources -> Cider API token 中设置，并保存到系统密钥环。最终歌词 provider 以 Cider
+> API token 可选，在 Settings -> Sources -> Cider API token 中设置，并与其他配置一起保存到 config.json。最终歌词 provider 以 Cider
 > 响应的 source.provider 为准，不把 transport/player 名称当作 provider。完整输入由
 > `DisplayInput` 携带 `PlaybackObservation`、`ResolutionState`、歌词文档和不可变显示选项，
 > `DisplayEngine` 生成带语义进度的 `DisplayFrame`，Overlay 不重新计算歌词时间。
@@ -116,8 +116,8 @@ MPRIS -> MprisPlaybackCoordinator -> PlaybackSample
 ```
 
 **历史兼容方案说明**：下方 WebSocket 图记录的是已经移除的 Cider 专用探针路径。当前 Cider 主链路使用公开 HTTP API，
-每首歌读取一次完整歌词时间轴，并以约 1s 的 playback 校准驱动本地 MediaClock；WS 仍可作为未来
-外部播放器 adapter 的兼容入口。
+每首歌读取一次完整歌词时间轴，并以约 1s 的 playback 校准驱动本地 MediaClock；WS 仍可作为 generic
+外部播放器 adapter 的入口。
 
 - 真正发生变化时立刻推（切行 / 播放暂停 / seek / 换歌）→ 切行近乎零延迟；
 - 低频**心跳**（~500ms）只带 `currentTime` 做漂移校正；
@@ -196,31 +196,34 @@ src/kotonoha/
 ├── __init__.py
 ├── __main__.py
 ├── main.py                  # entry_point: 装配 QApplication + qasync 事件循环
-├── config.py                # 配置模型、验证与兼容入口
-├── config_schema.py         # Settings 字段与页面分组的唯一中立契约
-├── config_store.py          # XDG 路径、受限读取与原子写入
 ├── app/                     # application-owned lifecycle, ports, and policy
+│   ├── composition.py       # 唯一 concrete object graph 组合根
+│   ├── application_controller.py # 应用 start/stop 与 typed intent routing
 │   ├── config_service.py     # 唯一配置 owner、异步持久化与状态
 │   ├── config_merge.py       # Settings changed-field 的纯合并变换
 │   ├── source_contracts.py   # live source 的窄 Protocol 与值对象
 │   ├── source_registry.py    # candidate/clock 登记生命周期
 │   ├── source_matching.py    # candidate 匹配纯规则
 │   └── source_gate.py        # source priority 与 ownership arbitration
+├── config/                  # typed configuration model and file boundary
+│   ├── models.py             # Config、验证与序列化
+│   ├── schema.py             # Settings 字段与页面分组的唯一中立契约
+│   └── store.py              # XDG 路径、受限读取与原子写入
 ├── platform/                # 平台判定归属处（Issue #16 的分层约束）
 │   ├── detect.py            # layer-shell .so 定位/降级判定（原 lyrics_loader.py）
 │   ├── native.py            # libkoto-layer.so 的 ctypes 包装
 │   └── overlay_contracts.py # 能力值对象与工具无关的窗口契约
 ├── layer_shell_bridge.cpp   # C++ 桥（移植自 bilihud，改 scope="kotonoha"）
 ├── build_bridge.sh          # 构建脚本（移植；产物 libkoto-layer.so）
-├── display/                 # DisplayInput、DisplayEngine、时间/布局策略、唯一 Qt publisher
+├── display/                 # Qt-free DisplayInput、DisplayEngine、时间/布局策略
 │   ├── models.py            # DisplayInput、DisplayFrame、resolution/progress values
 │   ├── presentation.py      # DisplayEngine：唯一展示策略 owner
 │   ├── timeline.py          # TimelineEngine：只负责 MediaClock observation
 │   ├── rules.py             # current/interlude/sweep 纯规则
 │   ├── karaoke.py           # line/word/interlude progress 纯规则
 │   ├── layout.py            # 无 Qt 的字体/宽度 fit policy
-│   ├── contracts.py          # adapter-specific display publication Protocol
-│   └── publisher.py         # 唯一 DisplayFrame -> Qt state publisher
+│   └── contracts.py          # adapter-specific display publication Protocol
+├── app/display_coordinator.py # 唯一 DisplayFrame projection/tick lifecycle owner
 ├── playback/models.py       # normalized playback facts 与播放器端口
 ├── providers/mpris_playback.py      # MPRIS session、选择、poll 和稳定化生命周期
 ├── providers/mpris_resolution.py    # MPRIS 歌词解析会话与 resolver 生命周期
@@ -231,7 +234,10 @@ src/kotonoha/
 ├── lyrics/translation.py    # timestamp/positional translation transforms
 ├── lyrics/protocol.py       # adapter v1 snapshot/clock boundary decoder
 ├── lyrics/sources.py        # local/exact/network source contracts
-├── state.py                 # LyricsState：持有 DisplayFrame，发 frame_changed
+├── lyrics/title_grammar.py  # title normalization and version-tag grammar
+├── lyrics/artist_grammar.py # artist tokenization and performer variants
+├── lyrics/title_queries.py  # provider query variants
+├── lyrics/player_title_grammar.py # player/browser title decoration grammar
 ├── receiver.py              # AdapterReceiver：aiohttp app，把 adapter message 灌进 frame path
 ├── ui/overlay/              # LyricsOverlay(QWidget) 与其 UI 生命周期协作者
 │   ├── __init__.py          # 稳定导出 LyricsOverlay
@@ -244,16 +250,18 @@ src/kotonoha/
 │   ├── style.py             # overlay appearance/font fallback
 │   ├── geometry.py          # 尺寸与输出相关的几何规则
 │   ├── drag.py              # 拖动策略与结果映射
-│   └── view.py              # Qt widget tree 构造
-├── ui/overlay/karaoke_label.py # KaraokeLabel：逐字渐变高亮的自绘 QWidget
+│   ├── view.py              # Qt widget tree 构造
+│   ├── state.py             # LyricsState：持有 DisplayFrame，发 frame_changed
+│   ├── publisher.py         # 唯一 DisplayFrame -> Qt state publisher
+│   └── karaoke_label.py     # KaraokeLabel：逐字渐变高亮的自绘 QWidget
 ├── tray.py                  # 托盘菜单：穿透开关 / 锁定位置 / 设置 / 退出
-├── ui/settings/settings_dialog.py  # 设置对话框（字体、位置、不透明度、是否双语）
+├── ui/settings/dialog.py  # 设置对话框（字体、位置、不透明度、是否双语）
 └── assets/
     └── icon.png
 ```
 
 **可测试性**：protocol、display 规则/时间轴、translation transform、`platform/detect.py`（降级判定）和
-`state.py`（信号语义）做成纯逻辑、不依赖显示，可在无 GUI 的 CI 里跑。Qt 只负责字体测量、像素布局和绘制。
+`ui/overlay/state.py`（信号语义）做成窄边界；Qt 只负责字体测量、像素布局、绘制和状态通知。
 
 ---
 
@@ -295,7 +303,7 @@ src/kotonoha/
 ```python
 # receiver.py
 class AdapterReceiver:
-    def __init__(self, state: LyricsState, host="127.0.0.1", port=28745): ...
+    def __init__(self, display: AdapterDisplayPort, host="127.0.0.1", port=28745, *, ownership: SourceIngressPort): ...
     async def start(self) -> None:   # aiohttp.web.AppRunner + TCPSite
     async def stop(self) -> None:
     async def _ws(self, request) -> web.WebSocketResponse:
@@ -375,7 +383,7 @@ class AdapterReceiver:
 - 设置…（打开下面的设置面板）
 - 退出
 
-**Tab 设置面板**（`ui/settings/settings_dialog.py`，`QTabWidget`，更专业）：
+**Tab 设置面板**（`ui/settings/dialog.py`，`QTabWidget`，更专业）：
 - **外观**：字号、不透明度、背板样式（玻璃面板 / 纯文字）
 - **歌词**：逐字高亮开关、显示翻译、**翻译语言**（自动跟随系统 / 简中 / 繁中 / EN / JA / …）
 - **位置**：顶部/底部、距边缘、水平偏移、默认穿透
@@ -384,8 +392,9 @@ class AdapterReceiver:
 **双语 / 翻译语言**：Apple Music TTML 内含多语言翻译（`<translation xml:lang>`）。adapter 在
 `snapshot.lyrics.lines[].translation` 中发送已经选定的译文；当前 receiver 不接受配置控制帧。
 
-- **config.py**：`~/.config/kotonoha/config.json`（XDG_CONFIG_HOME），字段：
-  `port(28745), anchor_top(默认 true), margin_edge, margin_x, font_size, opacity, show_translation(默认 true), translation_language(默认 "auto"), accent_start/end/sweep(默认粉色), passthrough(默认 true), karaoke(默认 true), panel_style(pill/text)`。
+- **config/models.py + config/store.py**：`~/.config/kotonoha/config.json`（XDG_CONFIG_HOME）是配置的唯一文件边界。
+  歌词来源顺序、`prefer_best_lyrics`（默认 `true`）、显示来源顺序、播放器锁定、显示与行为设置都由
+  `Config` 校验、持久化并由 Settings 展示；Cider API token 也由 `Config` 校验并写入 JSON。
 
 ---
 
@@ -409,7 +418,8 @@ dependencies = ["PyQt6", "qasync", "aiohttp"]
 
 - 系统依赖（README 需补充，照 BiliHUD）：`qt6-base`、`qt6-wayland`、`layer-shell-qt`、`wayland`、qmake/pkg-config、`g++`。
 - 运行：`uv sync && uv run kotonoha`。
-- **Cider 探针**保持独立 Vite/pnpm 构建（已有），README 写清"先装探针 → 启动 Kotonoha → 播歌"流程。
+- Cider 探针保留为可选的独立 Vite/pnpm 插件包；当前 Python 主链路不依赖它。需要接入其他播放器时，
+  外部客户端使用 generic `kotonoha.adapter` v1 的 `snapshot` / `clock` 消息。
 
 ---
 
@@ -420,7 +430,7 @@ dependencies = ["PyQt6", "qasync", "aiohttp"]
 - `test_lyrics_protocol.py`：adapter v1 payload → normalized playback/document 解析（含坏字段、预算和旧 payload 拒绝）。
 - `test_platform_detect.py`：`should_disable_layer_shell` / `find_layer_shell_library` 降级判定（移植 BiliHUD 同名测试）。
 - `test_receiver.py`：用 `aiohttp` 测试客户端 POST 一个 adapter v1 payload，断言 state 收到对应 frame、返回 204。
-- `test_state.py`：信号在 frame 变化时发射、相同 frame 不重复发射的语义。
+- `test_state.py`：`ui/overlay/state.py` 在 frame 变化时发射、相同 frame 不重复发射的语义。
 - `test_karaoke.py`：给定 `current_time` 和 words，计算"已唱进度/当前词索引/词内进度"的纯函数正确（高亮渲染的算术部分抽成纯函数测）。
 
 GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函数。
@@ -435,12 +445,15 @@ GUI 渲染本身不在 CI 跑（无显示环境），逻辑全部下沉到纯函
 2. **M1 — 数据链路打通（WS）**：`model.py` 解析 + `state.py` + `receiver.py`（aiohttp WS 服务端）；**改造探针 `main.ts` 为 WS 客户端**（连接/全量同步/心跳/退避重连）；端到端 smoke：探针推送能进 state（先 print，不画 UI）。
 3. **M2 — 透明浮窗**：`ui/overlay/window.py` 基础透明窗 + layer-shell 激活 + 默认穿透 + **顶部居中**；显示"当前行整行"。
 4. **M3 — 逐字卡拉 OK + 现代样式**：`ui/overlay/karaoke_label.py` 扫光高亮、三行布局、翻译行、阴影/发光、切行动画。
-5. **M4 — 托盘与设置**：穿透切换、拖动定位、`ui/settings/settings_dialog.py`、config 持久化。
+5. **M4 — 托盘与设置**：穿透切换、拖动定位、`ui/settings/dialog.py`、config 持久化。
 6. **M5 — 降级与打磨**：GNOME/X11 回退、空状态/暂停、README + 系统依赖文档、打包验证。
 
 ---
 
-## 14. 设计决策（已定）
+## 14. 原始产品设计决策（历史）
+
+以下内容属于早期产品设计记录。当前实现以本文前面的“当前实现说明”、`kotonoha.adapter` v1、
+Cider 公共 HTTP API 和 `docs/SPEC-mpris-lyrics.md` 为准。
 
 | # | 决策 | 选定 |
 |---|---|---|

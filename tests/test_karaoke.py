@@ -1,4 +1,4 @@
-from kotonoha.karaoke import (
+from kotonoha.display.karaoke import (
     active_word_index,
     line_fill_fraction,
     line_progress,
@@ -79,8 +79,8 @@ def test_the_sweep_follows_a_line_with_no_separators(_session_qapp):
 def test_the_interlude_marker_is_a_row_the_sweep_runs_across():
     # The only thing on screen during a break, so it has to say something at every
     # point in the span, including both ends.
+    from kotonoha.display.karaoke import interlude_text
     from kotonoha.display.models import Interlude
-    from kotonoha.karaoke import interlude_text
 
     wait = Interlude(100.0, 130.0)
 
@@ -92,8 +92,8 @@ def test_the_interlude_marker_is_a_row_the_sweep_runs_across():
 
 
 def test_the_interlude_countdown_is_optional_and_typed():
+    from kotonoha.display.karaoke import interlude_text
     from kotonoha.display.models import Interlude
-    from kotonoha.karaoke import interlude_text
 
     wait = Interlude(100.0, 130.0)
 
@@ -107,7 +107,7 @@ def test_the_interlude_countdown_is_optional_and_typed():
 def test_an_unknown_marker_setting_still_shows_something():
     # This is the only thing on screen at the time, so an unreadable config value
     # must not blank the panel.
+    from kotonoha.display.karaoke import interlude_text
     from kotonoha.display.models import Interlude
-    from kotonoha.karaoke import interlude_text
 
     assert interlude_text(Interlude(0.0, 10.0), 5.0, style="nonsense", countdown="nonsense") == "●\u2003●\u2003●"

@@ -1,3 +1,5 @@
+import asyncio
+from collections.abc import Callable
 from dataclasses import replace
 
 import pytest
@@ -31,8 +33,34 @@ class FailingConfigWriter(MemoryConfigWriter):
         super().save(config)
 
 
+class ControlledConfigWorker:
+    """Hold one async worker call so service cancellation can be observed."""
+
+    def __init__(self) -> None:
+        self.started = asyncio.Event()
+        self.release = asyncio.Event()
+        self.closed = False
+
+    async def run(
+        self,
+        function: Callable[..., object],
+        /,
+        *args: object,
+        **kwargs: object,
+    ) -> object:
+        self.started.set()
+        await self.release.wait()
+        return function(*args, **kwargs)
+
+    def close(self) -> None:
+        self.closed = True
+
+    def reopen(self) -> None:
+        self.closed = False
+
+
 @pytest.mark.asyncio
-async def test_persists_latest_validated_configuration_without_runtime_token() -> None:
+async def test_persists_latest_validated_configuration_with_cider_token() -> None:
     writer = MemoryConfigWriter()
     service = ConfigService(
         Config(),
@@ -40,7 +68,7 @@ async def test_persists_latest_validated_configuration_without_runtime_token() -
         worker=BlockingCallRunner("test-config-service"),
     )
 
-    service.set_runtime_token("secret-token")
+    service.apply_settings(Config(cider_api_token="secret-token"), frozenset({"cider_api_token"}))
     service.set_passthrough(True)
     service.set_track_offset("song", 123)
 
@@ -52,7 +80,7 @@ async def test_persists_latest_validated_configuration_without_runtime_token() -
     assert len(writer.saved) == 1
     assert writer.saved[0].passthrough is True
     assert writer.saved[0].track_offsets == {"song": 123}
-    assert writer.saved[0].cider_api_token == ""
+    assert writer.saved[0].cider_api_token == "secret-token"
 
 
 @pytest.mark.asyncio
@@ -147,4 +175,53 @@ async def test_apply_settings_rejects_fields_outside_the_settings_owner() -> Non
     with pytest.raises(ValueError, match="track_offsets"):
         service.apply_settings(Config(), frozenset({"track_offsets"}))
 
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_flush_does_not_cancel_the_owned_save() -> None:
+    writer = MemoryConfigWriter()
+    worker = ControlledConfigWorker()
+    service = ConfigService(
+        Config(),
+        writer=writer,
+        worker=worker,
+    )
+    service.set_passthrough(True)
+    await worker.started.wait()
+
+    flush_task = asyncio.create_task(service.flush())
+    flush_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await flush_task
+
+    worker.release.set()
+    await service.flush()
+    assert service.persistence_status.state is ConfigPersistenceState.IDLE
+    assert writer.saved[-1].passthrough is True
+    await service.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_close_finishes_the_owned_save_before_releasing_worker() -> None:
+    writer = MemoryConfigWriter()
+    worker = ControlledConfigWorker()
+    service = ConfigService(
+        Config(),
+        writer=writer,
+        worker=worker,
+    )
+    service.set_passthrough(True)
+    await worker.started.wait()
+
+    close_task = asyncio.create_task(service.close())
+    await asyncio.sleep(0)
+    close_task.cancel()
+    worker.release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await close_task
+
+    assert service.persistence_status.state is ConfigPersistenceState.IDLE
+    assert writer.saved[-1].passthrough is True
+    assert worker.closed is True
     await service.close()

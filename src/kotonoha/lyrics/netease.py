@@ -138,6 +138,29 @@ async def _artifact_for_match(
     )
 
 
+async def fetch_artifact_for_song_id(
+    session: LyricsSession,
+    track: TrackMetadata,
+    song_id: str,
+) -> LyricsArtifact | None:
+    """Fetch an exact Netease song id selected by a player hint."""
+    payload = await fetch_payload(session, song_id)
+    lines = parse_payload(payload)
+    if not lines:
+        return None
+    return LyricsArtifact(
+        provider="netease",
+        provider_song_id=song_id,
+        title=track.title,
+        artist=track.artist,
+        album=track.album,
+        duration_s=track.duration_s,
+        payload=payload,
+        lines=lines,
+        confidence=MatchConfidence.HIGH,
+    )
+
+
 async def fetch_artifact(
     session: LyricsSession,
     track: TrackMetadata,

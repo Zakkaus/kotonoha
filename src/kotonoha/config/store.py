@@ -10,13 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import os
-import stat
 import tempfile
 from pathlib import Path
-from typing import TYPE_CHECKING, Final
+from typing import Final
 
-if TYPE_CHECKING:
-    from .config import Config
+from ..file_access import BoundedRegularFileReader, RegularFileReadFailure
+from .models import Config
 
 logger = logging.getLogger(__name__)
 
@@ -41,47 +40,6 @@ def config_path() -> Path:
     return config_dir() / CONFIG_FILE_NAME
 
 
-def _read_config_bytes(target: Path) -> bytes | None:
-    """Read one ordinary configuration file without blocking or over-reading.
-
-    FIFOs and other non-regular files are rejected before any content is read.
-    Missing, inaccessible, or otherwise unusable files return ``None`` so the
-    application can start with defaults.
-    """
-    try:
-        descriptor = os.open(target, os.O_RDONLY | os.O_NONBLOCK)
-    except FileNotFoundError:
-        return None
-    except OSError as exc:
-        logger.warning("Could not read config %s: %s", target, exc)
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            logger.warning("Config %s is not an ordinary file; using defaults", target)
-            return None
-        if os.fstat(descriptor).st_size > MAX_CONFIG_BYTES:
-            logger.warning("Config %s exceeds %d bytes; using defaults", target, MAX_CONFIG_BYTES)
-            return None
-        chunks: list[bytes] = []
-        remaining = MAX_CONFIG_BYTES + 1
-        while remaining > 0:
-            chunk = os.read(descriptor, min(remaining, 1 << 16))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            remaining -= len(chunk)
-        data = b"".join(chunks)
-        if len(data) > MAX_CONFIG_BYTES:
-            logger.warning("Config %s exceeds %d bytes; using defaults", target, MAX_CONFIG_BYTES)
-            return None
-    except OSError as exc:
-        logger.warning("Could not read config %s: %s", target, exc)
-        return None
-    finally:
-        os.close(descriptor)
-    return data
-
-
 class ConfigStore:
     """Load and save one typed configuration model at an explicit path.
 
@@ -92,12 +50,16 @@ class ConfigStore:
     def __init__(self, config_type: type[Config], path: Path | None = None) -> None:
         self._config_type = config_type
         self._path = path
+        self._reader = BoundedRegularFileReader(MAX_CONFIG_BYTES)
 
     def load(self) -> Config:
         """Return stored settings, or a fresh default model on read failure."""
         target = config_path() if self._path is None else self._path
-        data = _read_config_bytes(target)
+        result = self._reader.read(target)
+        data = result.data
         if data is None:
+            if result.failure is not RegularFileReadFailure.MISSING:
+                logger.warning("Could not read config %s: %s", target, result.failure)
             return self._config_type()
         try:
             raw = data.decode("utf-8")
@@ -142,6 +104,16 @@ class ConfigStore:
             raise
 
 
+def load_config(path: Path | None = None) -> Config:
+    """Load configuration through the typed file-storage boundary."""
+    return ConfigStore(Config, path).load()
+
+
+def save_config(config: Config, path: Path | None = None) -> None:
+    """Save configuration through the typed file-storage boundary."""
+    ConfigStore(Config, path).save(config)
+
+
 __all__ = [
     "APP_DIR_NAME",
     "CONFIG_FILE_NAME",
@@ -149,4 +121,6 @@ __all__ = [
     "MAX_CONFIG_BYTES",
     "config_dir",
     "config_path",
+    "load_config",
+    "save_config",
 ]

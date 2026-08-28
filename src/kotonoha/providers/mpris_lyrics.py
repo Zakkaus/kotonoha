@@ -6,6 +6,7 @@ import asyncio
 import logging
 
 from ..app.source_contracts import MprisSourcePort
+from ..async_task import create_owned_task, wait_for_owned
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..display.contracts import MprisDisplayPort
 from ..display.models import ResolutionState
@@ -31,22 +32,21 @@ class MprisLyricsCoordinator:
         *,
         ownership: MprisSourcePort,
         resolver: ResolverPort,
-        playback_adapter: MprisPlaybackAdapter | None = None,
+        playback_adapter: MprisPlaybackAdapter,
         lyrics_sources: list[str] | None = None,
     ) -> None:
         """Create the coordinator from application-owned dependencies."""
-        adapter = playback_adapter if playback_adapter is not None else MprisPlaybackAdapter()
         self._ownership = ownership
         self._resolution = MprisResolutionSession(
             ownership=ownership,
             resolver=resolver,
-            playback_adapter=adapter,
+            playback_adapter=playback_adapter,
             lyrics_sources=lyrics_sources if lyrics_sources is not None else list(DEFAULT_LYRICS_SOURCES),
         )
         self._display_binding = MprisDisplayBinding(
             display,
             ownership=ownership,
-            playback_adapter=adapter,
+            playback_adapter=playback_adapter,
         )
         self._load_task: asyncio.Task[None] | None = None
         self._load_tasks: set[asyncio.Task[None]] = set()
@@ -76,14 +76,25 @@ class MprisLyricsCoordinator:
 
     async def stop(self) -> None:
         """Cancel generation work, close resources, and reset display ownership."""
-        tasks = tuple(self._load_tasks)
-        for task in tasks:
-            task.cancel()
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
-        self._load_task = None
-        await self._resolution.stop()
-        self._reset()
+        cancellation_requested = False
+        try:
+            tasks = tuple(self._load_tasks)
+            for task in tasks:
+                task.cancel()
+            if tasks:
+                joined = asyncio.gather(*tasks, return_exceptions=True)
+                cancellation_requested = await wait_for_owned(joined)
+            self._load_tasks.clear()
+            self._load_task = None
+            resolution_stop = create_owned_task(
+                self._resolution.stop(),
+                name="kotonoha-mpris-resolution-stop",
+            )
+            cancellation_requested |= await wait_for_owned(resolution_stop)
+        finally:
+            self._reset()
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def set_lyrics_sources(self, sources: list[str]) -> None:
         """Replace the ordered source plan and reload the current track."""
@@ -262,7 +273,7 @@ class MprisLyricsCoordinator:
             commit.info.track_id,
             ",".join(self._resolution.lyrics_sources) or "-",
         )
-        task = asyncio.create_task(self._load_song(commit), name="kotonoha-mpris-lyrics")
+        task = create_owned_task(self._load_song(commit), name="kotonoha-mpris-lyrics")
         self._load_task = task
         self._load_tasks.add(task)
         task.add_done_callback(self._load_finished)

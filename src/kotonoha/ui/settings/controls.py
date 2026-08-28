@@ -16,7 +16,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
 )
 
-from .settings_widgets import IconStrip
+from .widgets import IconStrip
 
 IconPicker = tuple[IconStrip, dict[str, QListWidgetItem]]
 OpacityKey = Literal["opacity", "frost_opacity"]

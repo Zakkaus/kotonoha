@@ -1,9 +1,10 @@
 import pytest
 
-from kotonoha.display.models import DisplayState
+from kotonoha.display.models import DisplayState, ResolutionState
+from kotonoha.display.presentation import DisplayEngine
+from kotonoha.display.rules import find_current_index
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
-from kotonoha.lyrics.select import build_frame, find_current_index, song_timing
-from kotonoha.playback.models import TrackIdentity
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 
 def _line(i, start, end, text, words=()):
@@ -31,7 +32,20 @@ def build_frame_case(lines, position, *, provider, song_id, title, artist, is_pl
     track = None
     if title is not None or artist is not None:
         track = TrackIdentity("test", "player", stable_id=song_id, title=title or "", artist=artist or "")
-    return build_frame(document, position, track=track, is_playing=is_playing)
+    playback = PlaybackObservation(
+        "test",
+        "player",
+        track,
+        PlaybackStatus.PLAYING if is_playing else PlaybackStatus.PAUSED,
+        position,
+        duration_s,
+        0.0,
+    )
+    return DisplayEngine().project_observation(
+        playback,
+        document,
+        ResolutionState.from_facts(playback, document),
+    )
 
 
 def test_find_current_index():
@@ -67,12 +81,6 @@ def test_build_frame_empty_lines():
     assert snap.state is DisplayState.LYRICS_NOT_FOUND
     assert snap.current is None
     assert snap.current_time == 3.0
-
-
-def test_song_timing_word_vs_line():
-    assert song_timing(LINES) == "Line"
-    worded = [_line(0, 0.0, 1.0, "hi", words=(LyricWord(0.0, 0.5, "hi"),))]
-    assert song_timing(worded) == "Word"
 
 
 def test_word_karaoke_flag_via_snapshot():

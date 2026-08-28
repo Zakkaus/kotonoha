@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import math
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from ..lyrics.artist_grammar import performing_artist
 from ..lyrics.match import TrackMetadata
-from ..lyrics.titles import clean_title, performing_artist, recover_artist
+from ..lyrics.player_title_grammar import clean_player_title
+from ..lyrics.title_grammar import recover_artist
+from ..playback.identity import PlaybackTrackKey, TrackMetadataKey
 
 _MAX_TRACK_LENGTH_S = 24 * 60 * 60
 _LYRICS_LOOKUP_MAX_LENGTH_S = 2 * 60 * 60
@@ -43,38 +45,6 @@ _NON_SONG_TITLE_MARKERS = (
     "單曲循環",
     "单曲循环",
 )
-
-# Chrome's own MPRIS bridge prefixes the tab's unread-notification count and
-# appends the site name to the page title, e.g. "(3) Song - YouTube". Both are
-# player noise, not part of the song: the count churns the identity key (forcing
-# needless re-resolution) and the suffix wrecks title matching. Strip them so a
-# browser-sourced title lines up with the clean one Plasma Browser Integration
-# reports for the same track.
-_TITLE_BADGE_PREFIX = re.compile(r"^\(\d+\)\s+")
-# Bilibili publishes no MediaSession artist at all, so even the Plasma bridge falls
-# back to the page title and the site name rode into every query:
-# "傲寒同学-不谓侠_哔哩哔哩_bilibili" was searched with 哔哩哔哩 and bilibili still
-# attached. The suffix repeats there, hence the trailing +.
-_TITLE_SITE_SUFFIX = re.compile(
-    r"(?:\s*[-|–—_]\s*(?:YouTube(?:\s+Music)?|哔哩哔哩|嗶哩嗶哩|bilibili))+\s*$", re.IGNORECASE
-)
-
-
-def _clean_title(title: str, artist: str = "") -> str:
-    cleaned = _TITLE_BADGE_PREFIX.sub("", title)
-    cleaned = _TITLE_SITE_SUFFIX.sub("", cleaned)
-    if artist and artist.casefold() in cleaned.casefold():
-        artist_start = cleaned.casefold().find(artist.casefold())
-        if artist_start > 0:
-            before = cleaned[:artist_start].rstrip()
-            remainder = cleaned[artist_start + len(artist) :]
-            if remainder.lstrip().startswith(("-", "–", "—", "－")):
-                trailing = remainder.lstrip(" \t\r\n-–—－")
-                cleaned = artist if before.endswith(("-", "–", "—", "－")) and trailing else trailing
-    cleaned = clean_title(cleaned, artist)
-    # Never strip a title down to nothing (a page literally titled "YouTube").
-    return cleaned.strip() or title.strip()
-
 
 def _as_text(value: object) -> str:
     if isinstance(value, str):
@@ -197,8 +167,9 @@ class TrackInfo:
         return TrackMetadata(self.title, self.artist, self.album, self.length_s)
 
     @property
-    def identity_key(self) -> tuple[str, str, str, str]:
-        return self.track_id, self.title, self.artist, self.album
+    def identity_key(self) -> TrackMetadataKey:
+        """Return the shared metadata identity used by MPRIS stabilization."""
+        return TrackMetadataKey(self.track_id or None, self.title, self.artist, self.album)
 
 
 def parse_metadata(raw: Mapping[str, object]) -> TrackInfo:
@@ -206,7 +177,7 @@ def parse_metadata(raw: Mapping[str, object]) -> TrackInfo:
     reported = _as_text(raw.get("xesam:title"))
     artist = recover_artist(reported, performing_artist(_as_text(raw.get("xesam:artist"))))
     return TrackInfo(
-        title=_clean_title(reported, artist),
+        title=clean_player_title(reported, artist),
         artist=artist,
         album=_as_text(raw.get("xesam:album")),
         length_s=length_s,
@@ -252,11 +223,11 @@ class TrackCommit:
 
 class TrackStabilizer:
     def __init__(self) -> None:
-        self._candidate_key: tuple[object, ...] | None = None
+        self._candidate_key: PlaybackTrackKey | None = None
         self._candidate: TrackObservation | None = None
         self._candidate_start: float | None = None
         self._changed_at = 0.0
-        self._committed_key: tuple[object, ...] | None = None
+        self._committed_key: PlaybackTrackKey | None = None
         self._generation = 0
         self._transitioning = False
 
@@ -268,7 +239,7 @@ class TrackStabilizer:
             self._candidate = None
             return None
 
-        key = (observation.player_name, *info.identity_key)
+        key = PlaybackTrackKey.from_mpris(observation.player_name, info.identity_key)
         if key != self._candidate_key:
             self._candidate_key = key
             self._candidate = observation
@@ -279,8 +250,8 @@ class TrackStabilizer:
 
         settle_seconds = 0.35 if info.artist else 0.8
         if self._committed_key is not None:
-            previous_title = self._committed_key[2]
-            previous_artist = self._committed_key[3]
+            previous_title = self._committed_key.title
+            previous_artist = self._committed_key.artist
             if info.title != previous_title and info.artist and info.artist == previous_artist:
                 settle_seconds = max(settle_seconds, 0.8)
         if observation.observed_at - self._changed_at < settle_seconds:

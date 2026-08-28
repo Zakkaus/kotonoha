@@ -85,8 +85,8 @@ class OverlayPositionController:
 
     @active_screen.setter
     def active_screen(self, value: ScreenLike | None) -> None:
-        # Kept as a narrow test/compatibility seam. Production code commits this
-        # value through _commit_position or a successful surface activation.
+        # Test harnesses inject an active output directly; production code commits
+        # this value through _commit_position or successful surface activation.
         self._active_screen = value
 
     @property

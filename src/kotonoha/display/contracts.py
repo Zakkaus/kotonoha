@@ -9,6 +9,12 @@ from ..playback.models import PlaybackObservation, PlaybackStatus
 from .models import DisplayFrame, ResolutionState
 
 
+class DisplayPublisher(Protocol):
+    """Publish canonical frames without exposing the presentation toolkit."""
+
+    def publish(self, frame: DisplayFrame) -> bool: ...
+
+
 class AdapterDisplayPort(Protocol):
     """Display operations needed by the canonical adapter receiver."""
 

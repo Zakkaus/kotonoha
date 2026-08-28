@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from typing import Literal
 
 from ..config import DEFAULT_DISPLAY_SOURCES, VALID_DISPLAY_SOURCES
+from ..lyrics.live_contracts import LiveSourceMatch
 from ..lyrics.match import TrackMetadata
 from ..lyrics.models import LyricsDocument
 from ..playback.models import PlaybackObservation, PlaybackStatus
 from .source_contracts import (
     LiveSourceCandidate,
-    LiveSourceMatch,
     LiveSourceTiming,
     SourceClientId,
 )
@@ -287,7 +287,6 @@ class SourceOwnershipCoordinator:
 
 __all__ = [
     "LiveSourceCandidate",
-    "LiveSourceMatch",
     "LiveSourceTiming",
     "SourceClientId",
     "SourceOwnershipCoordinator",

@@ -1,7 +1,7 @@
+from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.config import Config
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
-from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 
@@ -163,6 +163,10 @@ def test_display_sources_cleaned_and_roundtripped():
 
 def test_lyrics_sources_default():
     assert Config().lyrics_sources == ["netease", "lrclib", "kugou", "cider"]
+
+
+def test_best_lyrics_matching_is_enabled_by_default():
+    assert Config().prefer_best_lyrics is True
 
 
 def test_lyrics_sources_cleaned():

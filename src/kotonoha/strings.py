@@ -1,9 +1,8 @@
 """UI internationalization (menus, settings).
 
 A lightweight string table keyed by a stable id, with simplified Chinese,
-traditional Chinese, Japanese and English. The active language follows the
-config (``ui_language``, default "auto" -> system locale). Call ``set_language``
-once at startup, then ``t(key)`` everywhere a UI string is needed.
+traditional Chinese, Japanese and English. A :class:`Translator` owns the
+active language for one composed UI graph; it is deliberately not process-global.
 """
 
 from __future__ import annotations
@@ -21,7 +20,6 @@ UI_LANGUAGES: tuple[tuple[str, str], ...] = (
 
 _SUPPORTED = ("en", "zh-Hans", "zh-Hant", "ja")
 _FALLBACK = "en"
-_current = _FALLBACK
 
 # key -> {lang: text}. English is the fallback for any missing entry.
 STRINGS: dict[str, dict[str, str]] = {
@@ -203,10 +201,10 @@ STRINGS: dict[str, dict[str, str]] = {
         "ja": "Cider API トークン",
     },
     "set.cider_token_hint": {
-        "en": "Optional. Stored in the system keyring. Leave empty when Cider does not require authentication.",
-        "zh-Hans": "可选。Token 保存在系统密钥环中；Cider 未启用认证时留空即可。",
-        "zh-Hant": "可選。Token 保存在系統金鑰環中；Cider 未啟用驗證時留空即可。",
-        "ja": "任意。システムのキーリングに保存されます。Cider の認証が不要な場合は空欄にします。",
+        "en": "Optional. Stored in config.json. Leave empty when Cider does not require authentication.",
+        "zh-Hans": "可选。Token 保存在 config.json 中；Cider 未启用认证时留空即可。",
+        "zh-Hant": "可選。Token 保存在 config.json 中；Cider 未啟用驗證時留空即可。",
+        "ja": "任意。config.json に保存されます。Cider の認証が不要な場合は空欄にします。",
     },
     "set.player": {
         "en": "MPRIS player", "zh-Hans": "MPRIS 播放器", "zh-Hant": "MPRIS 播放器", "ja": "MPRIS プレーヤー",
@@ -250,12 +248,12 @@ STRINGS: dict[str, dict[str, str]] = {
     },
     "set.prefer_best_hint": {
         "en": "Query the enabled sources at the same time and keep the highest-confidence "
-              "match (ties keep your order). Off = stop at the first source that has lyrics.",
-        "zh-Hans": "同时查询已启用的来源，保留匹配度最高的一个（相同则按你的排序）。"
+              "match (ties keep your order). Enabled by default. Off = stop at the first source that has lyrics.",
+        "zh-Hans": "默认开启：同时查询已启用的来源，保留匹配度最高的一个（相同则按你的排序）。"
                    "关闭则按顺序取第一个有歌词的来源。",
-        "zh-Hant": "同時查詢已啟用的來源，保留匹配度最高的一個（相同則按你的排序）。"
+        "zh-Hant": "預設開啟：同時查詢已啟用的來源，保留匹配度最高的一個（相同則按你的排序）。"
                    "關閉則按順序取第一個有歌詞的來源。",
-        "ja": "有効なソースを同時に照会し、最も確度の高い一致を採用（同点は指定順）。"
+        "ja": "デフォルトで有効。有効なソースを同時に照会し、最も確度の高い一致を採用（同点は指定順）。"
               "オフにすると最初に歌詞が見つかったソースで停止。",
     },
     "set.fuzzy_match": {
@@ -375,17 +373,24 @@ def resolve_ui_language(value: str | None) -> str:
     return lang if lang in _SUPPORTED else _FALLBACK
 
 
-def set_language(value: str | None) -> None:
-    global _current
-    _current = resolve_ui_language(value)
+class Translator:
+    """Translate UI keys using language state owned by one UI composition."""
 
+    def __init__(self, language: str | None = None) -> None:
+        self._language = resolve_ui_language(language)
 
-def current_language() -> str:
-    return _current
+    @property
+    def language(self) -> str:
+        """Return the currently selected normalized language tag."""
+        return self._language
 
+    def set_language(self, value: str | None) -> None:
+        """Replace the language used by subsequent translations."""
+        self._language = resolve_ui_language(value)
 
-def t(key: str) -> str:
-    entry = STRINGS.get(key)
-    if entry is None:
-        return key
-    return entry.get(_current) or entry.get(_FALLBACK) or key
+    def text(self, key: str) -> str:
+        """Return a localized string, falling back to English or the key."""
+        entry = STRINGS.get(key)
+        if entry is None:
+            return key
+        return entry.get(self._language) or entry.get(_FALLBACK) or key

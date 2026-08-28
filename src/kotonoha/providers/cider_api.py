@@ -3,18 +3,18 @@
 from __future__ import annotations
 
 import asyncio
-import contextlib
 import logging
 import time
 from typing import Protocol
 
 from ..app.source_contracts import SourcePublicationPort
+from ..async_task import create_owned_task, wait_for_owned
 from ..display.contracts import CiderDisplayPort
 from ..display.models import ResolutionState
 from ..lyrics.cider_api import CiderLyricsPayloadError
 from ..lyrics.models import LyricsDocument
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
-from .cider_client import CiderApiClient, CiderApiError, CiderLyricsNotFound
+from .cider_client import CiderApiError, CiderLyricsNotFound
 
 logger = logging.getLogger(__name__)
 
@@ -54,7 +54,7 @@ class CiderApiProvider:
         *,
         display: CiderDisplayPort,
         ownership: SourcePublicationPort,
-        client: CiderApiPort | None = None,
+        client: CiderApiPort,
         translation_language: str | None = None,
         poll_interval: float = CIDER_API_POLL_INTERVAL,
         enabled: bool = True,
@@ -63,7 +63,7 @@ class CiderApiProvider:
             raise ValueError("Cider API poll interval must be positive")
         self._display = display
         self._ownership = ownership
-        self._client = client if client is not None else CiderApiClient()
+        self._client = client
         self._translation_language = translation_language
         self._poll_interval = poll_interval
         self._enabled = enabled
@@ -78,21 +78,58 @@ class CiderApiProvider:
 
     async def start(self) -> None:
         """Start the owned HTTP session and low-frequency polling task."""
-        if self._task is not None and not self._task.done():
+        task = self._task
+        if task is not None:
+            if not task.done():
+                return
+            self._task = None
+        try:
+            await self._client.start()
+            task = create_owned_task(self._run(), name="kotonoha-cider-playback")
+        except asyncio.CancelledError:
+            await self._close_failed_start_client()
+            raise
+        except (CiderApiError, OSError, TimeoutError, RuntimeError, TypeError, ValueError):
+            await self._close_failed_start_client()
+            raise
+        self._task = task
+        task.add_done_callback(self._playback_task_finished)
+
+    async def _close_failed_start_client(self) -> None:
+        """Release a client acquired by a failed provider startup."""
+        try:
+            await self._close_client()
+        except (CiderApiError, OSError, TimeoutError, RuntimeError, ValueError) as exc:
+            logger.warning("Could not close Cider client after startup failure: %s", exc)
+
+    def _playback_task_finished(self, task: asyncio.Task[None]) -> None:
+        """Observe unexpected polling failures when no later stop occurs."""
+        if task.cancelled():
             return
-        await self._client.start()
-        self._task = asyncio.create_task(self._run())
+        error = task.exception()
+        if error is not None:
+            logger.error("Cider playback task failed: %s", error)
 
     async def stop(self) -> None:
         """Cancel polling and lyric resolution before closing the HTTP session."""
-        if self._task is not None:
-            self._task.cancel()
-            with contextlib.suppress(asyncio.CancelledError):
-                await self._task
-            self._task = None
-        await self._cancel_lyrics()
-        self._clear_content(publish=True)
-        await self._client.close()
+        task = self._task
+        self._task = None
+        cancellation_requested = False
+        try:
+            if task is not None:
+                if not task.done():
+                    task.cancel()
+                cancellation_requested = await wait_for_owned(task)
+        finally:
+            try:
+                cancellation_requested |= await self._cancel_lyrics()
+            finally:
+                try:
+                    self._clear_content(publish=True)
+                finally:
+                    cancellation_requested |= await self._close_client()
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def set_enabled(self, enabled: bool) -> None:
         """Enable or disable Cider as a configured lyric source."""
@@ -148,7 +185,9 @@ class CiderApiProvider:
         )
         if track_ref != previous_ref:
             self._generation += 1
-            await self._cancel_lyrics()
+            cancellation_requested = await self._cancel_lyrics()
+            if cancellation_requested:
+                raise asyncio.CancelledError
             self._document = None
             self._attempted_track_ref = None
             self._last_log_publish_key = None
@@ -270,15 +309,25 @@ class CiderApiProvider:
         if accepted:
             self._display.publish_resolution(observation, document, resolution)
 
-    async def _cancel_lyrics(self) -> None:
+    async def _cancel_lyrics(self) -> bool:
         self._cancel_current_lyrics()
         tasks = tuple(self._lyrics_tasks)
-        if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+        if not tasks:
+            return False
+        joined = asyncio.gather(*tasks, return_exceptions=True)
+        return await wait_for_owned(joined)
+
+    async def _close_client(self) -> bool:
+        """Close the client through an owned task and preserve caller cancellation."""
+        close_task = create_owned_task(self._client.close(), name="kotonoha-cider-close")
+        return await wait_for_owned(close_task)
 
     def _schedule_lyrics(self, observation: PlaybackObservation, generation: int) -> None:
         """Create a lyric task and retain it until its result is inspected."""
-        task = asyncio.create_task(self._load_lyrics(observation, generation))
+        task = create_owned_task(
+            self._load_lyrics(observation, generation),
+            name="kotonoha-cider-lyrics",
+        )
         self._lyrics_task = task
         self._lyrics_tasks.add(task)
         task.add_done_callback(self._lyrics_finished)

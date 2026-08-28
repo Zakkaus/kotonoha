@@ -10,7 +10,7 @@
 - Cider 是播放器/传输适配器，不是最终歌词来源；Cider 响应中的 source.provider 会在边界层归一化为 source_id，并保留 source_name。
 - 本地缓存属于每一个网络 provider 的内部阶段，不是单独的 provider。
 - 不保存 MPRIS player、track ID、搜索词到 provider 歌曲的持久映射。
-- `overlay/`、`karaoke_label.py`、`karaoke.py`、`native.py` 和 layer-shell bridge 保持既有视觉/平台行为；外部插件使用 `kotonoha.adapter` v1。
+- `ui/overlay/`、`display/karaoke.py`、`platform/native.py` 和 layer-shell bridge 保持既有视觉/平台行为；外部插件使用 `kotonoha.adapter` v1。
 
 ## 2. 数据流
 
@@ -62,6 +62,8 @@ netease -> lrclib -> cider
 5. 当前可匹配的 Cider 实时快照
 
 如果调整为 `lrclib -> cider -> netease`，顺序相应变为：本地 lrclib、网络 lrclib、Cider、本地网易云、网络网易云。缓存开关关闭时只跳过网络 provider 的缓存读写，不改变 provider 顺序。
+
+`prefer_best_lyrics` 默认开启。开启时会并行评估仍可能胜出的网络来源，按匹配置信度选择结果，配置顺序只作为同置信度时的 tie-break；关闭时严格按配置顺序遇到第一个有效结果即停止。Settings 同时提供这个开关和可拖动的来源顺序，二者都会持久化。
 
 网络 provider 正常返回无结果时记录 30 秒内存 miss，减少切歌抖动造成的重复请求。网络异常不记录 miss。相同歌曲、相同来源顺序的并发请求共用一个 in-flight task。
 
@@ -155,16 +157,24 @@ src/kotonoha/providers/mpris_resolution.py MPRIS 歌词解析会话与 resolver 
 src/kotonoha/providers/mpris_display.py    MPRIS sample 到 display/timeline 的绑定
 src/kotonoha/providers/mpris.py            MPRIS facade 与配置转发
 src/kotonoha/providers/mpris_lyrics.py     MPRIS lyric generation、ownership 与 workflow 编排
-src/kotonoha/providers/cider_client.py    Cider HTTP session、响应边界和可选 token
-src/kotonoha/providers/cider_api.py       Cider 低频校准、按 track generation 的歌词任务
-src/kotonoha/lyrics/ownership.py       live source facts 与 source 绑定
-src/kotonoha/lyrics/match.py           归一化、版本冲突、置信度
+src/kotonoha/providers/cider_client.py     Cider HTTP session、响应边界和可选 token
+src/kotonoha/providers/cider_api.py        Cider 低频校准、按 track generation 的歌词任务
+src/kotonoha/app/source_contracts.py   live source facts 与 source 绑定
+src/kotonoha/app/source_gate.py        source priority 与 ownership arbitration
+src/kotonoha/lyrics/match.py           MatchEvidence、置信度与候选排序
+src/kotonoha/lyrics/title_grammar.py   标题归一化、版本标签和结构拆分
+src/kotonoha/lyrics/artist_grammar.py  艺术家 token、主表演者和变体
+src/kotonoha/lyrics/title_queries.py   provider 查询变体
+src/kotonoha/lyrics/player_title_grammar.py 播放器标题装饰清理
 src/kotonoha/lyrics/artifact.py        provider-neutral artifact
 src/kotonoha/lyrics/cache.py           provider-scoped SQLite 缓存
 src/kotonoha/lyrics/sources.py         local/exact/network source contracts
 src/kotonoha/lyrics/resolver.py        source policy、缓存与 in-flight 去重
 src/kotonoha/lyrics/netease.py         网易云搜索与 YRC/LRC 解析
 src/kotonoha/lyrics/lrclib.py          lrclib exact/search 与排序
+src/kotonoha/app/display_coordinator.py DisplayFrame projection、clock tick 与 publisher lifecycle
+src/kotonoha/ui/overlay/state.py        Qt frame state 与 signal deduplication
+src/kotonoha/ui/overlay/publisher.py    DisplayFrame 到 Qt state 的唯一 publisher
 ```
 
-所有网络与磁盘 I/O 保持异步边界；SQLite 操作通过工作线程执行。Qt widget 与 layer-shell 操作仍只在 UI 线程发生。
+所有网络与磁盘 I/O 保持异步边界；SQLite 和文件操作通过显式注入的工作线程执行。Qt widget 与 layer-shell 操作仍只在 UI 线程发生。

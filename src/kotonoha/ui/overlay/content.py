@@ -7,12 +7,13 @@ from collections.abc import Callable
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QWidget
 
-from ...config import TRACK_OFFSET_STEP_MS, Config, clamp_track_offset, track_identity_key
+from ...config import TRACK_OFFSET_STEP_MS, Config, clamp_track_offset
 from ...display.models import EMPTY_FRAME, DisplayFrame, DisplayState
 from ...lyrics.models import LyricLine
-from ...state import LyricsState
-from ...strings import t
+from ...playback.identity import track_identity_key
+from ...strings import Translator
 from .karaoke_label import KaraokeLabel
+from .state import LyricsState
 
 INTERLUDE_SCALE = 0.62
 
@@ -33,6 +34,7 @@ class OverlayContentController:
         timer_parent: QWidget,
         on_input_region_refresh: Callable[[], None],
         on_offset_changed: Callable[[str, int], None],
+        translator: Translator,
     ) -> None:
         """Create a content owner around the already-built lyric widgets."""
         self._state = state
@@ -44,6 +46,7 @@ class OverlayContentController:
         self._container = container
         self._on_input_region_refresh = on_input_region_refresh
         self._on_offset_changed = on_offset_changed
+        self._translator = translator
         self._frame = EMPTY_FRAME
         self._track_key = ""
         self._interlude_active = False
@@ -55,11 +58,6 @@ class OverlayContentController:
     def frame(self) -> DisplayFrame:
         """Return the last frame accepted for presentation."""
         return self._frame
-
-    @property
-    def track_key(self) -> str:
-        """Return the normalized key used by track timing offsets."""
-        return self._track_key
 
     def update_config(self, config: Config) -> None:
         """Use a newly applied config for frame projection and offset actions."""
@@ -126,7 +124,15 @@ class OverlayContentController:
 
     def show_offset_feedback(self, offset_ms: int) -> None:
         """Show the applied offset briefly without changing the canonical frame."""
-        line = LyricLine(0, "offset-feedback", 0.0, 1e9, t("overlay.offset.value").format(offset=offset_ms), "", ())
+        line = LyricLine(
+            0,
+            "offset-feedback",
+            0.0,
+            1e9,
+            self._translator.text("overlay.offset.value").format(offset=offset_ms),
+            "",
+            (),
+        )
         self._current.set_line(line, False)
         self._feedback_timer.start(1200)
 
@@ -185,7 +191,7 @@ class OverlayContentController:
         self._current.set_progress(None, None)
         title_line = frame.fallback
         if title_line is None:
-            title_line = LyricLine(0, "title", 0.0, 1e9, t("overlay.idle"), "", ())
+            title_line = LyricLine(0, "title", 0.0, 1e9, self._translator.text("overlay.idle"), "", ())
         self._current.set_line(title_line, False)
         self._current.set_media_time(None)
 

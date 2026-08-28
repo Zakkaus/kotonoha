@@ -14,7 +14,7 @@ import aiohttp
 from .artifact import LyricsArtifact
 from .http import LyricsSession
 from .lrc_parser import parse_lrc
-from .match import TrackMetadata
+from .match import MatchConfidence, TrackMetadata
 from .models import LyricLine
 from .payload import read_capped
 from .translation import TranslationMerger
@@ -122,6 +122,29 @@ async def fetch_payload_for_song_id(session: LyricsSession, song_id: str) -> dic
     """Fetch the lyric payload for a numeric song id; empty when it resolves to nothing."""
     song_mid = await fetch_song_mid(session, song_id)
     return await fetch_payload(session, song_mid) if song_mid is not None else {}
+
+
+async def fetch_artifact_for_song_id(
+    session: LyricsSession,
+    track: TrackMetadata,
+    song_id: str,
+) -> LyricsArtifact | None:
+    """Fetch an exact QQ Music song id selected by a player hint."""
+    payload = await fetch_payload_for_song_id(session, song_id)
+    lines = parse_payload(payload)
+    if not lines:
+        return None
+    return LyricsArtifact(
+        provider="qqmusic",
+        provider_song_id=song_id,
+        title=track.title,
+        artist=track.artist,
+        album=track.album,
+        duration_s=track.duration_s,
+        payload=payload,
+        lines=lines,
+        confidence=MatchConfidence.HIGH,
+    )
 
 
 async def fetch_lyrics(session: LyricsSession, song_mid: str) -> list[LyricLine]:

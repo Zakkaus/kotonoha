@@ -7,57 +7,44 @@ import os
 import signal
 import sys
 import tempfile
-from typing import Any, cast
+from collections.abc import Callable
+from functools import partial
+from typing import TYPE_CHECKING, Any, cast
 
-from .config import Config, clamp_port
+if TYPE_CHECKING:
+    from PyQt6.QtCore import QLockFile
+    from PyQt6.QtWidgets import QApplication
+
+    from .app.application_controller import AppController
 
 # Guard against accidental PyQt5 import conflicts before importing PyQt6.
 cast(dict[str, Any], sys.modules)["PyQt5"] = None
 os.environ.setdefault("QT_API", "pyqt6")
 
-
-def _build_app_objects(app, config):
-    """Wire state, receiver, overlay and tray together. Returns the controller."""
-    from .app.application_controller import AppController
-    from .app.config_service import ConfigService
-    from .app.restart import QProcessRestartLauncher
-    from .async_worker import BlockingCallRunner
-    from .config_store import ConfigStore
-
-    config = _apply_cli_port(config, app.property("cli_port"))
-    config_service = ConfigService(
-        config,
-        writer=ConfigStore(Config),
-        worker=BlockingCallRunner("kotonoha-config"),
-    )
-    return AppController(
-        app,
-        config_service,
-        restart_launcher=QProcessRestartLauncher(),
-    )
+logger = logging.getLogger(__name__)
 
 
-def _apply_cli_port(config: Config, cli_port: object) -> Config:
-    """Apply the process-level port override before creating the config owner."""
-    normalized = config.clamped()
-    if not isinstance(cli_port, int) or isinstance(cli_port, bool):
-        return normalized
-    clamped = clamp_port(cli_port)
-    if clamped != cli_port:
-        logging.getLogger(__name__).warning(
-            "CLI --port %d is out of range 1..65535; using %d", cli_port, clamped
-        )
-    normalized.port = clamped
-    return normalized
+async def _build_app_objects(app: QApplication, cli_port: int | None = None) -> AppController:
+    """Build the application graph and return its lifecycle owner."""
+    from .app.composition import ApplicationComposition
+
+    composition = await ApplicationComposition.production(app, cli_port=cli_port)
+    return composition.build()
 
 
-async def _run(app) -> None:
-    from .config import load_config
+def _read_cli_port(app: QApplication) -> int | None:
+    """Read the typed CLI override from the Qt application property boundary."""
+    value = app.property("cli_port")
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    return None
 
+
+async def _run(app: QApplication) -> None:
     close_event = asyncio.Event()
     app.aboutToQuit.connect(close_event.set)
 
-    controller = _build_app_objects(app, load_config())
+    controller = await _build_app_objects(app, _read_cli_port(app))
     try:
         await controller.start()
         await close_event.wait()
@@ -65,7 +52,7 @@ async def _run(app) -> None:
         await controller.stop()
 
 
-async def _cancel_pending(loop) -> None:
+async def _cancel_pending(loop: asyncio.AbstractEventLoop) -> None:
     current = asyncio.current_task(loop=loop)
     pending = [t for t in asyncio.all_tasks(loop) if t is not current and not t.done()]
     for task in pending:
@@ -74,7 +61,22 @@ async def _cancel_pending(loop) -> None:
         await asyncio.gather(*pending, return_exceptions=True)
 
 
-def _single_instance_lock(path: str | None = None):
+def _main_task_finished(task: asyncio.Task[None], quit_application: Callable[[], None]) -> None:
+    """Report a failed application task and stop the Qt loop instead of hanging."""
+    if task.cancelled():
+        return
+    error = task.exception()
+    if error is None:
+        return
+    logger.error(
+        "Kotonoha application task failed: %s",
+        error,
+        exc_info=(type(error), error, error.__traceback__),
+    )
+    quit_application()
+
+
+def _single_instance_lock(path: str | None = None) -> QLockFile | None:
     """Return a held QLockFile, or None if another Kotonoha instance owns it.
 
     Prevents the stacked tray icons / duplicate overlays from launching it twice."""
@@ -106,7 +108,7 @@ def entry_point() -> int:
     # Single instance: a second launch would just stack another tray icon + overlay.
     instance_lock = _single_instance_lock()  # noqa: F841 - held for the process lifetime
     if instance_lock is None:
-        logging.getLogger(__name__).warning("Kotonoha is already running; exiting.")
+        logger.warning("Kotonoha is already running; exiting.")
         return 0
 
     # Pin the device pixel ratio to 1 so the layer-shell surface's pixel geometry
@@ -133,13 +135,16 @@ def entry_point() -> int:
 
     loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
-    main_task = loop.create_task(_run(app))  # noqa: F841
+    main_task = loop.create_task(_run(app))
+    main_task.add_done_callback(partial(_main_task_finished, quit_application=app.quit))
 
     try:
         loop.run_forever()
     finally:
         loop.run_until_complete(_cancel_pending(loop))
         loop.close()
+    if main_task.cancelled() or main_task.exception() is not None:
+        return 1
     return 0
 
 

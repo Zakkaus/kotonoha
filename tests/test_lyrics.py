@@ -5,6 +5,7 @@ import pytest
 from fixtures.mpris_titles import MPRIS_TITLE_CASES
 
 from kotonoha.lyrics import kugou
+from kotonoha.lyrics.artist_grammar import artist_tokens
 from kotonoha.lyrics.http import LyricsSession
 from kotonoha.lyrics.match import (
     Candidate,
@@ -17,14 +18,8 @@ from kotonoha.lyrics.match import (
     query_variants,
     ranked_matches,
 )
-from kotonoha.lyrics.titles import (
-    artist_tokens,
-    clean_title,
-    noisy_title_queries,
-    normalize,
-    recover_artist,
-    split_title,
-)
+from kotonoha.lyrics.title_grammar import clean_title, normalize, recover_artist, split_title
+from kotonoha.lyrics.title_queries import noisy_title_queries
 
 
 # Real lines from the live Netease api/song/lyric/v1 response (id=299981).
@@ -318,8 +313,6 @@ def test_query_variants_add_simplified_fold_for_traditional_input():
 
 
 def test_noisy_title_queries_salvage_cluttered_browser_titles():
-    from kotonoha.lyrics.titles import noisy_title_queries
-
     track = TrackMetadata(
         "【HD】陳一發兒- 童話鎮 [歌詞字幕][完整高清音] Chen Yifa - Fairy Town BELLA PING MUSIC CHANNEL", ""
     )

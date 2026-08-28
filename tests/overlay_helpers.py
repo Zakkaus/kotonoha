@@ -9,8 +9,8 @@ from PyQt6.QtCore import QRect
 from kotonoha.platform.native import LayerShellController
 from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.platform.window_platform import DefaultOverlayPlatformFactory
-from kotonoha.state import LyricsState
 from kotonoha.ui.overlay import LyricsOverlay as ProductionLyricsOverlay
+from kotonoha.ui.overlay.state import LyricsState
 
 
 class UnavailableController(LayerShellController):

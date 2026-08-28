@@ -1,42 +1,40 @@
-"""Application-owned display projection and Qt compatibility publishing."""
+"""Application-owned display projection and timing workflow."""
 
 from __future__ import annotations
 
 import asyncio
 import logging
 
+from ..async_task import create_owned_task, wait_for_owned
+from ..display.contracts import DisplayPublisher
+from ..display.models import DisplayFrame, DisplayOptions, DisplayState, ResolutionState
+from ..display.presentation import DisplayEngine
+from ..display.timeline import TimelineEngine
 from ..lyrics.models import LyricsDocument
 from ..playback.models import PlaybackObservation, PlaybackStatus
-from ..state import LyricsState
-from .models import DisplayFrame, DisplayOptions, DisplayState, ResolutionState
-from .presentation import DisplayEngine
-from .publisher import QtDisplayPublisher
-from .timeline import TimelineEngine
 
 DISPLAY_TICK_INTERVAL_S = 1.0 / 60.0
 logger = logging.getLogger(__name__)
 
 
 class DisplayCoordinator:
-    """Own the single normalized-frame path into the presentation state.
+    """Own the normalized-frame workflow without knowing the presentation toolkit.
 
     Player and source adapters depend on this application boundary instead of
-    importing ``LyricsState``, constructing a publisher, or deciding how a
-    document becomes a display frame. The coordinator itself is created once by
-    the composition root and owns the compatibility write for the Qt UI.
+    importing ``LyricsState`` or constructing a concrete publisher. The
+    composition root supplies the sole publisher implementation.
     """
 
     def __init__(
         self,
-        state: LyricsState,
+        publisher: DisplayPublisher,
         *,
-        presenter: DisplayEngine | None = None,
-        timeline: TimelineEngine | None = None,
-        options: DisplayOptions | None = None,
+        presenter: DisplayEngine,
+        timeline: TimelineEngine,
     ) -> None:
-        self._presenter = presenter if presenter is not None else DisplayEngine(options)
-        self._publisher = QtDisplayPublisher(state)
-        self._timeline = timeline if timeline is not None else TimelineEngine()
+        self._presenter = presenter
+        self._publisher = publisher
+        self._timeline = timeline
         self._document: LyricsDocument | None = None
         self._resolution = ResolutionState.NO_TRACK
         self._task: asyncio.Task[None] | None = None
@@ -52,7 +50,7 @@ class DisplayCoordinator:
                 return
             self._observe_task_failure(task)
         self._wake_event = asyncio.Event()
-        task = asyncio.create_task(self._run(), name="kotonoha-display-clock")
+        task = create_owned_task(self._run(), name="kotonoha-display-clock")
         self._task = task
         task.add_done_callback(self._display_task_finished)
 
@@ -63,16 +61,16 @@ class DisplayCoordinator:
         self._wake_event = None
         if task is None:
             return
-        if not task.done():
-            task.cancel()
-            try:
-                await task
-            except asyncio.CancelledError:
-                pass
-            finally:
-                self._observe_task_failure(task)
+        if task.done():
+            # The done callback already reported any failure. Stopping a clock
+            # that failed before shutdown remains an idempotent cleanup action.
+            self._observe_task_failure(task)
             return
+        task.cancel()
+        cancellation_requested = await wait_for_owned(task)
         self._observe_task_failure(task)
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def project(
         self,

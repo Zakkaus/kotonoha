@@ -7,6 +7,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
+from ..async_task import create_owned_task, wait_for_owned
 from .hint import LyricsHint
 from .http import LyricsSession
 from .match import MatchConfidence, TrackMetadata
@@ -139,8 +140,13 @@ class LyricsResolutionWorkflow:
             previous.cancel()
             cancelled.append(previous)
         if cancelled:
-            await asyncio.gather(*cancelled, return_exceptions=True)
-        task = asyncio.create_task(self._resolve_once(session, track, plan, generation, hint))
+            joined = asyncio.gather(*cancelled, return_exceptions=True)
+            if await wait_for_owned(joined):
+                raise asyncio.CancelledError
+        task = create_owned_task(
+            self._resolve_once(session, track, plan, generation, hint),
+            name=f"kotonoha-lyrics-resolution-{generation}",
+        )
         self._tasks[generation] = task
         try:
             return await task
@@ -155,7 +161,9 @@ class LyricsResolutionWorkflow:
         for task in tasks:
             task.cancel()
         if tasks:
-            await asyncio.gather(*tasks, return_exceptions=True)
+            joined = asyncio.gather(*tasks, return_exceptions=True)
+            if await wait_for_owned(joined):
+                raise asyncio.CancelledError
 
     async def _resolve_once(
         self,

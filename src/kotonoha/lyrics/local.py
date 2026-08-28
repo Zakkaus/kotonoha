@@ -6,6 +6,7 @@ import os
 import stat
 from pathlib import Path
 
+from ..file_access import BoundedRegularFileReader
 from .lrc_parser import parse_lrc
 from .models import LyricLine
 
@@ -15,37 +16,8 @@ MAX_SIDECAR_BYTES = 4 * 1024 * 1024
 
 
 def _read_regular_file(path: Path) -> bytes | None:
-    """Return the file's bytes, or None if it is not an ordinary file.
-
-    Opened non-blocking and checked through the descriptor, because the path is
-    whatever a player published: pointed at a FIFO, ``read_bytes`` blocks forever
-    and takes a thread-pool worker with it, and the resolver's cancellation cannot
-    reclaim it — every retry leaks another worker until the pool is gone. The flag
-    is a no-op for a regular file and makes the FIFO fail at open instead.
-    """
-    try:
-        descriptor = os.open(path, os.O_RDONLY | os.O_NONBLOCK)
-    except OSError:
-        return None
-    try:
-        if not stat.S_ISREG(os.fstat(descriptor).st_mode):
-            return None
-        chunks: list[bytes] = []
-        total = 0
-        while True:
-            chunk = os.read(descriptor, 1 << 16)
-            if not chunk:
-                break
-            total += len(chunk)
-            if total > MAX_SIDECAR_BYTES:
-                # Refused, not truncated: a prefix of an LRC file parses into a
-                # shorter set of lines that looks like the real lyrics, so silently
-                # cutting it would hand the overlay a song that stops early.
-                return None
-            chunks.append(chunk)
-    finally:
-        os.close(descriptor)
-    return b"".join(chunks)
+    """Return complete sidecar bytes, or None if the path fails the file contract."""
+    return BoundedRegularFileReader(MAX_SIDECAR_BYTES).read(path).data
 
 
 def load_local_lyrics(audio_path: Path) -> list[LyricLine]:

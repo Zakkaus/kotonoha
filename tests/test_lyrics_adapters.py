@@ -1,8 +1,8 @@
-from kotonoha.display.models import DisplayState
-from kotonoha.display.presentation import LyricsPresentationAdapter
+from kotonoha.display.models import DisplayState, ResolutionState
+from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.adapter import LyricsDocumentAdapter
 from kotonoha.lyrics.models import LyricLine
-from kotonoha.playback.models import PlaybackStatus
+from kotonoha.playback.models import PlaybackObservation, PlaybackStatus
 from kotonoha.providers.mpris_adapter import MprisPlaybackAdapter
 from kotonoha.providers.mpris_track import TrackInfo
 
@@ -46,12 +46,8 @@ def test_document_and_presentation_adapters_share_the_same_canonical_path():
         duration_s=180.0,
     )
 
-    frame = LyricsPresentationAdapter().project(
-        document,
-        6.0,
-        track=None,
-        is_playing=True,
-    )
+    playback = PlaybackObservation("test", "player", None, PlaybackStatus.PLAYING, 6.0, 180.0, 0.0)
+    frame = DisplayEngine().project_observation(playback, document, ResolutionState.AVAILABLE)
 
     assert document.source_id == "sidecar"
     assert frame.state is DisplayState.LYRICS_AVAILABLE

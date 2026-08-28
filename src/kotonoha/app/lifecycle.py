@@ -5,6 +5,8 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Coroutine
 
+from ..async_task import create_owned_task, wait_for_owned
+
 
 class TaskSupervisor:
     """Retain task handles and provide an explicit wait boundary for an owner."""
@@ -24,7 +26,7 @@ class TaskSupervisor:
         if not name:
             coroutine.close()
             raise ValueError("task name must not be empty")
-        task = asyncio.create_task(coroutine, name=name)
+        task = create_owned_task(coroutine, name=name)
         self._tasks.add(task)
         return task
 
@@ -37,12 +39,19 @@ class TaskSupervisor:
         tasks = tuple(self._tasks)
         if not tasks:
             return
-        await asyncio.gather(*tasks, return_exceptions=True)
-        self._tasks.difference_update(tasks)
+        joined = asyncio.gather(*tasks, return_exceptions=True)
+        try:
+            # The supervisor owns the joined wait. Cancelling one caller must
+            # not cancel the children before the owner has released them.
+            cancellation_requested = await wait_for_owned(joined)
+        finally:
+            self._tasks.difference_update(tasks)
+        if cancellation_requested:
+            raise asyncio.CancelledError
 
     def close(self) -> None:
         """Reject new tasks while leaving existing work to the owner’s wait policy."""
         self._closed = True
 
 
-__all__ = ["TaskSupervisor"]
+__all__ = ["TaskSupervisor", "create_owned_task", "wait_for_owned"]

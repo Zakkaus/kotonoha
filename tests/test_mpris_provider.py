@@ -3,17 +3,32 @@ import logging
 
 import pytest
 
-from kotonoha.display.coordinator import DisplayCoordinator
+from kotonoha.app.display_coordinator import DisplayCoordinator
+from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.display.models import DisplayState
+from kotonoha.display.presentation import DisplayEngine
+from kotonoha.display.timeline import TimelineEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
-from kotonoha.lyrics.ownership import SourceOwnershipCoordinator
 from kotonoha.lyrics.sources import LyricsSourceResult
 from kotonoha.lyrics.workflow import ResolverLookup, ResolverPort
 from kotonoha.playback.models import MprisPlayerPort, PlaybackObservation, PlaybackStatus, TrackIdentity
+from kotonoha.providers.mpris import MprisProvider
+from kotonoha.providers.mpris_adapter import MprisPlaybackAdapter
 from kotonoha.providers.mpris_lyrics import MprisLyricsCoordinator
 from kotonoha.providers.mpris_playback import MprisPlaybackCoordinator, PlaybackSample
+from kotonoha.providers.mpris_resolution import MprisResolutionSession
 from kotonoha.providers.mpris_track import TrackCommit, TrackInfo, parse_metadata
-from kotonoha.state import LyricsState
+from kotonoha.ui.overlay.publisher import QtDisplayPublisher
+from kotonoha.ui.overlay.state import LyricsState
+
+
+def _display(state: LyricsState) -> DisplayCoordinator:
+    """Build the application display coordinator with its Qt test publisher."""
+    return DisplayCoordinator(
+        QtDisplayPublisher(state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
 
 VALID_METADATA: dict[str, object] = {
     "xesam:title": "Song",
@@ -41,10 +56,12 @@ class FakePlayer:
 
 
 class FakeSession:
-    def __init__(self, player: FakePlayer | None) -> None:
+    def __init__(self, player: FakePlayer | None, *, fail_close: bool = False) -> None:
         self.player_value = player
         self.connected = True
         self.closed = False
+        self.close_calls = 0
+        self.fail_close = fail_close
         self.subscriptions: list[str] = []
 
     async def connect(self) -> None:
@@ -52,8 +69,11 @@ class FakeSession:
         self.closed = False
 
     def close(self) -> None:
+        self.close_calls += 1
         self.closed = True
         self.connected = False
+        if self.fail_close:
+            raise RuntimeError("session close failed")
 
     async def player_names(self) -> list[str]:
         return ["org.mpris.MediaPlayer2.test"] if self.player_value is not None else []
@@ -89,8 +109,15 @@ class RecordingResolver:
         self.started = asyncio.Event()
         self.release = asyncio.Event()
         self.block = False
+        self.fail_start = False
+        self.fail_close = False
+        self.start_calls = 0
+        self.close_calls = 0
 
     def start(self) -> None:
+        self.start_calls += 1
+        if self.fail_start:
+            raise RuntimeError("resolver start failed")
         return None
 
     async def resolve(self, _session, track, _sources, /):
@@ -129,6 +156,9 @@ class RecordingResolver:
         return None
 
     async def close(self) -> None:
+        self.close_calls += 1
+        if self.fail_close:
+            raise RuntimeError("resolver close failed")
         return None
 
 
@@ -166,6 +196,99 @@ def cider_facts():
     return observation, document
 
 
+def mpris_provider(
+    session: FakeSession,
+    resolver: RecordingResolver,
+) -> MprisProvider:
+    """Build the public MPRIS facade with deterministic boundary fakes."""
+    return MprisProvider(
+        _display(LyricsState()),
+        lyrics_sources=[],
+        ownership=SourceOwnershipCoordinator(),
+        resolver=resolver,
+        playback_adapter=MprisPlaybackAdapter(),
+        playback_session=session,
+    )
+
+
+class FakeLyricsSession:
+    def __init__(self, *, fail_close: bool = False) -> None:
+        self.close_calls = 0
+        self.fail_close = fail_close
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        if self.fail_close:
+            raise RuntimeError("HTTP session close failed")
+
+
+def resolution_session(resolver: RecordingResolver) -> MprisResolutionSession:
+    """Build the public MPRIS resolution session with test boundaries."""
+    return MprisResolutionSession(
+        ownership=SourceOwnershipCoordinator(),
+        resolver=resolver,
+        playback_adapter=MprisPlaybackAdapter(),
+    )
+
+
+async def test_mpris_provider_rolls_back_playback_when_lyrics_start_fails():
+    session = FakeSession(None)
+    resolver = RecordingResolver()
+    resolver.fail_start = True
+    provider = mpris_provider(session, resolver)
+
+    with pytest.raises(RuntimeError, match="resolver start failed"):
+        await provider.start()
+
+    assert session.closed is True
+    assert session.close_calls == 1
+
+
+async def test_resolution_start_does_not_start_resolver_when_http_session_fails(monkeypatch):
+    from kotonoha.providers import mpris_resolution as resolution_module
+
+    resolver = RecordingResolver()
+
+    def fail_session_creation():
+        raise RuntimeError("HTTP session creation failed")
+
+    monkeypatch.setattr(resolution_module, "new_lyrics_session", fail_session_creation)
+
+    with pytest.raises(RuntimeError, match="HTTP session creation failed"):
+        await resolution_session(resolver).start()
+
+    assert resolver.start_calls == 0
+    assert resolver.close_calls == 0
+
+
+async def test_resolution_start_closes_http_session_when_resolver_start_fails(monkeypatch):
+    from kotonoha.providers import mpris_resolution as resolution_module
+
+    resolver = RecordingResolver()
+    resolver.fail_start = True
+    http_session = FakeLyricsSession()
+    monkeypatch.setattr(resolution_module, "new_lyrics_session", lambda: http_session)
+
+    with pytest.raises(RuntimeError, match="resolver start failed"):
+        await resolution_session(resolver).start()
+
+    assert http_session.close_calls == 1
+
+
+async def test_mpris_provider_attempts_all_cleanup_boundaries_after_failure():
+    session = FakeSession(None, fail_close=True)
+    resolver = RecordingResolver()
+    resolver.fail_close = True
+    provider = mpris_provider(session, resolver)
+    await provider.start()
+
+    with pytest.raises(RuntimeError, match="session close failed"):
+        await provider.stop()
+
+    assert session.close_calls == 1
+    assert resolver.close_calls == 1
+
+
 async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
     player = FakePlayer(VALID_METADATA, position=3_000_000)
     session = FakeSession(player)
@@ -173,6 +296,7 @@ async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
     samples: list[PlaybackSample] = []
     coordinator = MprisPlaybackCoordinator(
         session=session,
+        playback_adapter=MprisPlaybackAdapter(),
         on_sample=samples.append,
         on_commit=commits.append,
     )
@@ -191,7 +315,7 @@ async def test_playback_coordinator_owns_sampling_and_commits_stable_tracks():
 async def test_playback_coordinator_logs_status_changes(caplog):
     player = FakePlayer(VALID_METADATA, position=3_000_000)
     session = FakeSession(player)
-    coordinator = MprisPlaybackCoordinator(session=session)
+    coordinator = MprisPlaybackCoordinator(session=session, playback_adapter=MprisPlaybackAdapter())
 
     with caplog.at_level(logging.INFO):
         await coordinator.poll_once(now=0.0)
@@ -207,7 +331,11 @@ async def test_playback_coordinator_logs_status_changes(caplog):
 
 async def test_playback_coordinator_closes_its_session_and_poll_task():
     session = FakeSession(None)
-    coordinator = MprisPlaybackCoordinator(session=session, poll_interval=0.01)
+    coordinator = MprisPlaybackCoordinator(
+        session=session,
+        playback_adapter=MprisPlaybackAdapter(),
+        poll_interval=0.01,
+    )
 
     await coordinator.start()
     await asyncio.sleep(0)
@@ -217,9 +345,32 @@ async def test_playback_coordinator_closes_its_session_and_poll_task():
     assert session.closed is True
 
 
+async def test_playback_start_closes_session_when_poll_task_cannot_start(monkeypatch):
+    from kotonoha.providers import mpris_playback as playback_module
+
+    session = FakeSession(None)
+    coordinator = MprisPlaybackCoordinator(session=session, playback_adapter=MprisPlaybackAdapter())
+
+    def fail_create_task(coroutine, *, name):
+        coroutine.close()
+        raise RuntimeError(f"cannot create {name}")
+
+    monkeypatch.setattr(playback_module, "create_owned_task", fail_create_task)
+
+    with pytest.raises(RuntimeError, match="cannot create kotonoha-mpris-playback"):
+        await coordinator.start()
+
+    assert session.close_calls == 1
+    assert session.closed is True
+
+
 async def test_playback_coordinator_can_restart_after_stop():
     session = FakeSession(None)
-    coordinator = MprisPlaybackCoordinator(session=session, poll_interval=0.01)
+    coordinator = MprisPlaybackCoordinator(
+        session=session,
+        playback_adapter=MprisPlaybackAdapter(),
+        poll_interval=0.01,
+    )
 
     await coordinator.start()
     await coordinator.stop()
@@ -232,7 +383,11 @@ async def test_playback_coordinator_can_restart_after_stop():
 
 async def test_playback_coordinator_reports_no_player():
     calls: list[float] = []
-    coordinator = MprisPlaybackCoordinator(session=FakeSession(None), on_no_player=calls.append)
+    coordinator = MprisPlaybackCoordinator(
+        session=FakeSession(None),
+        playback_adapter=MprisPlaybackAdapter(),
+        on_no_player=calls.append,
+    )
 
     await coordinator.poll_once(now=4.0)
 
@@ -246,14 +401,19 @@ def lyrics_coordinator(
     ownership: SourceOwnershipCoordinator,
 ) -> MprisLyricsCoordinator:
     """Build the lyric workflow through its public coordinator contract."""
-    return MprisLyricsCoordinator(display, resolver=resolver, ownership=ownership)
+    return MprisLyricsCoordinator(
+        display,
+        resolver=resolver,
+        ownership=ownership,
+        playback_adapter=MprisPlaybackAdapter(),
+    )
 
 
 async def test_new_generation_cancels_old_resolution():
     resolver = RecordingResolver()
     resolver.block = True
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(LyricsState()),
+        _display(LyricsState()),
         resolver=resolver,
         ownership=SourceOwnershipCoordinator(),
     )
@@ -273,7 +433,7 @@ async def test_new_generation_cancels_old_resolution():
 async def test_mpris_commit_claims_external_ownership_before_resolution_starts():
     ownership = SourceOwnershipCoordinator()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(LyricsState()),
+        _display(LyricsState()),
         resolver=RecordingResolver(),
         ownership=ownership,
     )
@@ -287,10 +447,30 @@ async def test_mpris_commit_claims_external_ownership_before_resolution_starts()
     await coordinator.stop()
 
 
+async def test_mpris_lyrics_stop_resets_state_when_resolution_close_fails(monkeypatch):
+    from kotonoha.providers import mpris_resolution as resolution_module
+
+    resolver = RecordingResolver()
+    resolver.fail_close = True
+    monkeypatch.setattr(resolution_module, "new_lyrics_session", FakeLyricsSession)
+    ownership = SourceOwnershipCoordinator()
+    coordinator = lyrics_coordinator(_display(LyricsState()), resolver=resolver, ownership=ownership)
+
+    await coordinator.start()
+    coordinator.on_playback_commit(track_commit(1))
+
+    with pytest.raises(RuntimeError, match="resolver close failed"):
+        await coordinator.stop()
+
+    assert coordinator.current_commit is None
+    assert coordinator.content_owner == "none"
+    assert ownership.mode == "standalone"
+
+
 async def test_mpris_transition_claims_external_ownership_before_commit():
     ownership = SourceOwnershipCoordinator()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(LyricsState()),
+        _display(LyricsState()),
         resolver=RecordingResolver(),
         ownership=ownership,
     )
@@ -315,7 +495,7 @@ async def test_mpris_transition_claims_external_ownership_before_commit():
 async def test_external_result_is_projected_to_the_canonical_frame(caplog):
     state = LyricsState()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(state),
+        _display(state),
         resolver=RecordingResolver(lyric_result("lrclib")),
         ownership=SourceOwnershipCoordinator(),
     )
@@ -353,7 +533,7 @@ async def test_external_result_is_projected_to_the_canonical_frame(caplog):
 async def test_mpris_no_lyrics_resolution_publishes_not_found_state():
     state = LyricsState()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(state),
+        _display(state),
         resolver=RecordingResolver(),
         ownership=SourceOwnershipCoordinator(),
     )
@@ -370,7 +550,7 @@ async def test_mpris_no_lyrics_resolution_publishes_not_found_state():
 async def test_mpris_resolution_keeps_a_paused_playback_observation():
     state = LyricsState()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(state),
+        _display(state),
         resolver=RecordingResolver(),
         ownership=SourceOwnershipCoordinator(),
     )
@@ -400,7 +580,7 @@ async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog):
     resolver = RecordingResolver()
     gate = SourceOwnershipCoordinator()
     state = LyricsState()
-    coordinator = lyrics_coordinator(DisplayCoordinator(state), resolver=resolver, ownership=gate)
+    coordinator = lyrics_coordinator(_display(state), resolver=resolver, ownership=gate)
     coordinator.on_playback_commit(track_commit(1))
     await resolver.started.wait()
 
@@ -427,7 +607,7 @@ async def test_matching_cider_clock_can_drive_external_timeline():
     gate.observe(10, observation, document)
     gate.observe_clock(10, observation.track.track_ref, 7.5, True)
     resolver = RecordingResolver(lyric_result())
-    coordinator = lyrics_coordinator(DisplayCoordinator(state), resolver=resolver, ownership=gate)
+    coordinator = lyrics_coordinator(_display(state), resolver=resolver, ownership=gate)
     coordinator.on_playback_commit(track_commit(1))
     assert coordinator.load_task is not None
     await coordinator.load_task
@@ -450,7 +630,7 @@ async def test_matching_cider_clock_can_drive_external_timeline():
 async def test_non_song_is_not_sent_to_the_resolver():
     resolver = RecordingResolver()
     coordinator = lyrics_coordinator(
-        DisplayCoordinator(LyricsState()),
+        _display(LyricsState()),
         resolver=resolver,
         ownership=SourceOwnershipCoordinator(),
     )

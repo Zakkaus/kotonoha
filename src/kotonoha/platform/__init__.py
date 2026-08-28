@@ -25,6 +25,7 @@ from .overlay_contracts import (
     WindowRectangle,
 )
 from .qt_host import QtWindowHost
+from .restart import QProcessRestartLauncher
 from .surface_lifecycle import SurfaceLifecycleOwner
 from .window_platform import DefaultOverlayPlatformFactory
 
@@ -53,6 +54,7 @@ __all__ = [
     "WindowPolicy",
     "WindowRectangle",
     "QtWindowHost",
+    "QProcessRestartLauncher",
     "LayerShellPlatform",
     "default_package_dir",
 ]

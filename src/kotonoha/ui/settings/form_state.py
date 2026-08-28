@@ -5,9 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ...config import Config
-from ...config_schema import SETTINGS_CONFIG_FIELDS, SETTINGS_PAGE_FIELDS
-
-PAGE_FIELDS = SETTINGS_PAGE_FIELDS
+from ...config.schema import SETTINGS_CONFIG_FIELDS
 
 
 class SettingsFormState:
@@ -129,4 +127,4 @@ def _reset_page_values(current: Config, defaults: Config, index: int) -> Config:
     raise ValueError(f"unknown settings page index: {index}")
 
 
-__all__ = ["PAGE_FIELDS", "SettingsFormState"]
+__all__ = ["SettingsFormState"]

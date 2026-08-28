@@ -17,23 +17,6 @@ from .hanzi_fold import fold_to_simplified
 _PARENS = re.compile(r"[\(（\[【『](.*?)[\)）\]】』]")
 _DASH_SUFFIX = re.compile(r"\s+[-–—]\s+(.+)$")
 _FEAT_SUFFIX = re.compile(r"(?:\b(?:feat(?:uring)?|ft)\b\.?|合作演出\s*[:：]?).*$", re.IGNORECASE)
-_ARTIST_SEPARATOR = re.compile(
-    r"\s*(?:,|/|&|;|、|，|\band\b|\bwith\b|\bfeat(?:uring)?\b\.?|\bft\b\.?)\s*",
-    re.IGNORECASE,
-)
-# "和" is the Chinese "and" and a common artist-list separator in CJK metadata
-# ("初音ミク和鏡音リン"). CJK has no word boundaries, so split on it only when it sits
-# between two runs of >=2 non-space characters — that separates a genuinely fused
-# list without fragmenting a single name that merely contains 和 (山田和樹, 大和).
-# NOTE: the katakana middle dot "・" is deliberately NOT a separator here. Unlike 和
-# (which joins whole names, so two different people stay distinct tokens), "・"
-# separates the forename and surname WITHIN one katakana name (テイラー・スウィフト),
-# so splitting it makes two different artists who merely share a given name
-# (ジョン・レノン / ジョン・デンバー) collide — a confident wrong-lyrics match.
-# Spaced "和" is YouTube Music's own join in a Chinese UI ("Lady Gaga 和 Bruno
-# Mars"); a performer name that contains 和 (和田, 平和) does not carry spaces
-# around just that character, so the spaced form is unambiguous.
-_AND_SEPARATOR = re.compile(r"(?<=\S\S)和(?=\S\S)|\s+和\s+")
 _TITLE_DASH = re.compile(r"\s+[-–—－]\s+")
 _UPLOADER_ARTIST = re.compile(
     r"(?i)(?:channel|頻道|频道|label(?:s)?|records?|music(?:channel)?|vevo|animation|studio|工作室)"
@@ -86,7 +69,7 @@ _VERSION_TAGS = {
 # A remaster and a choreography video are the same performance: the words and
 # their timings are the studio take's, so neither may reject the only
 # candidate that has lyrics at all.
-_LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
+LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
 
 _TITLE_BARS = re.compile(r"[|｜丨]")
 # A closing ’ is never followed by a letter; a contraction's apostrophe always is.
@@ -148,7 +131,7 @@ def _fold_latin_accents(text: str) -> str:
 _BRACKET_EDGES = re.compile(r"[【】\[\]（）()『』「」《》〈〉]+")
 
 
-def _is_bracket_only(title: str) -> bool:
+def is_bracket_only_title(title: str) -> bool:
     """True when removing bracketed spans would leave the title with no content."""
     return bool(title.strip()) and not _KEEP.sub("", _PARENS.sub("", title)).strip()
 
@@ -227,24 +210,8 @@ def _extract_version_tags(value: str) -> set[str]:
 
 
 def base_title(title: str) -> str:
+    """Return the normalized title after removing known decoration and noise."""
     return split_title(title)[0]
-
-
-def _artist_parts(artist: str) -> tuple[str, ...]:
-    value = unicode_normalize("NFKC", artist).strip()
-    parts: list[str] = []
-    for chunk in _ARTIST_SEPARATOR.split(value):
-        parts.extend(_AND_SEPARATOR.split(chunk))
-    return tuple(part.strip() for part in parts if part.strip())
-
-
-def artist_tokens(artist: str) -> frozenset[str]:
-    return frozenset(token for token in (normalize(part) for part in _artist_parts(artist)) if token)
-
-
-def primary_artist(artist: str) -> str:
-    parts = _artist_parts(artist)
-    return parts[0].strip() if parts else artist.strip()
 
 
 def _is_title_pair(left: str, right: str) -> bool:
@@ -327,20 +294,6 @@ def recover_artist(title: str, artist: str) -> str:
     return candidate or fallback
 
 
-def _artist_variants(artist: str) -> tuple[str, ...]:
-    """The performer's name split out of a fused bilingual channel name.
-
-    A YouTube channel commonly carries both names at once ("周杰倫 Jay Chou"), and no
-    catalogue lists that fused form, so the artist comparison rejected every candidate
-    for 告白氣球 until the CJK half was tried on its own.
-    """
-    halves = (
-        " ".join(_CJK_TOKEN.findall(artist)).strip(),
-        " ".join(_LATIN_TOKEN.findall(artist)).strip(),
-    )
-    return tuple(half for half in dict.fromkeys(halves) if half and half != artist.strip())
-
-
 _BRACKETED = re.compile(r"[【『\[（(]([^】』\]）)]*)[】』\]）)]")
 # Corner/angle quotes and separators usually WRAP the title (「Lemon」《告白气球》)
 # rather than junk, so they are flattened to spaces (delimiters), not removed.
@@ -376,7 +329,7 @@ _LATIN_TOKEN = re.compile(r"[0-9A-Za-z][0-9A-Za-z'’&.]*")
 _BRACKETED_CREDIT = re.compile(r"^\s*(?:特別演出|特别演出|合唱|對唱|对唱|客串|和聲|和声)\s*[:：]")
 
 
-def _debracket(text: str) -> str:
+def debracket_query_text(text: str) -> str:
     """Replace 【…】 / […] / (…) segments: drop the ones whose content is only
     upload noise (【HD】, [歌詞字幕], (Official MV)), but KEEP the content of the
     rest — some channels put the actual song title in brackets (【演員】, [ 唯一 The
@@ -394,6 +347,31 @@ def _debracket(text: str) -> str:
 
     return _BRACKETED.sub(keep_or_drop, text)
 _WHITESPACE = re.compile(r"\s+")
+
+
+def remove_upload_noise(text: str) -> str:
+    """Remove platform labels in the title grammar's required order."""
+    return _UPLOAD_NOISE_LATIN.sub(" ", _UPLOAD_NOISE_CJK.sub(" ", text))
+
+
+def flatten_title_delimiters(text: str) -> str:
+    """Turn title separators into query whitespace without changing words."""
+    return _DELIMITERS.sub(" ", text)
+
+
+def cjk_runs(text: str) -> tuple[str, ...]:
+    """Return CJK runs recognized by the shared title grammar."""
+    return tuple(_CJK_TOKEN.findall(text))
+
+
+def latin_tokens(text: str) -> tuple[str, ...]:
+    """Return Latin and numeric tokens recognized by the shared title grammar."""
+    return tuple(_LATIN_TOKEN.findall(text))
+
+
+def normalize_query_whitespace(text: str) -> str:
+    """Collapse query whitespace using the shared title boundary."""
+    return _WHITESPACE.sub(" ", text)
 
 
 def _quote_at_top_level(text: str) -> tuple[str, int] | None:
@@ -513,76 +491,7 @@ def _clean_platform_title(title: str, artist: str = "") -> str:
 # 『歌词版』). Publisher grammar, so every ingest path needs it stripped, not only
 # the MPRIS one it used to live in.
 _LYRIC_VIDEO_BRACKET = re.compile(r"『[^』]*(?:動態歌詞|歌詞|歌词)[^』]*』", re.IGNORECASE)
-# YouTube names an auto-generated artist channel "<Artist> - Topic" and reports it
-# verbatim as the performer, a form no catalogue lists: 富士山下 found nothing under
-# "Eason Chan - Topic" and 41 lines without the suffix.
-_TOPIC_CHANNEL_SUFFIX = re.compile(r"\s*-\s*Topic\s*$", re.IGNORECASE)
-
-
 def clean_title(title: str, artist: str = "") -> str:
     """Remove observed platform grammar while retaining recording markers."""
     cleaned = _LYRIC_VIDEO_BRACKET.sub("", _clean_platform_title(title, artist))
     return cleaned.strip() or title.strip()
-
-
-def performing_artist(artist: str) -> str:
-    """The performer without the channel naming a platform wrapped around it."""
-    return _TOPIC_CHANNEL_SUFFIX.sub("", artist).strip()
-
-
-# A featured performer is credited inside the title and is not part of the song
-# name: "feat. BLUMENGARTEN & SHIRIN DAVID - GUT GENUG" and "大展鸿图 ft.AR刘夫阳"
-# both matched nothing while the names alone match. The credit runs to the next
-# separator. Only feat/ft/featuring qualify — "with" opens too many real titles
-# ("Dancing With Myself") to treat as a credit marker.
-_FEAT_CREDIT = re.compile(r"\s*\b(?:feat|ft|featuring)\b\.?\s*[^-–—()\[\]【】]*", re.IGNORECASE)
-
-
-def noisy_title_queries(title: str) -> tuple[str, ...]:
-    """Extra search queries salvaged from a noisy browser/YouTube title, used only
-    in fuzzy mode. Strips bracketed junk (【HD】, [歌詞字幕], …) then pulls the
-    CJK-only and Latin-only runs as separate queries, so a dual-language,
-    channel-tagged title like "【HD】陳一發兒- 童話鎮 [歌詞字幕] Chen Yifa - Fairy Town
-    BELLA PING MUSIC CHANNEL" still yields "陳一發兒 童話鎮" and "Chen Yifa Fairy
-    Town" to search on. A trailing ALL-CAPS channel/uploader tail is dropped."""
-    stripped = _debracket(title)
-    # CJK noise first: removing 官方 from "官方MV" isolates the "MV" so the Latin pass
-    # can then strip it (running Latin first would leave "MV" fused to 官方).
-    stripped = _UPLOAD_NOISE_CJK.sub(" ", stripped)
-    stripped = _UPLOAD_NOISE_LATIN.sub(" ", stripped)
-    # The credit is bounded by the separator that follows it, so it has to go before
-    # the separators are flattened: "feat. X & Y - GUT GENUG" loses its dash here and
-    # the credit would then run to the end of the line.
-    credited = stripped
-    stripped = _DELIMITERS.sub(" ", stripped)
-    queries: list[str] = []
-    # Combined query first (both scripts, cleaned) — the best shot when the title
-    # simply fused artist and song across a separator ("米津玄師 Lemon", "周杰倫 晴天").
-    combined = _WHITESPACE.sub(" ", stripped).strip()
-    if len(combined) >= 2:
-        queries.append(combined)
-    # Added rather than substituted: the credited form is what some catalogues index
-    # ("Old Town Road ft. Billy Ray Cyrus" resolves as it stands), so it stays first.
-    uncredited = _WHITESPACE.sub(" ", _DELIMITERS.sub(" ", _FEAT_CREDIT.sub(" ", credited))).strip()
-    if len(uncredited) >= 2 and uncredited != combined:
-        queries.append(uncredited)
-    cjk = _WHITESPACE.sub(" ", " ".join(_CJK_TOKEN.findall(stripped))).strip()
-    if len(cjk) >= 2:
-        queries.append(cjk)
-    has_cjk = bool(cjk)
-    latin_tokens = _LATIN_TOKEN.findall(stripped)
-    # Drop a trailing ALL-CAPS uploader/channel tail (BELLA PING MUSIC CHANNEL). When
-    # the title is pure Latin, keep an all-caps run whole if EVERYTHING is caps — that
-    # is a genuinely all-caps title (TALK THAT TALK), not a tail. When the title also
-    # has CJK, the Latin run is secondary, so strip the tail freely.
-    while (
-        len(latin_tokens) > 2
-        and latin_tokens[-1].isupper()
-        and len(latin_tokens[-1]) >= 2
-        and (has_cjk or not all(token.isupper() for token in latin_tokens[:-1]))
-    ):
-        latin_tokens.pop()
-    latin = " ".join(latin_tokens).strip()
-    if len(latin) >= 2:
-        queries.append(latin)
-    return tuple(dict.fromkeys(queries))

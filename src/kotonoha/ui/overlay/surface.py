@@ -86,8 +86,8 @@ class OverlaySurfaceController:
 
     @active_screen.setter
     def active_screen(self, value: ScreenLike | None) -> None:
-        # Kept as a narrow test/compatibility seam. Production selection uses
-        # select_screen() and commits active_screen only after a SurfaceResult.
+        # Test harnesses inject an active output directly; production selection
+        # commits it only through select_screen() after a SurfaceResult.
         self._position.active_screen = value
 
     @property

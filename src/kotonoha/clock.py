@@ -51,6 +51,8 @@ def estimate_media_time(anchor_media: float, anchor_wall: float, now_wall: float
 
 
 class MediaClock:
+    """Estimate media time between low-rate playback observations."""
+
     def __init__(self, monotonic=time.monotonic) -> None:
         self._monotonic = monotonic
         self._anchor_media: float | None = None

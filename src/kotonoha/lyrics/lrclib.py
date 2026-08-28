@@ -9,13 +9,15 @@ from dataclasses import dataclass
 
 import aiohttp
 
+from ..async_task import create_owned_task
 from .artifact import LyricsArtifact
+from .artist_grammar import primary_artist
 from .http import LyricsSession
 from .lrc_parser import parse_lrc
 from .match import Candidate, TrackMetadata, best_match, query_variants
 from .models import LyricLine
 from .payload import read_json_capped
-from .titles import base_title, primary_artist
+from .title_grammar import base_title
 
 logger = logging.getLogger(__name__)
 
@@ -103,26 +105,28 @@ async def fetch_artifact(
         exact = await get_exact(session, track)
         return [exact] if exact is not None else []
 
-    pending: dict[asyncio.Task[list[Record]], str] = {
-        asyncio.create_task(exact_records()): "exact",
-        asyncio.create_task(search_records(session, track)): "search",
-    }
-    if fuzzy:
-        # Salvage noisy browser titles: search each cleaned CJK/Latin run on its own
-        # (no artist, since a YouTube "artist" is usually the channel), so a
-        # bracket-and-channel-laden title still finds the track.
-        # Only the salvaged rungs: the exact and search stages above already sent the
-        # reported metadata, and the ladder's other readings are built from it. The
-        # simplified folds are new here — this provider used to assemble its own
-        # ladder and go without them.
-        for variant in query_variants(track, fuzzy=True):
-            if not variant.rung.startswith("salvaged"):
-                continue
-            pending[asyncio.create_task(_search(session, variant.title, variant.artist))] = "fuzzy"
+    pending: dict[asyncio.Task[list[Record]], str] = {}
     records: list[Record] = []
     errors: list[Exception] = []
     successful_requests = 0
     try:
+        pending[create_owned_task(exact_records(), name="kotonoha-lrclib-exact")] = "exact"
+        pending[create_owned_task(search_records(session, track), name="kotonoha-lrclib-search")] = "search"
+        if fuzzy:
+            # Salvage noisy browser titles: search each cleaned CJK/Latin run on its own
+            # (no artist, since a YouTube "artist" is usually the channel), so a
+            # bracket-and-channel-laden title still finds the track.
+            # Only the salvaged rungs: the exact and search stages above already sent the
+            # reported metadata, and the ladder's other readings are built from it. The
+            # simplified folds are new here — this provider used to assemble its own
+            # ladder and go without them.
+            for variant in query_variants(track, fuzzy=True):
+                if not variant.rung.startswith("salvaged"):
+                    continue
+                pending[create_owned_task(
+                    _search(session, variant.title, variant.artist),
+                    name="kotonoha-lrclib-fuzzy",
+                )] = "fuzzy"
         while pending:
             done, _remaining = await asyncio.wait(pending, return_when=asyncio.FIRST_COMPLETED)
             for task in done:

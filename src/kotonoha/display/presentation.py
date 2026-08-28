@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..lyrics.models import LyricLine, LyricsDocument
+from ..playback.identity import track_identity_key
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from .karaoke import (
     active_word_index,
@@ -132,38 +133,6 @@ class DisplayEngine:
         """Project normalized playback, document, and explicit resolution facts."""
         return self.project_input(DisplayInput(playback, document, resolution, self._options))
 
-    def project(
-        self,
-        document: LyricsDocument | None,
-        position_s: float | None,
-        *,
-        track: TrackIdentity | None,
-        is_playing: bool,
-    ) -> DisplayFrame:
-        """Compatibility projection for pure callers without a player adapter.
-
-        New application code should call :meth:`project_observation` so the
-        adapter identity and full playback status remain explicit.
-        """
-        playback = PlaybackObservation(
-            adapter_id="display-test",
-            player_id="display-test",
-            track=track,
-            status=PlaybackStatus.PLAYING if is_playing else PlaybackStatus.PAUSED,
-            position_s=position_s,
-            duration_s=track.duration_s if track is not None else document.duration_s if document else None,
-            observed_at=0.0,
-        )
-        # The old pure helper accepted an empty document without a track. The
-        # typed input contract does not: an empty document carries no source
-        # fact, so normalize that legacy shape before constructing DisplayInput.
-        normalized_document = document if track is not None or (document is not None and document.lines) else None
-        return self.project_observation(
-            playback,
-            normalized_document,
-            ResolutionState.from_facts(playback, normalized_document),
-        )
-
     def _display_document(
         self,
         document: LyricsDocument | None,
@@ -206,7 +175,7 @@ class DisplayEngine:
         artist_value = track.artist if track is not None else document.artist if document is not None else None
         title = title_value if title_value is not None else ""
         artist = artist_value if artist_value is not None else ""
-        key = "\x1f".join((title.strip().casefold(), artist.strip().casefold()))
+        key = track_identity_key(title, artist, track.duration_s if track is not None else None)
         offset_ms = options.track_offsets_ms.get(key, 0)
         return position + (options.lead_ms + offset_ms) / 1000.0
 
@@ -238,9 +207,4 @@ class DisplayEngine:
         return line_fill_fraction(line.start, end, position)
 
 
-# TODO(phase-6): remove this compatibility alias after external callers migrate
-# from the old name to ``DisplayEngine``.
-LyricsPresentationAdapter = DisplayEngine
-
-
-__all__ = ["DisplayEngine", "LyricsPresentationAdapter"]
+__all__ = ["DisplayEngine"]
