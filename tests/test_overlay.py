@@ -279,17 +279,21 @@ def test_long_title_marquee_scrolls_then_holds(qapp):
     qapp.processEvents()
 
 
-def test_transition_styles_paint_without_raising(qapp):
+def test_transition_styles_render_a_visible_line(qapp):
     from kotonoha.ui.overlay.karaoke_label import KaraokeLabel
 
     label = KaraokeLabel()
     label.resize(200, 40)
     for style in ("fade", "rise", "slide", "zoom"):
         label.set_effects(glow=False, word_pop=False, intensity="subtle", animate=True, transition=style)
-        assert label._transition == style
         label.set_line(LyricLine(0, style, 0.0, 3.0, "line", "", ()), False)
         label._reveal = 0.4  # mid-transition
-        label.grab()
+        image = label.grab().toImage()
+        assert any(
+            image.pixelColor(x, y).alpha() > 0
+            for x in range(image.width())
+            for y in range(image.height())
+        ), f"{style} transition rendered no visible pixels"
     label.deleteLater()
     qapp.processEvents()
 

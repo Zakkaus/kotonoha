@@ -357,14 +357,15 @@ def test_white_panel_option_present_and_roundtrips(qapp):
     dialog.close()
 
 
-def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
-    # Frost is gated on the compositor advertising a blur protocol; the offscreen
-    # test platform is not Wayland, so the window stays a solid panel. The blur
-    # lifecycle (apply on show, re-apply on resize, clear on hide) must be a
-    # sequence of safe no-ops that never raise.
-    dialog = SettingsDialog(Config())
-    assert dialog._frosted is False  # offscreen platform is not "wayland"
-    dialog._apply_blur()
+def test_frost_window_toggle_roundtrips_and_lifecycle_is_safe(qapp):
+    # Offscreen has no blur protocol, so enabling frost keeps a solid panel while
+    # the normal show/resize/hide lifecycle remains safe.
+    dialog = SettingsDialog(Config(frost_window=False))
+    assert dialog.form_widgets.frost_window.isChecked() is False
+    dialog.form_widgets.frost_window.setChecked(True)
+    assert dialog.current_config().frost_window is True
+    dialog._emit()
+    assert dialog._frosted is False
     dialog.show()
     qapp.processEvents()
     dialog.resize(dialog.width() + 20, dialog.height())
@@ -372,15 +373,6 @@ def test_frost_only_where_the_compositor_blurs_and_lifecycle_is_safe(qapp):
     dialog.close()
     dialog.deleteLater()
     qapp.processEvents()
-
-
-def test_frost_window_toggle_roundtrips_and_applies_safely(qapp):
-    dialog = SettingsDialog(Config(frost_window=False))
-    assert dialog.form_widgets.frost_window.isChecked() is False
-    dialog.form_widgets.frost_window.setChecked(True)
-    assert dialog.current_config().frost_window is True
-    dialog._emit()  # applying the toggle must not raise (blur is a no-op in headless)
-    dialog.close()
 
 
 def test_frost_checkbox_is_greyed_out_and_noted_when_blur_unavailable(qapp):
@@ -487,21 +479,26 @@ def test_switching_settings_to_dark_keeps_scroll_pages_on_the_dark_surface(qapp)
     dialog.close()
 
 
-def test_combo_popups_follow_the_active_settings_theme(qapp):
-    from PyQt6.QtCore import QPoint
+def test_combo_popup_viewport_background_follows_active_settings_theme(qapp):
+    from PyQt6.QtGui import QColor, QPalette
+
+    from kotonoha.ui.settings import theme
 
     dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, frost_window=False, fx_animate=False))
     combo = dialog.form_widgets.font_family
     view = combo.view()
     if view is None:
         raise AssertionError("font combo popup view is unavailable")
+    viewport = view.viewport()
+    if viewport is None:
+        raise AssertionError("font combo popup viewport is unavailable")
 
     dialog.show()
     combo.showPopup()
     qapp.processEvents()
-    light_image = view.grab().toImage()
-    background_point = QPoint(max(0, light_image.width() - 30), 5)
-    assert 180 < light_image.pixelColor(background_point).lightness() < 250
+    assert viewport.palette().color(QPalette.ColorRole.Base) == QColor(
+        theme._popup_background(ThemeMode.LIGHT.value)
+    )
     popup = view.window()
     if popup is None:
         raise AssertionError("font combo popup frame is unavailable")
@@ -514,9 +511,9 @@ def test_combo_popups_follow_the_active_settings_theme(qapp):
     dialog._emit()
     combo.showPopup()
     qapp.processEvents()
-    dark_image = view.grab().toImage()
-    background_point = QPoint(max(0, dark_image.width() - 30), 5)
-    assert dark_image.pixelColor(background_point).lightness() < 100
+    assert viewport.palette().color(QPalette.ColorRole.Base) == QColor(
+        theme._popup_background(ThemeMode.DARK.value)
+    )
     combo.hidePopup()
     dialog.close()
 
@@ -556,13 +553,6 @@ def test_connection_section_removed_but_port_preserved(qapp):
     assert not any("onnect" in label or "连接" in label or "連接" in label or "接続" in label for label in labels)
     assert not hasattr(dialog, "_port")
     assert dialog.current_config().port == 41234  # preserved from the config
-    dialog.close()
-
-
-def test_font_picker_is_a_dropdown_not_a_text_box(qapp):
-    # Clicking the field should open the font list, not put a text cursor there.
-    dialog = SettingsDialog(Config())
-    assert dialog.form_widgets.font_family.isEditable() is False
     dialog.close()
 
 

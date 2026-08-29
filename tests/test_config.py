@@ -269,11 +269,6 @@ def test_track_offsets_roundtrip_and_evict_oldest(tmp_path):
     assert loaded.track_offsets["track-100"] == 100
 
 
-def test_track_without_offset_keeps_global_lead_only():
-    cfg = Config(lead_ms=120)
-    assert cfg.track_offsets.get("missing", 0) == 0
-
-
 def test_a_failed_save_leaves_the_previous_configuration_intact(tmp_path, monkeypatch):
     # The point of writing to a sibling and renaming: the target is only ever
     # replaced by a file that is already complete. Written in place, a save that

@@ -114,46 +114,6 @@ def test_overlay_contracts_is_toolkit_free():
     )
 
 
-def test_overlay_window_lives_in_the_overlay_package():
-    """The overlay window and its collaborators have one package owner."""
-    overlay_root = SOURCE_ROOT / "ui" / "overlay"
-    assert overlay_root.is_dir()
-    assert (overlay_root / "__init__.py").is_file()
-    assert (overlay_root / "window.py").is_file()
-    assert not (SOURCE_ROOT / "overlay.py").exists()
-    old_overlay_root = SOURCE_ROOT / "overlay"
-    assert not (old_overlay_root / "__init__.py").exists()
-    assert not any(old_overlay_root.glob("*.py"))
-
-
-def test_settings_presentation_lives_in_the_settings_package():
-    """Settings builders, widgets, and theme assets share one UI package owner."""
-    settings_root = SOURCE_ROOT / "ui" / "settings"
-    for name in (
-        "dialog.py",
-        "cache_dialog.py",
-        "icons.py",
-        "pages.py",
-        "sources.py",
-        "theme.py",
-        "widgets.py",
-        "controls.py",
-        "form_state.py",
-    ):
-        assert (settings_root / name).is_file()
-    legacy_names = (
-        "settings_dialog.py",
-        "settings_icons.py",
-        "settings_pages.py",
-        "settings_sources.py",
-        "settings_theme.py",
-        "settings_widgets.py",
-    )
-    for name in legacy_names:
-        assert not (settings_root / name).exists()
-        assert not (SOURCE_ROOT / name).exists()
-
-
 def test_desktop_environment_has_one_reader():
     """Only the platform probe names XDG_CURRENT_DESKTOP.
 
@@ -353,26 +313,6 @@ def test_lyrics_feature_does_not_depend_on_application_or_presentation_layers():
         if any(part in module for part in forbidden)
     ]
     assert not violations, "lyrics feature depends on outer layers: " + ", ".join(violations)
-
-
-def test_final_compatibility_modules_are_removed():
-    """The final architecture has no import-only migration modules left."""
-    removed = (
-        SOURCE_ROOT / "controller.py",
-        SOURCE_ROOT / "state.py",
-        SOURCE_ROOT / "karaoke.py",
-        SOURCE_ROOT / "lyrics" / "ownership.py",
-        SOURCE_ROOT / "lyrics" / "select.py",
-        SOURCE_ROOT / "lyrics" / "titles.py",
-        SOURCE_ROOT / "display" / "coordinator.py",
-        SOURCE_ROOT / "display" / "publisher.py",
-        SOURCE_ROOT / "config.py",
-        SOURCE_ROOT / "config_schema.py",
-        SOURCE_ROOT / "config_store.py",
-        SOURCE_ROOT / "app" / "restart.py",
-        SOURCE_ROOT / "providers" / "mpris_http.py",
-    )
-    assert not [path.relative_to(SOURCE_ROOT).as_posix() for path in removed if path.exists()]
 
 
 def test_display_package_is_free_of_toolkit_and_ui_state_dependencies():

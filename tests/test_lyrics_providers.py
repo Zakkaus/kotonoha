@@ -133,47 +133,44 @@ async def test_netease_search_captures_aliases_and_trans_names():
     assert "生如夏花 现场版" in candidates[0].aliases
 
 
-async def test_netease_manual_search_keeps_thirty_candidates(monkeypatch):
-    requested_limits = []
+@pytest.mark.parametrize("provider", ("netease", "lrclib", "kugou"))
+async def test_manual_search_keeps_thirty_candidates(monkeypatch, provider):
+    track = TrackMetadata("Song", "Artist", duration_s=180.0)
 
-    async def fake_search(_session, _query, limit=10):
-        requested_limits.append(limit)
-        return [Candidate(str(index), "Song", "Artist", 180.0) for index in range(35)]
+    if provider == "netease":
+        requested_limits = []
 
-    async def fake_artifact(_session, evidence):
-        return _manual_artifact("netease", evidence.candidate.song_id)
+        async def fake_search(_session, _query, limit=10):
+            requested_limits.append(limit)
+            return [Candidate(str(index), "Song", "Artist", 180.0) for index in range(35)]
 
-    monkeypatch.setattr(netease, "search", fake_search)
-    monkeypatch.setattr(netease, "_artifact_for_match", fake_artifact)
-    results = await netease.search_artifacts(SESSION, TrackMetadata("Song", "Artist", duration_s=180.0))
+        async def fake_artifact(_session, evidence):
+            return _manual_artifact("netease", evidence.candidate.song_id)
 
-    assert requested_limits == [30]
-    assert len(results) == 30
+        monkeypatch.setattr(netease, "search", fake_search)
+        monkeypatch.setattr(netease, "_artifact_for_match", fake_artifact)
+        results = await netease.search_artifacts(SESSION, track)
 
+        assert requested_limits == [30]
+    elif provider == "lrclib":
+        async def fake_search_records(_session, _track):
+            return [
+                lrclib.Record(str(index), "Song", "Artist", "Album", 180.0, "[00:01.00]line")
+                for index in range(35)
+            ]
 
-async def test_lrclib_manual_search_keeps_thirty_candidates(monkeypatch):
-    async def fake_search_records(_session, _track):
-        return [
-            lrclib.Record(str(index), "Song", "Artist", "Album", 180.0, "[00:01.00]line")
-            for index in range(35)
-        ]
+        monkeypatch.setattr(lrclib, "search_records", fake_search_records)
+        results = await lrclib.search_artifacts(SESSION, track)
+    else:
+        async def fake_search(_session, _keyword):
+            return [kugou.Record(str(index), "key", "Song", "Artist", 180.0) for index in range(35)]
 
-    monkeypatch.setattr(lrclib, "search_records", fake_search_records)
-    results = await lrclib.search_artifacts(SESSION, TrackMetadata("Song", "Artist", duration_s=180.0))
+        async def fake_artifact(_session, record, _confidence):
+            return _manual_artifact("kugou", record.cand_id)
 
-    assert len(results) == 30
-
-
-async def test_kugou_manual_search_keeps_thirty_candidates(monkeypatch):
-    async def fake_search(_session, _keyword):
-        return [kugou.Record(str(index), "key", "Song", "Artist", 180.0) for index in range(35)]
-
-    async def fake_artifact(_session, record, _confidence):
-        return _manual_artifact("kugou", record.cand_id)
-
-    monkeypatch.setattr(kugou, "search", fake_search)
-    monkeypatch.setattr(kugou, "_artifact_for_record", fake_artifact)
-    results = await kugou.search_artifacts(SESSION, TrackMetadata("Song", "Artist", duration_s=180.0))
+        monkeypatch.setattr(kugou, "search", fake_search)
+        monkeypatch.setattr(kugou, "_artifact_for_record", fake_artifact)
+        results = await kugou.search_artifacts(SESSION, track)
 
     assert len(results) == 30
 
