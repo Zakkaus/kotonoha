@@ -32,6 +32,8 @@ class _LayerShellDragStrategy:
 
     #: Whether the origin moves to the latest reading after each committed step.
     _reanchors = False
+    #: Whether release coordinates can reliably identify another output.
+    _can_rebind_output = True
     #: Names this strategy in the "drag has not started" result.
     _label = "Layer Shell"
 
@@ -46,6 +48,11 @@ class _LayerShellDragStrategy:
     def client_positioning(self) -> bool:
         """Layer Shell can persist an output-local position through its anchor."""
         return True
+
+    @property
+    def can_rebind_output(self) -> bool:
+        """Return whether release coordinates can select another output."""
+        return self._can_rebind_output
 
     def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         raise NotImplementedError
@@ -149,6 +156,10 @@ class NiriLayerShellDragStrategy(_LayerShellDragStrategy):
     # by the next event and the local reading does not re-settle. The global reading
     # is re-anchored each step to keep the displacement incremental.
     _reanchors = True
+    # Fractional-scale layouts can put Qt event-global coordinates and QScreen
+    # logical origins in different spaces. Reconstructing an output from that
+    # pointer at release can rebind an edge drag to the wrong output.
+    _can_rebind_output = False
     _label = "Niri Layer Shell"
 
     def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
@@ -236,6 +247,11 @@ class LayerShellPlatform:
     def client_positioning(self) -> bool:
         """Expose the drag-relevant placement capability through the drag port."""
         return self.capabilities.client_positioning
+
+    @property
+    def can_rebind_output(self) -> bool:
+        """Delegate release-time output selection to the chosen drag strategy."""
+        return self._drag_strategy.can_rebind_output
 
     def _pointer(self) -> int | None:
         return self._host.native_window_pointer()

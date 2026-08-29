@@ -66,7 +66,7 @@ Domain 不依赖 Qt、网络客户端、D-Bus 或 native bridge。Presentation �
 - 歌词 provider 和 adapter 只传递完整 `LyricsDocument`，不传递当前行、上下文或 interlude 等展示派生字段。
 - 缓存管理使用 `LyricsCacheManagementPort`，手动应用使用 `LyricsCacheWritePort`。两者都指向组合根创建的同一个 `LyricsCache`，缓存 CRUD 不经过 MPRIS port。
 - 平台能力以带原因的 capability/result 返回；UI 不直接读取 compositor 名称或 native bridge。
-- overlay 拖动使用平台策略进行坐标换算和位置同步。普通窗口和支持该行为的 Layer Shell 桌面保持连续跨屏；Niri 的 Layer Shell surface 绑定单一 output，因此拖动期间将面板限制在当前 output 的逻辑矩形内。拖动过程中不重绑 surface，释放后才根据最终指针位置处理 output 选择、重绑和持久化。
+- overlay 拖动使用平台策略进行坐标换算和位置同步。普通窗口和支持该行为的 Layer Shell 桌面保持连续跨屏；Niri 的 Layer Shell surface 绑定单一 output，因此拖动期间将面板限制在当前 output 的逻辑矩形内，释放时也保持在该 output。KDE 默认的 Layer Shell 策略继续在释放时根据指针选择 output 并执行重绑。
 
 ## 生命周期
 

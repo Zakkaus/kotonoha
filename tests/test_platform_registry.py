@@ -307,6 +307,7 @@ def test_layer_shell_registry_selects_niri_strategy() -> None:
     platform = DefaultOverlayPlatformFactory(controller, platform_name="wayland", current_desktop="niri")(host)
 
     assert isinstance(platform.surface, LayerShellPlatform)
+    assert platform.drag.can_rebind_output is False
     _assert_measures_global_pointer(platform.drag, controller)
 
 
@@ -320,6 +321,7 @@ def test_layer_shell_registry_keeps_default_strategy_for_kde() -> None:
     )(host)
 
     assert isinstance(platform.surface, LayerShellPlatform)
+    assert platform.drag.can_rebind_output is True
     _assert_measures_local_pointer(platform.drag, controller)
 
 

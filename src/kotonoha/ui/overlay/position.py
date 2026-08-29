@@ -205,9 +205,15 @@ class OverlayPositionController:
             surface_geometry.x() + self._layer_pos.x(),
             surface_geometry.y() + self._layer_pos.y(),
         )
-        local = cursor_local if cursor_local is not None else self._drag.local
-        cursor_global = QPoint(surface_top_left.x() + local.x(), surface_top_left.y() + local.y())
-        target_screen = OverlayGeometry.screen_for_global_point(cursor_global, screens, surface_screen)
+        if self._drag.platform.can_rebind_output:
+            local = cursor_local if cursor_local is not None else self._drag.local
+            cursor_global = QPoint(surface_top_left.x() + local.x(), surface_top_left.y() + local.y())
+            target_screen = OverlayGeometry.screen_for_global_point(cursor_global, screens, surface_screen)
+        else:
+            # Niri's event-global pointer and Qt's logical screen origins can
+            # diverge under fractional scaling. Keep the output captured by the
+            # mapped Layer Shell surface instead of guessing a new one at release.
+            target_screen = surface_screen
         if target_screen is None:
             return None
         target_geometry = target_screen.geometry()

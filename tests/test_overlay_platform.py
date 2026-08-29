@@ -91,6 +91,36 @@ def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
     qapp.processEvents()
 
 
+def test_niri_right_edge_release_keeps_the_surface_on_its_bound_output(qapp):
+    scaled = FakeScreen("DP-5", 0, 0, 2752, 1152)
+    unscaled = FakeScreen("DP-1", 3440, 0, 3440, 1440)
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._active_screen = scaled
+    overlay._layer_pos = QPoint(2252, 100)
+    drag_port = overlay._surface._position._drag.platform
+    emitted = []
+    overlay.position_changed.connect(
+        lambda change: emitted.append((change.margin_edge, change.margin_x, change.screen_name))
+    )
+
+    # Niri remains bound to the output selected when the Layer Shell surface was
+    # created. The global pointer reading is not reliable for selecting another
+    # Qt output on a fractional-scale layout.
+    with (
+        patch.object(type(drag_port), "can_rebind_output", property(lambda _self: False)),
+        patch.object(QGuiApplication, "screens", return_value=[scaled, unscaled]),
+        patch.object(overlay, "_window_size", return_value=(500, 140)),
+        patch.object(overlay._surface._lifecycle, "rebind") as rebind,
+    ):
+        overlay._commit_drag_position(QPoint(1300, 40))
+
+    assert overlay._layer_pos == QPoint(2252, 100)
+    assert emitted == [(100, 1126, "DP-5")]
+    rebind.assert_not_called()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_released_cross_output_keeps_margin_x_and_records_output(qapp):
     source = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
     target = FakeScreen("DP-1", 2048, 0, 1920, 1080)

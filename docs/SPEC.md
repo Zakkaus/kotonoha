@@ -66,7 +66,7 @@ Concrete implementations are assembled in `app/composition.py`. Modules do not l
 - Lyric providers and adapters pass complete `LyricsDocument` values. Current-line, context, and interlude values are display projections and do not cross the boundary.
 - Cache management uses `LyricsCacheManagementPort`; manual selection uses `LyricsCacheWritePort`. Both ports target the same `LyricsCache` created by the composition root. Cache CRUD does not pass through the MPRIS port.
 - Platform capabilities return a capability or result with a reason. The UI does not read compositor names or the native bridge directly.
-- Overlay dragging delegates coordinate conversion and position synchronization to the selected platform strategy. Ordinary windows and Layer Shell compositors that support the behavior retain continuous cross-output dragging. Niri binds a Layer Shell surface to one output, so the panel is constrained to that output's logical rectangle while the gesture is active. The surface is not rebound during the pointer grab; output selection, rebinding, and persistence use the final pointer position after release.
+- Overlay dragging delegates coordinate conversion and position synchronization to the selected platform strategy. Ordinary windows and Layer Shell compositors that support the behavior retain continuous cross-output dragging. Niri binds a Layer Shell surface to one output, so the panel is constrained to that output's logical rectangle and remains on that output when the gesture is released. KDE's default Layer Shell strategy retains release-time output selection and rebinding.
 
 ## Lifecycle
 

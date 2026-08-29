@@ -313,6 +313,11 @@ class DragPort(Protocol):
         """Whether a client-side movement can be trusted for persistence."""
         ...
 
+    @property
+    def can_rebind_output(self) -> bool:
+        """Whether release coordinates can safely select another output."""
+        ...
+
     def begin_drag(
         self,
         local_position: WindowPoint,

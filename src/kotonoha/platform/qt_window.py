@@ -37,6 +37,11 @@ class OrdinaryWindowDragStrategy:
         """Return whether ordinary-window moves can be persisted on this session."""
         return self._client_positioning
 
+    @property
+    def can_rebind_output(self) -> bool:
+        """Return whether Qt coordinates can safely select another output."""
+        return self._client_positioning
+
     def begin_drag(
         self,
         local_position: WindowPoint,
@@ -178,6 +183,11 @@ class QtWindowPlatform:
     def client_positioning(self) -> bool:
         """Expose the drag-relevant placement capability through the drag port."""
         return self._client_positioning
+
+    @property
+    def can_rebind_output(self) -> bool:
+        """Delegate release-time output selection to the window drag strategy."""
+        return self._drag_strategy.can_rebind_output
 
     def prepare(self) -> SurfaceResult:
         if self._closed:
