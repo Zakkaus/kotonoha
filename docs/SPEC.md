@@ -1,8 +1,10 @@
-# 当前架构
+# Architecture
 
-本文只记录 Kotonoha 当前实现的系统边界、运行路径和资源生命周期。
+[中文](SPEC.zh-CN.md)
 
-## 运行路径
+This document describes the current Kotonoha architecture: its runtime flow, layer boundaries, ownership model, lifecycle, and platform behavior.
+
+## Runtime topology
 
 ```mermaid
 flowchart TB
@@ -28,72 +30,63 @@ flowchart TB
     publisher --> overlay["LyricsOverlay"]
 ```
 
-MPRIS、Cider 和外部 adapter 在边界转换为规范化播放事实；Cider 和 adapter 还可
-携带 live 歌词候选。歌词来源和播放来源是两个维度。歌词文档进入
-`DisplayCoordinator` 后，当前行、上下文、逐字进度和 interlude 才由 display 层计算。
+MPRIS, Cider, and external adapters are normalized into playback facts at their boundaries. Cider and adapters may also provide live lyric candidates. Playback source and lyric source are independent dimensions. `DisplayCoordinator` receives a complete lyric document; the display layer derives the current line, context, word progress, and interlude state.
 
-## 分层
+## Layer boundaries
 
-| 层 | 责任 | 代表模块 |
+| Layer | Responsibility | Representative modules |
 | --- | --- | --- |
-| Domain | 值类型、歌词解析/匹配、时间轴和展示投影 | `lyrics/`、`playback/`、`display/` |
-| Application | 用例、来源仲裁、配置应用和生命周期 | `app/` |
-| Boundary | MPRIS D-Bus、Cider HTTP、adapter 接收 | `providers/`、`receiver.py` |
-| Platform | compositor 能力、surface、output 和 native bridge | `platform/` |
-| Presentation | Qt 窗口、控件、状态绑定和托盘 | `ui/`、`tray.py` |
-| Configuration | typed `Config`、XDG 路径和原子持久化 | `config/`、`file_access.py` |
+| Domain | Value types, lyric parsing and matching, timelines, display projections | `lyrics/`, `playback/`, `display/` |
+| Application | Use cases, source arbitration, configuration application, lifecycle | `app/` |
+| Boundary | MPRIS D-Bus, Cider HTTP, adapter ingress | `providers/`, `receiver.py` |
+| Platform | Compositor capabilities, surfaces, outputs, native bridge | `platform/` |
+| Presentation | Qt windows, controls, state binding, tray | `ui/`, `tray.py` |
+| Configuration | Typed `Config`, XDG paths, atomic persistence | `config/`, `file_access.py` |
 
-Domain 不依赖 Qt、网络客户端、D-Bus 或 native bridge；presentation 不创建
-session、worker 或 cache；platform 不决定歌词来源策略。
+The domain layer does not depend on Qt, network clients, D-Bus, or the native bridge. Presentation does not create sessions, workers, or caches. Platform adapters do not select lyric sources.
 
-## Owner
+## Ownership
 
-| Owner | 责任 |
+| Owner | Responsibility |
 | --- | --- |
-| `ApplicationComposition` | 唯一的 concrete object graph 组合根，创建并注入所有实现 |
-| `AppController` | 应用生命周期、Settings、cache 管理和手动搜索 intent |
-| `SourceOwnershipCoordinator` | 仲裁 `mpris`、`cider`、`adapter` 播放候选及其 clock |
-| `LyricsResolutionWorkflow` | generation、取消、过期结果隔离和解析决策 |
-| `LyricsResolver` | source plan、匹配、cache 和共享查找任务 |
-| `DisplayCoordinator` | `DisplayFrame`、MediaClock 和唯一 display publisher 边界 |
-| `LyricsCache` | 一个 SQLite cache 的异步 facade；resolver 和管理窗口共享同一实例 |
-| Provider / receiver | 各自拥有外部 session、轮询和连接资源 |
+| `ApplicationComposition` | The single composition root; creates and injects the concrete object graph |
+| `AppController` | Application lifecycle, settings, cache management, and manual-search intents |
+| `SourceOwnershipCoordinator` | Arbitration of `mpris`, `cider`, and `adapter` playback candidates and clocks |
+| `LyricsResolutionWorkflow` | Generations, cancellation, stale-result isolation, and resolution decisions |
+| `LyricsResolver` | Source plans, matching, cache access, and shared lookup tasks |
+| `DisplayCoordinator` | `DisplayFrame`, `MediaClock`, and the single display-publisher boundary |
+| `LyricsCache` | Asynchronous facade for one SQLite cache, shared by resolution and cache management |
+| Providers / receiver | Their own external sessions, polling loops, and connection resources |
 
-具体实现只在 `app/composition.py` 装配。模块不得通过全局 service、widget parent
-或 deep helper 隐式寻找依赖，也不得创建第二套 publisher。
+Concrete implementations are assembled in `app/composition.py`. Modules do not locate dependencies through global services, widget parents, or deep helpers, and there is only one display publisher.
 
-## 关键边界
+## Boundary contracts
 
-- 外部 JSON、D-Bus、HTTP 和文件输入在边界处解析、校验并转换为 typed value。
-- 歌词 provider 和 adapter 只传递完整 `LyricsDocument`，不传递当前行或上下文等展示派生字段。
-- cache 管理使用 `LyricsCacheManagementPort`，手动应用使用 `LyricsCacheWritePort`；两者都指向组合根创建的同一个 `LyricsCache`，cache CRUD 不经过 MPRIS port。
-- 平台能力用带原因的 capability/result 返回；UI 不直接读取 compositor 名称或 native bridge。
-- overlay 拖动只使用平台策略进行坐标换算和位置同步。普通窗口和支持该行为的 Layer Shell 桌面保持连续跨屏；Niri 的 Layer Shell surface 绑定单一 output，因此拖动期间把可见面板限制在当前 output 的逻辑矩形内，避免向未绑定 output 提交无效边距。可跨屏重绑的路径仍只在释放时根据最终指针位置处理。
+- External JSON, D-Bus, HTTP, and file input is parsed, validated, and converted to typed values at the boundary.
+- Lyric providers and adapters pass complete `LyricsDocument` values. Current-line, context, and interlude values are display projections and do not cross the boundary.
+- Cache management uses `LyricsCacheManagementPort`; manual selection uses `LyricsCacheWritePort`. Both ports target the same `LyricsCache` created by the composition root. Cache CRUD does not pass through the MPRIS port.
+- Platform capabilities return a capability or result with a reason. The UI does not read compositor names or the native bridge directly.
+- Overlay dragging delegates coordinate conversion and position synchronization to the selected platform strategy. Ordinary windows and Layer Shell compositors that support the behavior retain continuous cross-output dragging. Niri binds a Layer Shell surface to one output, so the panel is constrained to that output's logical rectangle while the gesture is active. The surface is not rebound during the pointer grab; output selection, rebinding, and persistence use the final pointer position after release.
 
-## 生命周期
+## Lifecycle
 
-- 构造函数只建立内存和 UI 状态，不执行网络 I/O、不启动 task、不注册进程级 hook。
-- `AppController.start()` 依次激活 overlay、启动 display/search，再尝试启动 adapter、Cider 和 MPRIS；某个外部边界不可用不影响其它功能。
-- `AppController.stop()` 先关闭窗口和 feature task，再停止 provider/receiver/display，释放 overlay surface 资源，最后关闭配置 service。
-- 所有 task、session、worker 和 surface 都有明确 owner、取消或关闭路径；`start()`、`stop()`、`close()` 尽量幂等。
-- MPRIS 没有独立关闭工作流；`MprisProvider.stop()` 只是应用关闭时的内部步骤，并负责结束 MPRIS lyric workflow 及其 resolver/cache 资源。
+- Constructors establish in-memory and UI state only. They do not perform network I/O, start tasks, or register process-wide hooks.
+- `AppController.start()` activates and shows the overlay, starts display and search, then attempts to start the adapter receiver, Cider, and MPRIS independently. One unavailable external boundary does not disable the others.
+- `AppController.stop()` closes windows and feature tasks, then stops MPRIS, Cider, the receiver, and display, releases overlay surface resources, and finally closes the configuration service.
+- Every task, session, worker, and surface has an owner and an explicit cancellation or close path. `start()`, `stop()`, and `close()` are designed to be idempotent where practical.
+- MPRIS has no independent shutdown workflow. `MprisProvider.stop()` is an application-shutdown step that ends the MPRIS lyric workflow and its resolver/cache resources.
 
-## 状态和配置
+## State and configuration
 
-| 状态 | 值 | 含义 |
+| State | Values | Meaning |
 | --- | --- | --- |
-| Playback source | `mpris`、`cider`、`adapter` | 当前播放事实和时钟的来源 |
-| Lyrics source | provider 或本地来源 id | 生成当前歌词文档的来源 |
-| Lyrics origin | `network`、`cache`、`live`、`sidecar`、`embedded`、`adapter`、`manual` | 文档进入显示路径的方式 |
-| Cache state | `none`、`from-cache`、`manual` | 当前文档与持久 cache 的关系 |
+| Playback source | `mpris`, `cider`, `adapter` | Source of the active playback facts and clock |
+| Lyrics source | Provider or local source id | Source that produced the current lyric document |
+| Lyrics origin | `network`, `cache`, `live`, `sidecar`, `embedded`, `adapter`, `manual` | How the document entered the display path |
+| Cache state | `none`, `from-cache`, `manual` | Relationship between the document and persistent cache |
 
-配置默认位于 `$XDG_CONFIG_HOME/kotonoha/config.json`，cache 默认位于
-`$XDG_CACHE_HOME/kotonoha/lyrics.sqlite3`；未设置对应变量时分别使用
-`~/.config/kotonoha/` 和 `~/.cache/kotonoha/`。`Config` 是唯一 typed settings
-model，token 不写入日志。
+The default configuration path is `$XDG_CONFIG_HOME/kotonoha/config.json`. The default cache path is `$XDG_CACHE_HOME/kotonoha/lyrics.sqlite3`. When the variables are unset, the paths are `~/.config/kotonoha/` and `~/.cache/kotonoha/`. `Config` is the typed settings model, and tokens are excluded from application logs.
 
-Wayland Layer Shell 不可用时使用普通 Qt window；blur 是独立 capability。重建
-surface 或重新绑定 output 前，必须释放旧 surface 关联的 compositor 资源。
+When Layer Shell is unavailable, Kotonoha uses a regular Qt window. Blur is an independent capability. Resources associated with an old compositor surface are released before a surface is rebuilt or rebound to another output.
 
-歌词、cache 和手动选词的细节见 [`SPEC-lyrics.md`](SPEC-lyrics.md)，外部 adapter
-协议见 [`../plugins/README.zh-CN.md`](../plugins/README.zh-CN.md)。
+For lyric resolution, cache, and manual selection, see [`SPEC-lyrics.md`](SPEC-lyrics.md). For the external adapter contract, see [`../plugins/README.md`](../plugins/README.md).

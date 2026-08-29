@@ -1,5 +1,7 @@
 # Kotonoha
 
+[中文](README.zh-CN.md)
+
 Kotonoha is a Linux desktop lyrics overlay. It reads the current track and playback position from any MPRIS player, then shows synchronized lyrics in a translucent Wayland overlay.
 
 It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible players. Lyrics can come from Netease, lrclib, Kugou, or Cider's local HTTP API.
@@ -141,6 +143,6 @@ uv build
 
 ## Documentation
 
-- [当前架构](docs/SPEC.md)
-- [歌词、cache 和手动选词](docs/SPEC-lyrics.md)
-- [外部 adapter 协议](plugins/README.zh-CN.md)
+- [Architecture](docs/SPEC.md)
+- [Lyrics, cache, and manual selection](docs/SPEC-lyrics.md)
+- [External adapter protocol](plugins/README.md)

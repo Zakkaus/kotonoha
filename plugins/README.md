@@ -1,55 +1,55 @@
-# External adapter protocol
+# External Adapter Protocol
 
 [中文](README.zh-CN.md)
 
-`plugins/` is the extension point for external player adapters. Kotonoha does
-not ship a player-specific plugin here. An adapter can be written in any
-language and only needs to publish normalized playback facts and a complete
-timed lyric document over the generic WebSocket protocol.
+This document defines the local protocol for external player adapters. An
+adapter may be implemented in any language. Its responsibility is to publish
+normalized playback facts and complete timed lyric documents to Kotonoha.
 
-Application-side lyric resolution, source priority, caching, and manual
-selection are outside this protocol; see
-[`docs/SPEC-lyrics.md`](../docs/SPEC-lyrics.md).
+Lyric resolution, source priority, caching, and manual selection belong to the
+application and are outside this protocol. See
+[`docs/SPEC-lyrics.md`](../docs/SPEC-lyrics.md) for those rules.
 
-## Connection
+## Endpoint
 
-Connect to the local receiver:
+| Property | Value |
+| --- | --- |
+| WebSocket | `ws://127.0.0.1:28745/kotonoha/adapter` |
+| Default port | `28745` |
+| Override | Kotonoha `--port` option |
+| Bind address | Loopback (`127.0.0.1`) |
+| Payload | UTF-8 JSON text frames |
 
-```text
-ws://127.0.0.1:28745/kotonoha/adapter
-```
+The receiver keeps a WebSocket open for the adapter lifetime. The same path
+also accepts HTTP `POST` for local debugging and integration tests; WebSocket
+is the adapter contract.
 
-The port is `28745` by default and can be overridden with Kotonoha's `--port`
-option. The receiver listens on the loopback interface. It accepts JSON text
-frames and keeps the connection open for the lifetime of the adapter.
-
-The current receiver does not send application-level acknowledgements or
-`resync` commands. After a disconnect, reconnect and send a fresh `snapshot`.
-The HTTP `POST` route at the same path is only a local debug/integration route;
-WebSocket is the adapter contract.
+The receiver sends no application-level acknowledgements or `resync` commands.
+After reconnecting, an adapter sends a complete `snapshot` and starts a new
+sequence space for that connection.
 
 ## Message envelope
 
-Every message uses this envelope:
+Every message contains the following fields:
 
-| Field | Type | Meaning |
+| Field | Type | Contract |
 | --- | --- | --- |
-| `protocol` | string | Must be `kotonoha.adapter`. |
-| `version` | integer | Must be `1`. |
-| `type` | string | `snapshot` or `clock`. |
-| `adapter` | string | Stable id of the external player adapter, not the lyric provider. |
-| `sequence` | integer | Non-negative sequence number for this connection. |
-| `capturedAt` | string | Non-empty producer timestamp, normally an ISO 8601 string. |
+| `protocol` | string | `kotonoha.adapter` |
+| `version` | integer | `1` |
+| `type` | string | `snapshot` or `clock` |
+| `adapter` | string | Stable external adapter id; not a lyric provider id |
+| `sequence` | integer | Non-negative sequence number for the connection |
+| `capturedAt` | string | Non-empty producer timestamp, normally ISO 8601 |
 
-Sequences are checked per connection across both message types. A message with
-a sequence number less than or equal to the last accepted message is discarded.
-When an adapter reconnects, it may start a new sequence space.
+Sequence ordering applies across both message types on one connection. A
+message whose sequence is less than or equal to the last accepted sequence is
+discarded.
 
 ## Snapshot
 
-Send a complete snapshot when the connection opens, when the track changes, or
-when the lyric document changes. `lyrics` may be `null` when the player has no
-lyrics yet.
+A snapshot is the complete state for a track and its lyric document. Send one
+when the connection opens, when the track changes, and when the lyric document
+changes. `lyrics` may be `null` while no lyrics are available.
 
 ```json
 {
@@ -99,37 +99,40 @@ lyrics yet.
 }
 ```
 
-`playback` is required for a snapshot. Its `playerId` and `status` are
-required. `positionS`, `durationS`, and `track` may be `null`; when `track` is
-present, `stableId`, `url`, and the track duration are optional, while title,
-raw title, artist, and album are strings.
+### Playback object
 
-The `lyrics` object represents the final lyric artifact, not the player that
-transported it:
+`playback` is required. `playerId` and `status` are required. `positionS`,
+`durationS`, and `track` may be `null`.
 
-- `source` is a required, stable provider id such as `lrclib`, `netease`, or
-  `apple-music`.
-- `sourceName` is an optional human-readable label such as `LRCLIB` or
-  `Apple Music`.
+When `track` is present, `title`, `rawTitle`, `artist`, and `album` are strings.
+`stableId`, `url`, and track duration are optional. Missing lyric metadata is
+filled from the track when possible.
+
+`status` is one of `Playing`, `Paused`, `Stopped`, or `Unknown`.
+
+### Lyrics object
+
+The `lyrics` object describes the final lyric artifact, not the player or
+transport adapter that delivered it.
+
+- `source` is a stable provider id, such as `lrclib`, `netease`, or `apple-music`.
+- `sourceName` is an optional human-readable provider name.
 - `timing` is `Line` or `Word` when `lines` is non-empty.
-- `lines` are ordered and each line has non-negative `start` and `end` values.
-- Each word either has both non-negative `start` and `end` values, or both are
-  `null`.
-- `title`, `artist`, `album`, and `durationS` are optional. Missing values are
-  filled from the playback track where possible.
+- `lines` are ordered; every line has non-negative `start` and `end` values.
+- A word has either both non-negative `start` and `end` values or both values set to `null`.
+- `title`, `artist`, `album`, and `durationS` are optional.
 
-The adapter must send the complete document. It must not send display-derived
-fields such as `currentLine`, `previousLine`, `nextLine`, `aroundLines`, or
-interlude state. Kotonoha's display engine selects the current line, context,
-interlude, and word progress consistently for every adapter.
+The document contains only source data. Display-derived fields such as
+`currentLine`, `previousLine`, `nextLine`, `aroundLines`, and interlude state
+are calculated by Kotonoha's display engine.
 
 ## Clock
 
-Send a lightweight clock update for position and playback-state calibration.
-It is not necessary to send one for every display frame because Kotonoha
-interpolates between accepted observations using its local monotonic clock.
-Send updates at a stable low frequency, and send one immediately after a seek
-or playback-state change.
+A clock message updates playback position and status for the latest snapshot.
+It is used for media-clock calibration; Kotonoha interpolates between accepted
+observations and does not require one message per display frame. Send a clock
+after a seek or playback-state change and at a stable lower frequency while
+playback continues.
 
 ```json
 {
@@ -145,26 +148,21 @@ or playback-state change.
 }
 ```
 
-`trackRef` must identify the track from the latest accepted snapshot. When a
-snapshot has a `stableId`, Kotonoha forms it as
-`adapter:playerId:stableId`. A clock for a different track is rejected and does
-not replace the current display. `positionS` may be `null` when the position is
-temporarily unavailable. `status` is one of `Playing`, `Paused`, `Stopped`, or
-`Unknown`.
+`trackRef` binds the clock to the latest accepted snapshot. When a snapshot
+contains `stableId`, Kotonoha forms the reference as
+`adapter:playerId:stableId`. A clock for another track is rejected and cannot
+replace the current display. `positionS` may be `null` while unavailable.
 
-## Protocol adaptation boundary
+## Adapter boundary
 
-An adapter owns all player-specific and third-party details. Its boundary work
-should follow this sequence:
+The adapter owns player-specific APIs, browser data, third-party payloads, and
+their normalization. The boundary produces only the protocol shapes:
 
-1. Read the player API, browser store, or other external source.
-2. Normalize player identity, track metadata, playback status, position, and
-   duration into the `playback` shape.
-3. Fetch or parse lyrics and normalize them into the complete `lyrics` shape.
-4. Put the final lyric provider in `lyrics.source`; put only its display label
-   in `lyrics.sourceName`.
-5. Publish a `snapshot` for track/document changes and `clock` for position
-   calibration.
+1. Read player state and track metadata.
+2. Normalize player identity, track metadata, status, position, and duration into `playback`.
+3. Fetch or parse lyrics into one complete `lyrics` document.
+4. Set `lyrics.source` to the lyric provider id and use `lyrics.sourceName` only for its display label.
+5. Publish `snapshot` for track or document changes and `clock` for position calibration.
 
 Keep these identities separate:
 
@@ -173,9 +171,11 @@ Keep these identities separate:
 | Transport adapter | `example-player` | External integration |
 | Player instance | `example-window` | External player |
 | Track identity | `track-123` | Player or catalog |
-| Lyric provider | `lrclib` | Lyric source that produced the document |
+| Lyric provider | `lrclib` | Source that produced the document |
 
-The adapter should reconnect with backoff, resend a full snapshot after
-connecting, and stop sending when its player data is no longer valid. It should
-never silently turn a malformed or partial lyric response into a valid
-snapshot; invalid data is better omitted until a complete document is ready.
+## Reconnection and invalid data
+
+Reconnect with backoff and resend a complete snapshot after each connection.
+Stop publishing when player data is no longer valid. Malformed or incomplete
+lyric data is not converted into a valid snapshot; omit the document until a
+complete, validated document is available.
