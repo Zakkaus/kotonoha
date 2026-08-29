@@ -8,7 +8,6 @@ from PyQt6.QtCore import QAbstractTableModel, QModelIndex, Qt, pyqtSignal
 from PyQt6.QtGui import QColor, QIcon
 from PyQt6.QtWidgets import (
     QAbstractItemView,
-    QDialog,
     QHBoxLayout,
     QHeaderView,
     QLabel,
@@ -22,6 +21,7 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
+from ... import leaf_icon
 from ...app.intents import ClearCache, DeleteCacheEntries, SearchCache
 from ...config import Config
 from ...lyrics.cache import (
@@ -32,8 +32,10 @@ from ...lyrics.cache import (
     LyricsCacheMode,
     LyricsCacheQuery,
 )
+from ...platform import OverlayPlatformFactory
 from ...strings import Translator
 from . import theme
+from .surface import SettingsTitleBar, ThemedSettingsDialog
 
 
 class LyricsCacheTableModel(QAbstractTableModel):
@@ -106,7 +108,7 @@ class LyricsCacheTableModel(QAbstractTableModel):
         return self._entries[row] if 0 <= row < len(self._entries) else None
 
 
-class LyricsCacheDialog(QDialog):
+class LyricsCacheDialog(ThemedSettingsDialog):
     """Search and delete persistent lyric-cache entries in a separate window."""
 
     intent_requested = pyqtSignal(object)
@@ -117,11 +119,10 @@ class LyricsCacheDialog(QDialog):
         parent: QWidget | None = None,
         *,
         translator: Translator | None = None,
+        platform_factory: OverlayPlatformFactory | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(config, parent, platform_factory=platform_factory)
         self._translator = translator if translator is not None else Translator(config.ui_language)
-        self._theme = theme._resolve_theme(config.theme)
-        self._accent = config.accent_start
         self._confirmation: QMessageBox | None = None
         self._pending_delete: tuple[LyricsCacheKey, ...] = ()
         self._query = LyricsCacheQuery()
@@ -129,10 +130,10 @@ class LyricsCacheDialog(QDialog):
 
         self.setObjectName("cacheDialog")
         self.setWindowTitle(self._translator.text("cache.title"))
-        self.setWindowFlags(Qt.WindowType.Dialog)
         self.setMinimumSize(760, 480)
         self.resize(960, 600)
-        self.setStyleSheet(self._style_sheet())
+        self._apply_surface_style()
+        self._mark_surface_style_ready()
 
         self._model = LyricsCacheTableModel(self._translator)
         self._keyword = QLineEdit()
@@ -150,11 +151,18 @@ class LyricsCacheDialog(QDialog):
         self._table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)
         self._table.setAlternatingRowColors(True)
         self._table.setShowGrid(False)
+        table_viewport = self._table.viewport()
+        if table_viewport is not None:
+            table_viewport.setAutoFillBackground(False)
         vertical_header = self._table.verticalHeader()
         if vertical_header is not None:
             vertical_header.setVisible(False)
         horizontal_header = self._table.horizontalHeader()
         if horizontal_header is not None:
+            horizontal_header.setAutoFillBackground(False)
+            header_viewport = horizontal_header.viewport()
+            if header_viewport is not None:
+                header_viewport.setAutoFillBackground(False)
             horizontal_header.setDefaultAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
             horizontal_header.setStretchLastSection(False)
             horizontal_header.setSectionResizeMode(0, QHeaderView.ResizeMode.ResizeToContents)
@@ -194,20 +202,52 @@ class LyricsCacheDialog(QDialog):
         footer.addWidget(self._clear_button)
         footer.addWidget(close_button)
 
-        title = QLabel(self._translator.text("cache.title"))
-        title.setObjectName("dialogTitle")
         subtitle = QLabel(self._translator.text("cache.subtitle"))
         subtitle.setObjectName("hint")
         subtitle.setWordWrap(True)
 
+        header_line = QWidget()
+        header_line.setObjectName("navDivider")
+        header_line.setFixedHeight(1)
+
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(22, 20, 22, 20)
+        layout.setContentsMargins(16, 14, 16, 14)
         layout.setSpacing(12)
-        layout.addWidget(title)
+        layout.addWidget(self._title_bar())
+        layout.addWidget(header_line)
         layout.addWidget(subtitle)
         layout.addLayout(search_row)
         layout.addWidget(self._table, 1)
         layout.addLayout(footer)
+
+    def _apply_surface_style(self) -> None:
+        """Apply the shared settings skin plus the cache table rules."""
+        self.setStyleSheet(self._style_sheet())
+
+    def _title_bar(self) -> QWidget:
+        """Build the same draggable title bar used by the main Settings dialog."""
+        title_bar = SettingsTitleBar()
+        bar = QHBoxLayout(title_bar)
+        bar.setContentsMargins(0, 0, 0, 0)
+        bar.setSpacing(9)
+        logo_badge = QLabel()
+        logo_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        pixmap = leaf_icon.render_leaf(leaf_icon.ACCENT, self._accent, size=44)
+        pixmap.setDevicePixelRatio(2.0)
+        logo_badge.setPixmap(pixmap)
+        bar.addWidget(logo_badge)
+        title = QLabel(self._translator.text("cache.title"))
+        title.setObjectName("dialogTitle")
+        title.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        close_button = QPushButton("✕")
+        close_button.setObjectName("closeButton")
+        close_button.setFixedSize(26, 26)
+        close_button.setCursor(Qt.CursorShape.PointingHandCursor)
+        close_button.clicked.connect(self.close)
+        bar.addWidget(title)
+        bar.addStretch(1)
+        bar.addWidget(close_button)
+        return title_bar
 
     def show(self) -> None:
         """Show the manager and request its initial unfiltered result set."""
@@ -349,17 +389,15 @@ class LyricsCacheDialog(QDialog):
     def _style_sheet(self) -> str:
         """Extend the shared settings skin with dense table-management styling."""
         palette = theme._PALETTES[self._theme]
-        background = palette["window_bg"]
-        if not isinstance(background, tuple) or len(background) != 4:
-            raise TypeError("settings palette window background must be RGBA")
         list_bg = palette["LIST_BG"]
         list_border = palette["LIST_BORDER"]
         field_border = palette["FIELD_BORDER"]
         accent_color = QColor(self._accent)
         accent_soft = f"rgba({accent_color.red()}, {accent_color.green()}, {accent_color.blue()}, 42)"
-        return theme._skin(self._accent, self._theme) + f"""
-QDialog#cacheDialog {{ background: rgba({background[0]}, {background[1]}, {background[2]}, {background[3]}); }}
-QTableView#cacheTable {{
+        return theme._skin(self._accent, self._theme, self._frosted, self._win_opacity) + f"""
+QDialog#cacheDialog {{ background: transparent; }}
+QTableView#cacheTable,
+QTableView#cacheTable > QWidget#qt_scrollarea_viewport {{
     background: {list_bg};
     border: 1px solid {list_border};
     border-radius: 10px;
@@ -378,6 +416,7 @@ QHeaderView::section {{
     padding: 8px;
     font-weight: 600;
 }}
+QHeaderView {{ background: transparent; }}
 QLabel#cacheError {{ color: #E56B6F; }}
 """
 

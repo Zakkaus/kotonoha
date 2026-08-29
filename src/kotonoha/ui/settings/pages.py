@@ -390,6 +390,8 @@ class SettingsPageBuilder:
 
     def _form_page(self) -> tuple[QWidget, QFormLayout]:
         page = QWidget()
+        page.setObjectName("settingsPage")
+        page.setAutoFillBackground(False)
         outer = QVBoxLayout(page)
         outer.setContentsMargins(20, 18, 20, 18)
         outer.setSpacing(0)

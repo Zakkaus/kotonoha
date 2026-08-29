@@ -237,6 +237,32 @@ def test_cache_dialog_aligns_headers_with_rows_and_localizes_close_button(qapp):
     dialog.close()
 
 
+def test_dark_cache_dialog_keeps_the_table_header_on_the_dark_surface(qapp):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QTableView
+
+    from kotonoha.ui.settings.cache_dialog import LyricsCacheDialog
+
+    dialog = LyricsCacheDialog(Config(theme=ThemeMode.DARK, frost_window=False, fx_animate=False))
+    table = dialog.findChild(QTableView)
+    assert table is not None
+    header = table.horizontalHeader()
+    if header is None:
+        raise AssertionError("cache table header is unavailable")
+    header_viewport = header.viewport()
+    if header_viewport is None:
+        raise AssertionError("cache table header viewport is unavailable")
+    assert header.autoFillBackground() is False
+    assert header_viewport.autoFillBackground() is False
+
+    dialog.show()
+    qapp.processEvents()
+    image = dialog.grab().toImage()
+    point = header_viewport.mapTo(dialog, QPoint(header_viewport.width() - 8, header_viewport.height() // 2))
+    assert image.pixelColor(point).lightness() < 100
+    dialog.close()
+
+
 def test_apply_reskins_dialog_with_new_accent(qapp):
     dialog = SettingsDialog(Config(accent_start="#FF4FA3"))
     assert "#FF4FA3" in dialog.styleSheet()
@@ -413,6 +439,90 @@ def test_theme_selector_roundtrips_and_switches_palette(qapp):
     assert cast(str, _PALETTES["dark"]["TEXT"]) in light.styleSheet()
     dark.close()
     light.close()
+
+
+def test_switching_settings_to_dark_keeps_scroll_pages_on_the_dark_surface(qapp):
+    from PyQt6.QtCore import QPoint
+    from PyQt6.QtWidgets import QScrollArea
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, frost_window=False, fx_animate=False))
+    scroll = dialog.findChild(QScrollArea, "settingsPageScroll")
+    assert scroll is not None
+    page = scroll.widget()
+    assert page is not None
+    assert page.autoFillBackground() is False
+    viewport = scroll.viewport()
+    if viewport is None:
+        raise AssertionError("settings page viewport is unavailable")
+    assert viewport.autoFillBackground() is False
+
+    dialog.show()
+    qapp.processEvents()
+    dialog.form_widgets.theme_combo.setCurrentIndex(dialog.form_widgets.theme_combo.findData("dark"))
+    dialog._emit()
+    qapp.processEvents()
+
+    image = dialog.grab().toImage()
+    point = page.mapTo(dialog, QPoint(5, 200))
+    assert image.pixelColor(point).lightness() < 80
+    dialog.close()
+
+
+def test_combo_popups_follow_the_active_settings_theme(qapp):
+    from PyQt6.QtCore import QPoint
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.LIGHT, frost_window=False, fx_animate=False))
+    combo = dialog.form_widgets.font_family
+    view = combo.view()
+    if view is None:
+        raise AssertionError("font combo popup view is unavailable")
+
+    dialog.show()
+    combo.showPopup()
+    qapp.processEvents()
+    light_image = view.grab().toImage()
+    background_point = QPoint(max(0, light_image.width() - 30), 5)
+    assert 180 < light_image.pixelColor(background_point).lightness() < 250
+    popup = view.window()
+    if popup is None:
+        raise AssertionError("font combo popup frame is unavailable")
+    assert view.width() == combo.width()
+    assert popup.width() == combo.width()
+    combo.hidePopup()
+
+    combo_theme = dialog.form_widgets.theme_combo
+    combo_theme.setCurrentIndex(combo_theme.findData(ThemeMode.DARK.value))
+    dialog._emit()
+    combo.showPopup()
+    qapp.processEvents()
+    dark_image = view.grab().toImage()
+    background_point = QPoint(max(0, dark_image.width() - 30), 5)
+    assert dark_image.pixelColor(background_point).lightness() < 100
+    combo.hidePopup()
+    dialog.close()
+
+
+def test_long_settings_combo_items_do_not_expand_the_popup_frame(qapp):
+    from kotonoha.ui.settings.widgets import SettingsComboBox
+
+    combo = SettingsComboBox()
+    combo.addItem("long-value-" + "x" * 400)
+    combo.resize(180, 34)
+    combo.show()
+    qapp.processEvents()
+    view = combo.view()
+    if view is None:
+        raise AssertionError("settings combo popup view is unavailable")
+
+    combo.showPopup()
+    qapp.processEvents()
+    popup = view.window()
+    if popup is None:
+        raise AssertionError("settings combo popup frame is unavailable")
+    assert view.width() == combo.width()
+    assert popup.width() == combo.width()
+    combo.hidePopup()
+    combo.close()
 
 
 def test_connection_section_removed_but_port_preserved(qapp):

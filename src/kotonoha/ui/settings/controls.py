@@ -7,8 +7,6 @@ from typing import Literal
 
 from PyQt6.QtWidgets import (
     QCheckBox,
-    QComboBox,
-    QFontComboBox,
     QLineEdit,
     QListWidget,
     QListWidgetItem,
@@ -16,7 +14,7 @@ from PyQt6.QtWidgets import (
     QSpinBox,
 )
 
-from .widgets import IconStrip
+from .widgets import IconStrip, SettingsComboBox, SettingsFontComboBox
 
 IconPicker = tuple[IconStrip, dict[str, QListWidgetItem]]
 OpacityKey = Literal["opacity", "frost_opacity"]
@@ -52,8 +50,8 @@ class SettingsWidgets:
     """
 
     def __init__(self) -> None:
-        self.ui_language = QComboBox()
-        self.theme_combo = QComboBox()
+        self.ui_language = SettingsComboBox()
+        self.theme_combo = SettingsComboBox()
         self.frost_window = QCheckBox()
         self.settings_opacity = QSpinBox()
         self.restart_button = QPushButton()
@@ -62,45 +60,45 @@ class SettingsWidgets:
         self.window_icon_list = IconStrip()
         self.icon_pickers: list[IconPicker] = []
 
-        self.font_family = QFontComboBox()
+        self.font_family = SettingsFontComboBox()
         self.font_family_shown = ""
         self.font_family_configured = ""
-        self.font_style = QComboBox()
+        self.font_style = SettingsComboBox()
         self.font_size = QSpinBox()
         self.context_font_size = QSpinBox()
         self.translation_font_size = QSpinBox()
 
-        self.panel = QComboBox()
-        self.panel_width_mode = QComboBox()
+        self.panel = SettingsComboBox()
+        self.panel_width_mode = SettingsComboBox()
         self.panel_width = QSpinBox()
         self.panel_opacity = PanelOpacityState()
         self.opacity_active_key: OpacityKey = "opacity"
         self.opacity = QSpinBox()
         self.panel_tint = QCheckBox()
 
-        self.accent = QComboBox()
+        self.accent = SettingsComboBox()
         self.custom_index = -1
         self.accent_last_index = -1
         self.fx_animate = QCheckBox()
-        self.fx_transition = QComboBox()
+        self.fx_transition = SettingsComboBox()
         self.fx_glow = QCheckBox()
         self.fx_word_pop = QCheckBox()
-        self.fx_intensity = QComboBox()
+        self.fx_intensity = SettingsComboBox()
 
         self.karaoke = QCheckBox()
         self.lead = QSpinBox()
         self.translation = QCheckBox()
         self.current_line_only = QCheckBox()
-        self.lyrics_script = QComboBox()
-        self.interlude_style = QComboBox()
-        self.interlude_countdown = QComboBox()
+        self.lyrics_script = SettingsComboBox()
+        self.interlude_style = SettingsComboBox()
+        self.interlude_countdown = SettingsComboBox()
 
-        self.anchor = QComboBox()
+        self.anchor = SettingsComboBox()
         self.margin_edge = QSpinBox()
         self.margin_x = QSpinBox()
         self.passthrough = QCheckBox()
 
-        self.player_combo = QComboBox()
+        self.player_combo = SettingsComboBox()
         self.sources_list = QListWidget()
         self.display_sources_list = QListWidget()
         self.prefer_best = QCheckBox()

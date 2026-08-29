@@ -8,9 +8,7 @@ from :mod:`kotonoha.strings`.
 
 from __future__ import annotations
 
-import logging
 from dataclasses import replace
-from typing import cast
 
 from PyQt6.QtCore import (
     QAbstractAnimation,
@@ -20,20 +18,11 @@ from PyQt6.QtCore import (
     pyqtSignal,
 )
 from PyQt6.QtGui import (
-    QCloseEvent,
-    QColor,
     QGuiApplication,
-    QHideEvent,
     QIcon,
-    QMouseEvent,
-    QPainter,
-    QPaintEvent,
-    QPen,
-    QResizeEvent,
     QShowEvent,
 )
 from PyQt6.QtWidgets import (
-    QDialog,
     QDialogButtonBox,
     QFrame,
     QHBoxLayout,
@@ -51,7 +40,7 @@ from PyQt6.QtWidgets import (
 from ... import leaf_icon
 from ...app.intents import ApplyConfig, ClearCache, OpenCacheManagement, RequestRestart
 from ...config import Config
-from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
+from ...platform import OverlayPlatformFactory
 from ...players import PlayerInfo
 from ...strings import Translator
 from . import theme
@@ -59,39 +48,22 @@ from .controls import SettingsWidgets
 from .form_state import SettingsFormState
 from .icons import selected_icon_name
 from .pages import SettingsPageBuilder
+from .surface import SettingsTitleBar, ThemedSettingsDialog
 
 _CHECKMARK_PATH = theme._CHECKMARK_PATH
 _PALETTES = theme._PALETTES
 _resolve_theme = theme._resolve_theme
 _skin = theme._skin
-# Dialog corner radius, shared by the painted background and the KWin blur region.
-_RADIUS = 14
 _MINIMUM_WIDTH = 560
 _DEFAULT_WIDTH = 860
 _DEFAULT_HEIGHT = 680
 _MINIMUM_HEIGHT = 480
 _SCREEN_MARGIN = 48
 
-logger = logging.getLogger(__name__)
-
-
-class _SettingsTitleBar(QWidget):
-    """Drag the frameless settings window through the compositor system move."""
-
-    def mousePressEvent(self, a0: QMouseEvent | None) -> None:
-        if a0 is not None and a0.button() == Qt.MouseButton.LeftButton:
-            window = self.window()
-            if window is not None:
-                handle = window.windowHandle()
-                if handle is not None and handle.startSystemMove():
-                    a0.accept()
-                    return
-        super().mousePressEvent(a0)
-
 
 # Theme generation lives in theme.py; the dialog owns only lifecycle
 # and painting of the resulting window.
-class SettingsDialog(QDialog):
+class SettingsDialog(ThemedSettingsDialog):
     applied = pyqtSignal(object)  # emits Config
     intent_requested = pyqtSignal(object)  # emits an application intent
 
@@ -104,7 +76,7 @@ class SettingsDialog(QDialog):
         platform_factory: OverlayPlatformFactory | None = None,
         translator: Translator | None = None,
     ) -> None:
-        super().__init__(parent)
+        super().__init__(config, parent, platform_factory=platform_factory)
         self._translator = translator if translator is not None else Translator(config.ui_language)
         self._form_state = SettingsFormState(config)
         self._widgets = SettingsWidgets()
@@ -112,38 +84,9 @@ class SettingsDialog(QDialog):
         # The UI language only takes effect on restart, so remember what is in
         # effect now to decide when to offer the restart button.
         self._initial_ui_language = self.staged_config.ui_language
-        self._theme = _resolve_theme(self.staged_config.theme)
         self._did_fade_in = False
-        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
-        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
-        # Real backdrop-blur behind the whole window (frosted glass), wherever the
-        # compositor advertises a blur protocol. Asking the compositor beats matching
-        # on the desktop name, which claimed KDE 6.7 could blur after it dropped
-        # org_kde_kwin_blur and denied Mutter, which speaks the replacement. Where
-        # nothing can blur the window stays a solid panel, so it is never turned
-        # see-through in front of a backdrop that will not be blurred.
-        self._platform: OverlayPlatform | None = None
-        if platform_factory is not None:
-            self._platform = platform_factory(QtWindowHost(self, stay_on_top=False))
-        capabilities = self._platform.capabilities if self._platform is not None else None
-        self._blur_capable = capabilities is not None and capabilities.blur
-        # The cause travels with the capability, so the window can say which of the
-        # four situations it is rather than repeating the requirement.
-        self._blur_reason = capabilities.blur_reason if capabilities is not None else "bridge"
-        # Wayland has no client-side window-opacity protocol, so animating/setting
-        # windowOpacity there does nothing but spam "plugin does not support…".
-        # Which session this is belongs to the platform layer: reading the Qt
-        # platform name here made presentation decide a compositor fact itself, and
-        # a name passed in as an argument is still that same decision.
-        self._window_opacity_ok = capabilities is None or capabilities.window_opacity
-        self._frosted = self._blur_capable and self.staged_config.frost_window
-        # See-through level for the window surfaces. NOT setWindowOpacity — the Qt
-        # Wayland plugin ignores that (no client-side opacity protocol); instead the
-        # painted window fill + card alpha carry it, so it works under KWin.
-        self._win_opacity = self.staged_config.settings_opacity
-        self.setStyleSheet(
-            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
-        )
+        self._apply_surface_style()
+        self._mark_surface_style_ready()
 
         # Sidebar categories drive a stacked content area (replaces top tabs).
         self._stack = QStackedWidget()
@@ -242,8 +185,44 @@ class SettingsDialog(QDialog):
 
     # --- chrome ---
 
+    def _apply_surface_style(self) -> None:
+        """Apply the shared settings skin to the current staged surface state."""
+        self.setStyleSheet(
+            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
+        )
+        self._apply_combo_popup_styles()
+
+    def _apply_combo_popup_styles(self) -> None:
+        """Apply theme rules directly to popup views that live outside this dialog."""
+        popup_style = theme._popup_skin(self._accent, self._theme)
+        combos = (
+            self._widgets.ui_language,
+            self._widgets.theme_combo,
+            self._widgets.font_family,
+            self._widgets.font_style,
+            self._widgets.panel,
+            self._widgets.panel_width_mode,
+            self._widgets.accent,
+            self._widgets.fx_transition,
+            self._widgets.fx_intensity,
+            self._widgets.lyrics_script,
+            self._widgets.interlude_style,
+            self._widgets.interlude_countdown,
+            self._widgets.anchor,
+            self._widgets.player_combo,
+        )
+        for combo in combos:
+            view = combo.view()
+            if view is not None:
+                view.setObjectName("settingsComboPopup")
+                view.setStyleSheet(popup_style)
+                popup = view.window()
+                if popup is not None and popup is not view:
+                    popup.setObjectName("settingsComboPopupFrame")
+                    popup.setStyleSheet(popup_style)
+
     def _title_bar(self) -> QWidget:
-        title_bar = _SettingsTitleBar()
+        title_bar = SettingsTitleBar()
         bar = QHBoxLayout(title_bar)
         # The previous title bar was a layout nested directly in the dialog and
         # therefore had no child-widget margins. Keep that geometry while the
@@ -276,7 +255,14 @@ class SettingsDialog(QDialog):
         scroll.setWidgetResizable(True)
         scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        viewport = scroll.viewport()
+        if viewport is not None:
+            viewport.setAutoFillBackground(False)
         scroll.setWidget(page)
+        # QScrollArea reparents the page and may re-polish it; restore the
+        # transparent contract after that operation so the default palette cannot
+        # paint a light rectangle over the themed card.
+        page.setAutoFillBackground(False)
         self._page_scrolls.append(scroll)
         return scroll
 
@@ -291,98 +277,8 @@ class SettingsDialog(QDialog):
             height = min(height, max(_MINIMUM_HEIGHT, available.height() - _SCREEN_MARGIN))
         self.resize(width, height)
 
-    def paintEvent(self, a0: QPaintEvent | None) -> None:  # noqa: ARG002
-        palette = _PALETTES[self._theme]
-        rgba = cast("dict[str, tuple[int, int, int, int]]", palette)
-        bg = rgba["window_bg"]
-        if self._frosted:
-            # Translucent so the KWin blur behind the window shows through as frost.
-            bg = (bg[0], bg[1], bg[2], 165)
-        else:
-            # Opacity drives the window fill directly: 100% is fully opaque (alpha
-            # 255, not the palette's slightly-translucent default), 0% invisible.
-            bg = (bg[0], bg[1], bg[2], max(0, min(255, round(255 * self._win_opacity))))
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-        painter.setBrush(QColor(*bg))
-        painter.setPen(QPen(QColor(*rgba["window_border"])))
-        rect = self.rect().adjusted(0, 0, -1, -1)
-        painter.drawRoundedRect(rect, float(_RADIUS), float(_RADIUS))
-
-    def _apply_blur(self) -> None:
-        if not self._frosted or self._platform is None:
-            return
-        blur = self._platform.blur
-        if blur is None:
-            return
-        result = blur.set_blur_region(WindowRectangle(0, 0, self.width(), self.height()), _RADIUS)
-        if result.succeeded:
-            return
-        # The window is painted translucent because a compositor blur is meant to sit
-        # behind it. Discarding this left the panel see-through over an unblurred
-        # backdrop — unreadable — while still reporting frosted glass as on.
-        logger.warning("Frosted glass unavailable, falling back to a solid panel: %s", result.reason)
-        self._frosted = False
-        self.setStyleSheet(
-            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
-        )
-        self.update()
-
-    def hideEvent(self, a0: QHideEvent | None) -> None:
-        if self._frosted and self._platform is not None:
-            blur = self._platform.blur
-            if blur is not None:
-                blur.set_blur_region(None)
-        super().hideEvent(a0)
-
-    def done(self, a0: int) -> None:
-        """Close the owned surface before the dialog becomes reusable or hidden."""
-        result = self._close_platform()
-        if not result.succeeded:
-            logger.warning("Settings surface shutdown was incomplete: %s", result.reason)
-            return
-        super().done(a0)
-
-    def closeEvent(self, a0: QCloseEvent | None) -> None:
-        """Release the platform surface when the dialog is explicitly closed."""
-        result = self._close_platform()
-        if not result.succeeded:
-            logger.warning("Settings surface shutdown was incomplete: %s", result.reason)
-            if a0 is not None:
-                a0.ignore()
-            return
-        super().closeEvent(a0)
-
-    def _close_platform(self) -> SurfaceResult:
-        """Release the optional platform surface and report whether it completed."""
-        if self._platform is None:
-            return SurfaceResult.applied()
-        return self._platform.surface.close()
-
-    def show(self) -> None:
-        """Prepare the platform surface before Qt maps the dialog window.
-
-        ``surface.prepare()`` may replace the window flags. Qt hides a window when
-        its flags are changed after it has been shown, so doing this in
-        ``showEvent`` makes a settings window opened through a platform factory
-        disappear immediately.
-        """
-        if self._platform is not None:
-            prepared = self._platform.surface.prepare()
-            if not prepared.succeeded:
-                logger.warning("Settings surface preparation failed: %s", prepared.reason)
-        super().show()
-
-    def resizeEvent(self, a0: QResizeEvent | None) -> None:
-        super().resizeEvent(a0)
-        self._apply_blur()  # keep the blur region matched to the window size
-
     def showEvent(self, a0: QShowEvent | None) -> None:
         super().showEvent(a0)
-        if self._platform is not None:
-            activated = self._platform.surface.activate()
-            if not activated.succeeded:
-                logger.warning("Settings surface activation failed: %s", activated.reason)
         # Now the stylesheet metrics are active: size the sidebar to its widest
         # label (in any language), so switching sections never resizes the window and
         # the nav never truncates. Page height belongs to its own scroll area.
@@ -562,10 +458,9 @@ class SettingsDialog(QDialog):
         # away (tab underline, checkbox fill, light/dark palette) rather than only
         # after Settings is closed and reopened.
         self._theme = _resolve_theme(self.staged_config.theme)
+        self._accent = self.staged_config.accent_start
         self._win_opacity = self.staged_config.settings_opacity  # commit the see-through level
-        self.setStyleSheet(
-            _skin(self.staged_config.accent_start, self._theme, self._frosted, self._win_opacity)
-        )
+        self._apply_surface_style()
         self._update_logo_badge()  # re-tint the leaf logo to the new accent
         self._page_builder.refresh_generated_icons()  # re-tint the accent/tile icon previews
         self.update()  # repaint the frameless background (theme / frost)

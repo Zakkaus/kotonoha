@@ -95,12 +95,17 @@ class _QtSettingsDialogFactory:
 class _QtCacheManagementDialogFactory:
     """Adapt the Qt cache manager to the application-facing factory contract."""
 
-    def __init__(self, translator: Translator) -> None:
+    def __init__(self, regular_window_factory: OverlayPlatformFactory, translator: Translator) -> None:
+        self._regular_window_factory = regular_window_factory
         self._translator = translator
 
     def create(self, config: Config) -> LyricsCacheDialog:
         """Create one standalone cache manager using the shared UI translator."""
-        return LyricsCacheDialog(config, translator=self._translator)
+        return LyricsCacheDialog(
+            config,
+            platform_factory=self._regular_window_factory,
+            translator=self._translator,
+        )
 
 
 class ApplicationComposition:
@@ -279,7 +284,10 @@ class ApplicationComposition:
             platform_factory.for_regular_window,
             translator,
         )
-        cache_management_factory: CacheManagementDialogFactory = _QtCacheManagementDialogFactory(translator)
+        cache_management_factory: CacheManagementDialogFactory = _QtCacheManagementDialogFactory(
+            platform_factory.for_regular_window,
+            translator,
+        )
         runtime_config = RuntimeConfigApplier(
             ui_runtime,
             display,

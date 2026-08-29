@@ -36,6 +36,7 @@ QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: %ACCENT_SOFT%
 /* Raised content surface (a card) for depth over the base dialog + sidebar. */
 QWidget#contentCard { background: %CARD_BG%; border: 1px solid %CARD_BORDER%; border-radius: 12px; }
 QScrollArea#settingsPageScroll { background: transparent; border: none; }
+QScrollArea#settingsPageScroll > QWidget#qt_scrollarea_viewport { background: transparent; border: none; }
 QScrollBar:vertical {
     background: transparent;
     width: 9px;
@@ -86,9 +87,9 @@ QSpinBox:hover, QComboBox:hover, QFontComboBox:hover, QLineEdit:hover { border-c
 /* Accent focus ring — clear interactive feedback on the control you're editing. */
 QSpinBox:focus, QComboBox:focus, QFontComboBox:focus, QLineEdit:focus { border: 1px solid %ACCENT%; }
 QSpinBox:disabled, QComboBox:disabled { color: %TEXT_DIM%; }
-/* Force the QSS-styled drop-down list instead of a native popup menu: on Breeze /
-   Fusion (KDE) the style otherwise opens a system-palette popup that ignores the
-   dark item-view styling below and renders white on a dark app. */
+/* Keep the popup item rules as a fallback for styles that parent the view under
+   the combo. Standalone popup views receive the same rules explicitly in the
+   dialog because a dialog stylesheet cannot match a top-level popup sibling. */
 QComboBox, QFontComboBox { combobox-popup: 0; }
 QComboBox::drop-down, QFontComboBox::drop-down {
     subcontrol-origin: padding; subcontrol-position: center right;
@@ -177,7 +178,9 @@ _PALETTES: dict[str, dict[str, object]] = {
         "CARD_BG": "#FFFFFF", "CARD_BORDER": "rgba(0,0,0,12)",
         "NAV_HOVER": "rgba(0,0,0,7)",
         "FIELD_BG": "rgba(0,0,0,6)", "FIELD_BORDER": "rgba(0,0,0,28)",
-        "FIELD_BORDER_HOVER": "rgba(0,0,0,65)", "POPUP_BG": "#FFFFFF",
+        # Keep popups close to the light window surface; a pure white native
+        # popup reads as a disconnected rectangle over the frosted dialog.
+        "FIELD_BORDER_HOVER": "rgba(0,0,0,65)", "POPUP_BG": "#E8EAED",
         "IND_BORDER": "rgba(0,0,0,50)", "IND_BG": "rgba(0,0,0,6)",
         "LIST_BG": "rgba(0,0,0,4)", "LIST_BORDER": "rgba(0,0,0,14)",
         "ITEM_SEL": "rgba(0,0,0,12)",
@@ -240,5 +243,31 @@ def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: floa
     )
 
 
+def _popup_skin(accent: str, theme: str = "dark") -> str:
+    """Build the item-view stylesheet used by standalone combo-box popups."""
+    palette = _PALETTES.get(theme, _PALETTES["dark"])
+    return f"""
+QAbstractItemView {{
+    background: {palette["POPUP_BG"]};
+    color: {palette["TEXT"]};
+    border: 1px solid {palette["FIELD_BORDER"]};
+    border-radius: 8px;
+    padding: 4px;
+    outline: none;
+    selection-background-color: {accent};
+    selection-color: #FFFFFF;
+}}
+QAbstractItemView::item {{ padding: 5px 8px; border-radius: 5px; }}
+QAbstractItemView::item:hover {{ background: {palette["ITEM_SEL"]}; color: {palette["TEXT_STRONG"]}; }}
+QAbstractItemView::item:selected {{ background: {accent}; color: #FFFFFF; }}
+QFrame#settingsComboPopupFrame {{ background: {palette["POPUP_BG"]}; border: none; }}
+QScrollBar:vertical {{ background: transparent; width: 9px; margin: 4px 2px; }}
+QScrollBar::handle:vertical {{ background: {palette["FIELD_BORDER"]}; min-height: 30px; border-radius: 4px; }}
+QScrollBar::handle:vertical:hover {{ background: {palette["FIELD_BORDER_HOVER"]}; }}
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {{ height: 0px; background: transparent; }}
+QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: transparent; }}
+"""
 
-__all__ = ["_CHECKMARK_PATH", "_PALETTES", "_QSS", "_skin", "_resolve_theme"]
+
+
+__all__ = ["_CHECKMARK_PATH", "_PALETTES", "_QSS", "_popup_skin", "_skin", "_resolve_theme"]

@@ -2,9 +2,15 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex
+from PyQt6.QtCore import QModelIndex, Qt
 from PyQt6.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QResizeEvent
-from PyQt6.QtWidgets import QListWidget, QStyledItemDelegate, QStyleOptionViewItem
+from PyQt6.QtWidgets import (
+    QComboBox,
+    QFontComboBox,
+    QListWidget,
+    QStyledItemDelegate,
+    QStyleOptionViewItem,
+)
 
 FONT_FALLBACKS = (
     "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Source Han Sans SC",
@@ -28,6 +34,38 @@ class FontNameDelegate(QStyledItemDelegate):
         family = index.data()
         if isinstance(family, str) and family:
             option.font = QFont(family)
+
+
+def _constrain_combo_popup(combo: QComboBox) -> None:
+    """Keep a content-sized Qt popup within its owning combo-box width."""
+    view = combo.view()
+    if view is None:
+        return
+    view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+    view.setTextElideMode(Qt.TextElideMode.ElideRight)
+    width = combo.width()
+    view.setFixedWidth(width)
+    popup = view.window()
+    if popup is not None and popup is not view:
+        popup.setFixedWidth(width)
+
+
+class SettingsComboBox(QComboBox):
+    """Combo box whose popup follows the stable width of its field."""
+
+    def showPopup(self) -> None:
+        """Open the native popup, then constrain its content-sized frame."""
+        super().showPopup()
+        _constrain_combo_popup(self)
+
+
+class SettingsFontComboBox(QFontComboBox):
+    """Font picker with the same bounded popup policy as other settings combos."""
+
+    def showPopup(self) -> None:
+        """Open the font list, then constrain its content-sized frame."""
+        super().showPopup()
+        _constrain_combo_popup(self)
 
 
 class IconStrip(QListWidget):
@@ -79,6 +117,8 @@ __all__ = [
     "FONT_FALLBACKS",
     "FontNameDelegate",
     "IconStrip",
+    "SettingsComboBox",
+    "SettingsFontComboBox",
     "available_font_styles",
     "elide_player_row",
     "no_tint_icon",
