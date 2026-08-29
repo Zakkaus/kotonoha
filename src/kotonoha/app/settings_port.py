@@ -6,7 +6,9 @@ from collections.abc import Callable
 from typing import Protocol
 
 from ..config import Config
-from ..lyrics.cache import CacheDeleteResult, LyricsCacheEntry, LyricsCacheQuery
+from ..display.models import LyricsDisplayStatus
+from ..lyrics.cache import CacheDeleteResult, CacheWriteResult, LyricsCacheEntry, LyricsCacheQuery
+from ..lyrics.search import LyricsSearchQuery, LyricsSearchResponse
 from ..players import PlayerInfo
 
 
@@ -114,9 +116,74 @@ class CacheManagementDialogFactory(Protocol):
         ...
 
 
+class LyricsSearchDialogPort(Protocol):
+    """Presentation boundary for the manually selectable lyric search window."""
+
+    @property
+    def intent_requested(self) -> SignalPort:
+        """Return typed search intents emitted by the dialog."""
+        ...
+
+    @property
+    def finished(self) -> SignalPort:
+        """Return the signal emitted when the search window closes."""
+        ...
+
+    def show(self) -> None:
+        """Show the editable lyric search window."""
+        ...
+
+    def close(self) -> object:
+        """Close the search window."""
+        ...
+
+    def raise_(self) -> object:
+        """Raise an already-open search window."""
+        ...
+
+    def activateWindow(self) -> object:
+        """Request keyboard focus for the existing search window."""
+        ...
+
+    def set_results(self, query: LyricsSearchQuery, response: LyricsSearchResponse) -> None:
+        """Replace visible candidates with the response for ``query``."""
+        ...
+
+    def set_busy(self, busy: bool) -> None:
+        """Enable or disable controls while a search or cache write is running."""
+        ...
+
+    def show_error(self, message: str) -> None:
+        """Show a failed search or cache-write message."""
+        ...
+
+    def show_apply_result(self, result: CacheWriteResult, displayed: bool) -> None:
+        """Show the cache write outcome and whether it reached the active display."""
+        ...
+
+    def set_current_status(self, status: LyricsDisplayStatus) -> None:
+        """Refresh the source facts for the lyric document currently on screen."""
+        ...
+
+
+class LyricsSearchDialogFactory(Protocol):
+    """Create one manually selectable lyric-search window."""
+
+    def create(
+        self,
+        config: Config,
+        query: LyricsSearchQuery,
+        status: LyricsDisplayStatus,
+    ) -> LyricsSearchDialogPort:
+        """Create a search window prefilled from the current track."""
+        ...
+
+
 __all__ = [
     "CacheManagementDialogFactory",
     "CacheManagementDialogPort",
+    "LyricsSearchDialogFactory",
+    "LyricsSearchDialogPort",
     "SettingsDialogFactory",
     "SettingsDialogPort",
     "SignalPort",

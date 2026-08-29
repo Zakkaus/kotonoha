@@ -15,6 +15,8 @@ from collections.abc import Callable, Coroutine
 from ..async_task import create_owned_task, wait_for_owned
 from ..config import Config
 from ..lyrics.cache import LyricsCacheError
+from ..lyrics.match import TrackMetadata
+from ..lyrics.search import LyricsSearchPort, LyricsSearchQuery, LyricsSearchResult
 from ..providers.mpris_session import MprisSessionError
 from .cache_management import CacheManagementController
 from .components import (
@@ -42,6 +44,7 @@ from .intents import (
     SettingsIntent,
 )
 from .lifecycle import TaskSupervisor
+from .lyrics_search import LyricsSearchController
 from .services import display_options
 from .settings_port import SettingsDialogFactory, SettingsDialogPort
 
@@ -64,6 +67,14 @@ class AppController:
         self._tray: TrayPort = components.tray
         self._runtime_config: RuntimeConfigPort = components.runtime_config
         self._settings_factory: SettingsDialogFactory = components.settings_factory
+        self._lyrics_search_service: LyricsSearchPort = components.lyrics_search
+        self._lyrics_search: LyricsSearchController = LyricsSearchController(
+            components.lyrics_search,
+            components.lyrics_cache_writer,
+            components.lyrics_search_factory,
+            on_applied=self._apply_selected_lyrics,
+            status_provider=self._display.current_lyrics_status,
+        )
         self._cache_management: CacheManagementController = CacheManagementController(
             components.lyrics_cache,
             components.cache_management_factory,
@@ -78,6 +89,7 @@ class AppController:
 
         self._overlay.passthrough_toggle_requested.connect(self._toggle_passthrough)
         self._overlay.settings_requested.connect(self._open_settings)
+        self._overlay.lyrics_search_requested.connect(self._open_lyrics_search)
         self._overlay.position_changed.connect(self._handle_intent)
         self._overlay.track_offset_changed.connect(self._handle_intent)
 
@@ -96,6 +108,7 @@ class AppController:
                 self._overlay.show()
                 self._tray.show()
                 await self._display.start()
+                await self._lyrics_search_service.start()
                 # The generic adapter receiver is optional: a port bind failure — a stale
                 # instance or double-launch already holding 28745 — must only disable
                 # external WS adapters, not take down the overlay/tray.
@@ -139,6 +152,8 @@ class AppController:
                 logger.warning("Could not close settings: %s", exc)
             finally:
                 self._settings_dialog = None
+        cancellation_requested |= await self._stop_component("lyrics search", self._lyrics_search.stop)
+        cancellation_requested |= await self._stop_component("lyrics search service", self._lyrics_search_service.stop)
         cancellation_requested |= await self._stop_component("lyrics cache manager", self._cache_management.stop)
         # Producers may publish their final empty frame during shutdown. Keep
         # the Qt surface alive until every publisher and the display clock have
@@ -200,6 +215,27 @@ class AppController:
 
     def _toggle_passthrough(self) -> None:
         self._on_toggle_passthrough(not self._config.passthrough)
+
+    def _open_lyrics_search(self, track: object) -> None:
+        """Open manual lyric search from the overlay's current-track snapshot."""
+        if not isinstance(track, TrackMetadata):
+            logger.warning("Ignoring an invalid lyric-search track payload: %s", type(track).__name__)
+            return
+        try:
+            query = LyricsSearchQuery(
+                title=track.title,
+                artist=track.artist,
+                album=track.album,
+                duration_s=track.duration_s,
+            )
+        except (TypeError, ValueError) as exc:
+            logger.warning("Ignoring invalid lyric-search track metadata: %s", exc)
+            return
+        self._lyrics_search.open(self._config, query, self._display.current_lyrics_status())
+
+    def _apply_selected_lyrics(self, result: LyricsSearchResult, expected_track: TrackMetadata) -> bool:
+        """Publish a confirmed lyric artifact immediately when playback is still compatible."""
+        return self._display.apply_manual_artifact(result.artifact, expected_track)
 
     def _on_toggle_passthrough(self, checked: bool) -> None:
         if checked == self._config.passthrough:

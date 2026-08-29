@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 from ...app.intents import ChangePosition, ChangeTrackOffset
 from ...config import Config
 from ...display.models import DisplayFrame
+from ...lyrics.match import TrackMetadata
 from ...platform import OverlayPlatformFactory, QtWindowHost
 from ...platform.overlay_contracts import DragMode, SurfacePort, SurfaceResult
 from ...strings import Translator
@@ -48,6 +49,8 @@ class LyricsOverlay(QWidget):
     passthrough_toggle_requested = pyqtSignal()
     # Emitted when the on-HUD gear button is clicked.
     settings_requested = pyqtSignal()
+    # Emitted with the current normalized track when manual lyric search is requested.
+    lyrics_search_requested = pyqtSignal(object)
     # Emitted after a drag, with the edge margin, horizontal offset relative to
     # the target output's center, and output name. The offset is output-local;
     # virtual-desktop origins are deliberately excluded.
@@ -56,6 +59,7 @@ class LyricsOverlay(QWidget):
 
     _container: QWidget
     _control_bar: QWidget
+    _search_btn: QToolButton
     _lock_btn: QToolButton
     _earlier_btn: QToolButton
     _later_btn: QToolButton
@@ -248,6 +252,15 @@ class LyricsOverlay(QWidget):
         panel-style setting, NOT the lock state — see paintEvent."""
         self._chrome.update_visibility()
 
+    def _request_lyrics_search(self) -> None:
+        """Publish the current track as an editable manual-search starting point."""
+        track = self._state.frame.track
+        if track is None or not track.title.strip():
+            return
+        self.lyrics_search_requested.emit(
+            TrackMetadata(track.title, track.artist, track.album, track.duration_s)
+        )
+
     # --- config ---
 
     def apply_config(self, config: Config) -> None:
@@ -318,6 +331,7 @@ class LyricsOverlay(QWidget):
 
     def _on_frame(self, frame: DisplayFrame) -> None:
         if not self._closed and not self._closing:
+            self._chrome.update_track(frame.track is not None and bool(frame.track.title.strip()))
             self._content.on_frame(frame)
 
     # --- layer shell / placement ---

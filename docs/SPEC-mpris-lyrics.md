@@ -67,6 +67,10 @@ netease -> lrclib -> cider
 
 网络 provider 正常返回无结果时记录 30 秒内存 miss，减少切歌抖动造成的重复请求。网络异常不记录 miss。相同歌曲、相同来源顺序的并发请求共用一个 in-flight task。
 
+手动搜索会并行查询已配置的 provider。搜索响应中的 `unavailable_sources` 不是字符串列表，而是携带
+`source` 和 `reason` 的 typed 条目；未实现 metadata search、未配置来源、超时、网络失败和无效响应都必须保留
+可展示的原因，搜索窗口同时展示 provider 名称和原因，不能把不可用来源静默伪装成空结果。
+
 ## 4. 搜索归一化与置信度
 
 归一化使用 Unicode NFKC 和 `casefold()`，安全处理 `feat.`/`ft.` 边界、艺术家分隔符和标题括号。`Live`、`Remix`、`Remaster`、`Acoustic` 等版本标签单独提取，不能因为去掉括号而把不同版本当成同一首歌。
@@ -99,7 +103,10 @@ SQLite 主键为：
 (provider, provider_song_id)
 ```
 
-数据库不包含 player、MPRIS track ID、原始 query、search key 或 alias 表。播放时只扫描当前 provider 的缓存 artifact，用当前 MPRIS 元数据重新执行同一套匹配逻辑。这样播放器、MPRIS bridge 或查询写法改变时不需要维护额外映射。
+数据库不包含 player、MPRIS track ID、原始 query、search key 或 alias 表。普通 `auto` 缓存只在所属
+provider 的配置阶段参与解析；用户确认的 `manual` 缓存则由 resolver 先跨可解析 provider 查找，优先于
+sidecar、embedded、exact hint、Cider 和 network。两者都用当前 MPRIS 元数据重新执行同一套匹配逻辑，
+这样播放器、MPRIS bridge 或查询写法改变时不需要维护额外映射。
 
 缓存默认位于：
 
@@ -168,17 +175,27 @@ src/kotonoha/lyrics/title_queries.py   provider 查询变体
 src/kotonoha/lyrics/player_title_grammar.py 播放器标题装饰清理
 src/kotonoha/lyrics/artifact.py        provider-neutral artifact
 src/kotonoha/lyrics/cache/models.py    cache key、entry、AUTO/MANUAL mode 和结果类型
-src/kotonoha/lyrics/cache/__init__.py  provider-scoped SQLite 缓存与旧库迁移
+src/kotonoha/lyrics/cache/__init__.py  异步 worker facade、输入校验与错误边界
+src/kotonoha/lyrics/cache/storage.py   provider-scoped SQLite 缓存与旧库迁移
 src/kotonoha/lyrics/sources.py         local/exact/network source contracts
 src/kotonoha/lyrics/resolver.py        source policy、缓存与 in-flight 去重
+src/kotonoha/lyrics/search.py          provider-neutral 手动搜索与结果归一化
+src/kotonoha/lyrics/search_policy.py   手动搜索的单 provider/总结果预算
 src/kotonoha/lyrics/netease.py         网易云搜索与 YRC/LRC 解析
 src/kotonoha/lyrics/lrclib.py          lrclib exact/search 与排序
+src/kotonoha/app/cache_management.py  独立缓存管理 workflow 与窄 cache port
+src/kotonoha/app/lyrics_search.py     手动搜索/应用 workflow 与 task owner
+src/kotonoha/ui/settings/lyrics_search_dialog.py   搜索窗口输入、表格与 intent binding
+src/kotonoha/ui/settings/lyrics_search_model.py    搜索结果 table model 与展示格式化
 src/kotonoha/app/display_coordinator.py DisplayFrame projection、clock tick 与 publisher lifecycle
 src/kotonoha/ui/overlay/state.py        Qt frame state 与 signal deduplication
 src/kotonoha/ui/overlay/publisher.py    DisplayFrame 到 Qt state 的唯一 publisher
 ```
 
-所有网络与磁盘 I/O 保持异步边界；SQLite 和文件操作通过显式注入的工作线程执行。Qt widget 与 layer-shell 操作仍只在 UI 线程发生。
+所有网络与磁盘 I/O 保持异步边界；SQLite 和文件操作通过显式注入的工作线程执行。手动搜索每个 provider
+最多返回 30 条，窗口总计最多显示 90 条；Qt widget 与 layer-shell 操作仍只在 UI 线程发生。MPRIS 是
+`AppController` 管理的应用级 provider，应用运行期间没有独立关闭 MPRIS 的入口；共享 cache 的关闭只发生在
+应用生命周期结束或整个 graph 重建时。
 
 缓存记录的 `mode` 为 `auto` 或 `manual`：自动解析通过 `store()` 写入 `auto`，显式的 provider
 选择通过 `upsert()`/`update()` 默认写入 `manual`。没有该字段的旧 SQLite 缓存会迁移并按 `auto` 处理。

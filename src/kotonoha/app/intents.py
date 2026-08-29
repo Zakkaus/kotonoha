@@ -8,6 +8,7 @@ from typing import TypeAlias
 from ..config import Config
 from ..config.schema import SETTINGS_CONFIG_FIELDS
 from ..lyrics.cache import LyricsCacheKey, LyricsCacheQuery
+from ..lyrics.search import LyricsSearchQuery, LyricsSearchResult
 
 
 @dataclass(frozen=True, slots=True)
@@ -71,6 +72,20 @@ class ChangePosition:
     screen_height: int
 
 
+@dataclass(frozen=True, slots=True)
+class SearchLyrics:
+    """Search configured lyric providers for the editable query fields."""
+
+    query: LyricsSearchQuery
+
+
+@dataclass(frozen=True, slots=True)
+class SelectLyrics:
+    """Persist the exact lyric result explicitly selected by the user."""
+
+    result: LyricsSearchResult
+
+
 SettingsIntent: TypeAlias = (
     ApplyConfig
     | ClearCache
@@ -82,6 +97,8 @@ SettingsIntent: TypeAlias = (
     | ChangePosition
 )
 
+LyricsSearchIntent: TypeAlias = SearchLyrics | SelectLyrics
+
 __all__ = [
     "ApplyConfig",
     "ChangePosition",
@@ -91,5 +108,8 @@ __all__ = [
     "OpenCacheManagement",
     "RequestRestart",
     "SearchCache",
+    "SearchLyrics",
+    "SelectLyrics",
+    "LyricsSearchIntent",
     "SettingsIntent",
 ]

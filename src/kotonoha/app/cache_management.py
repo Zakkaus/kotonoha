@@ -51,6 +51,9 @@ class CacheManagementController:
         self._search_task: asyncio.Task[None] | None = None
         self._delete_task: asyncio.Task[None] | None = None
         self._clear_task: asyncio.Task[None] | None = None
+        self._search_owner: CacheManagementDialogPort | None = None
+        self._delete_owner: CacheManagementDialogPort | None = None
+        self._clear_owner: CacheManagementDialogPort | None = None
         self._query = LyricsCacheQuery()
         self._search_generation = 0
         self._closed = False
@@ -73,7 +76,7 @@ class CacheManagementController:
     def search(self, query: LyricsCacheQuery) -> None:
         """Schedule one fuzzy metadata query and discard stale results."""
         dialog = self._dialog
-        if dialog is None or self._operation_active():
+        if dialog is None or self._operation_active(dialog):
             return
         previous = self._search_task
         if previous is not None and not previous.done():
@@ -87,12 +90,13 @@ class CacheManagementController:
             name="kotonoha-search-lyrics-cache",
         )
         self._search_task = task
+        self._search_owner = dialog
         task.add_done_callback(self._search_finished)
 
     def delete(self, keys: tuple[LyricsCacheKey, ...]) -> None:
         """Schedule deletion of exact rows selected in the manager."""
         dialog = self._dialog
-        if dialog is None or not keys or self._operation_active():
+        if dialog is None or not keys or self._operation_active(dialog):
             return
         if self._search_task is not None and not self._search_task.done():
             self._search_task.cancel()
@@ -102,15 +106,22 @@ class CacheManagementController:
             name="kotonoha-delete-lyrics-cache",
         )
         self._delete_task = task
+        self._delete_owner = dialog
         task.add_done_callback(self._delete_finished)
 
     def clear(self) -> None:
         """Schedule a full cache clear requested by Settings or the manager."""
-        if self._clear_task is not None and not self._clear_task.done():
-            return
-        if self._delete_task is not None and not self._delete_task.done():
-            return
         dialog = self._dialog
+        if dialog is not None and self._operation_active(dialog):
+            return
+        if dialog is None and any(
+            task is not None and not task.done() and owner is None
+            for task, owner in (
+                (self._clear_task, self._clear_owner),
+                (self._delete_task, self._delete_owner),
+            )
+        ):
+            return
         if self._search_task is not None and not self._search_task.done():
             self._search_task.cancel()
         if dialog is not None:
@@ -120,6 +131,7 @@ class CacheManagementController:
             name="kotonoha-clear-lyrics-cache",
         )
         self._clear_task = task
+        self._clear_owner = dialog
         task.add_done_callback(self._clear_finished)
 
     async def stop(self) -> None:
@@ -141,14 +153,20 @@ class CacheManagementController:
         self._clear_task = None
         self._search_task = None
         self._delete_task = None
+        self._clear_owner = None
+        self._search_owner = None
+        self._delete_owner = None
         self._tasks.close()
         self._closed = True
 
-    def _operation_active(self) -> bool:
+    def _operation_active(self, dialog: CacheManagementDialogPort) -> bool:
         """Return whether a mutating cache command currently owns the manager."""
         return any(
-            task is not None and not task.done()
-            for task in (self._clear_task, self._delete_task)
+            task is not None and not task.done() and owner is dialog
+            for task, owner in (
+                (self._clear_task, self._clear_owner),
+                (self._delete_task, self._delete_owner),
+            )
         )
 
     def _handle_intent(self, intent: object) -> None:
@@ -161,8 +179,18 @@ class CacheManagementController:
             self.clear()
 
     def _clear_dialog(self, _result: int | None = None) -> None:
-        """Forget the presentation object after its Qt window finishes."""
+        """End the dialog session and cancel work that can no longer update it."""
+        dialog = self._dialog
         self._dialog = None
+        if dialog is None:
+            return
+        for task, owner in (
+            (self._search_task, self._search_owner),
+            (self._delete_task, self._delete_owner),
+            (self._clear_task, self._clear_owner),
+        ):
+            if task is not None and not task.done() and owner is dialog:
+                task.cancel()
 
     async def _search_async(
         self,
@@ -181,6 +209,7 @@ class CacheManagementController:
         current = self._search_task is task
         if current:
             self._search_task = None
+            self._search_owner = None
         try:
             task.result()
         except asyncio.CancelledError:
@@ -212,6 +241,7 @@ class CacheManagementController:
         current = self._delete_task is task
         if current:
             self._delete_task = None
+            self._delete_owner = None
         try:
             task.result()
         except asyncio.CancelledError:
@@ -239,14 +269,16 @@ class CacheManagementController:
 
     def _clear_finished(self, task: asyncio.Task[None]) -> None:
         self._tasks.discard(task)
-        if self._clear_task is task:
+        current = self._clear_task is task
+        if current:
             self._clear_task = None
+            self._clear_owner = None
         try:
             task.result()
         except asyncio.CancelledError:
             return
         except (LyricsCacheError, RuntimeError, TimeoutError) as exc:
-            if self._dialog is not None:
+            if current and self._dialog is not None:
                 self._dialog.set_busy(False)
                 self._dialog.show_error(f"Clear failed: {exc}")
 

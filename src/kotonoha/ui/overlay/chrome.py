@@ -8,7 +8,7 @@ from PyQt6.QtCore import QSize, Qt
 from PyQt6.QtGui import QIcon
 from PyQt6.QtWidgets import QHBoxLayout, QToolButton, QWidget
 
-from ...icons import earlier_icon, later_icon, lock_icon, settings_icon
+from ...icons import earlier_icon, later_icon, lock_icon, search_icon, settings_icon
 from ...strings import Translator
 
 if TYPE_CHECKING:
@@ -52,6 +52,15 @@ class OverlayChromeController:
         bar.setSpacing(6)
         bar.addStretch(1)
 
+        overlay._search_btn = QToolButton(container)
+        overlay._search_btn.setFixedSize(22, 22)
+        overlay._search_btn.setIconSize(QSize(15, 15))
+        overlay._search_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        overlay._search_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
+        overlay._search_btn.setToolTip(self._translator.text("overlay.search_lyrics"))
+        overlay._search_btn.clicked.connect(overlay._request_lyrics_search)
+        bar.addWidget(overlay._search_btn)
+
         overlay._lock_btn = QToolButton(container)
         overlay._lock_btn.setFixedSize(22, 22)
         overlay._lock_btn.setIconSize(QSize(15, 15))
@@ -82,6 +91,7 @@ class OverlayChromeController:
         """Refresh all control icons after lock state or panel style changes."""
         overlay = self._overlay
         color = self._control_icon_color()
+        overlay._search_btn.setIcon(search_icon(color))
         overlay._lock_btn.setIcon(lock_icon(overlay._passthrough, color))
         overlay._lock_btn.setToolTip(
             self._translator.text("overlay.locked")
@@ -92,11 +102,16 @@ class OverlayChromeController:
         overlay._later_btn.setIcon(later_icon(color))
         overlay._settings_btn.setIcon(settings_icon(color))
 
+    def update_track(self, has_track: bool) -> None:
+        """Enable lyric search only while the display has a searchable track."""
+        self._overlay._search_btn.setEnabled(has_track)
+
     def update_visibility(self) -> None:
         """Hide controls while click-through mode is active."""
         overlay = self._overlay
         visible = not overlay._passthrough
         overlay._control_bar.setVisible(visible)
+        overlay._search_btn.setVisible(visible)
         overlay._earlier_btn.setVisible(visible)
         overlay._later_btn.setVisible(visible)
         overlay.update()

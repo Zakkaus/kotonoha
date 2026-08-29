@@ -7,20 +7,19 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from ..config import Config
-from ..display.models import DisplayOptions
+from ..display.models import DisplayOptions, LyricsDisplayStatus
 from ..lyrics.artifact import LyricsArtifact
-from ..lyrics.cache import (
-    CacheDeleteResult,
-    CacheWriteResult,
-    LyricsCacheEntry,
-    LyricsCacheKey,
-    LyricsCacheMode,
-    LyricsCacheQuery,
-)
+from ..lyrics.match import TrackMetadata
+from ..lyrics.search import LyricsSearchPort
 from ..platform.overlay_contracts import SurfaceResult
 from ..players import PlayerInfo
 from .cache_management import LyricsCacheManagementPort
-from .settings_port import CacheManagementDialogFactory, SettingsDialogFactory
+from .lyrics_search import LyricsCacheWritePort
+from .settings_port import (
+    CacheManagementDialogFactory,
+    LyricsSearchDialogFactory,
+    SettingsDialogFactory,
+)
 
 
 class ApplicationQuitPort(Protocol):
@@ -97,6 +96,11 @@ class OverlayPort(Protocol):
         ...
 
     @property
+    def lyrics_search_requested(self) -> SignalPort:
+        """Return the user-requested manual lyric-search signal."""
+        ...
+
+    @property
     def position_changed(self) -> SignalPort:
         """Return the output-position change signal."""
         ...
@@ -128,7 +132,7 @@ class OverlayPort(Protocol):
 
 
 class DisplayLifecyclePort(Protocol):
-    """Display coordinator lifecycle and option operations."""
+    """Display coordinator lifecycle, option, and immediate lyric operations."""
 
     async def start(self) -> None:
         """Start the owned display clock and publication workflow."""
@@ -140,6 +144,14 @@ class DisplayLifecyclePort(Protocol):
 
     def set_options(self, options: DisplayOptions) -> None:
         """Replace display options for subsequent projections."""
+        ...
+
+    def apply_manual_artifact(self, artifact: LyricsArtifact, expected_track: TrackMetadata) -> bool:
+        """Replace the active lyric document immediately when the expected track is still playing."""
+        ...
+
+    def current_lyrics_status(self) -> LyricsDisplayStatus:
+        """Return the source facts for the document currently visible in the overlay."""
         ...
 
 
@@ -186,46 +198,6 @@ class MprisPort(Protocol):
         """Return players visible on the current session bus."""
         ...
 
-    async def clear_cache(self) -> None:
-        """Clear cached lyrics through the MPRIS workflow owner."""
-        ...
-
-    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
-        """Search persisted cache metadata through the MPRIS workflow owner."""
-        ...
-
-    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
-        """Read one persisted cache entry through the MPRIS workflow owner."""
-        ...
-
-    async def upsert_cache(
-        self,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Persist a validated result selected by an explicit lyric workflow."""
-        ...
-
-    async def update_cache(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Update one existing cache entry and record its selection mode."""
-        ...
-
-    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
-        """Delete one persisted cache entry and report the actual outcome."""
-        ...
-
-    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
-        """Delete several persisted cache entries."""
-        ...
-
-
 class TrayPort(Protocol):
     """Tray operations owned by the application controller."""
 
@@ -260,7 +232,10 @@ class ApplicationComponents:
     overlay: OverlayPort
     settings_factory: SettingsDialogFactory
     cache_management_factory: CacheManagementDialogFactory
+    lyrics_search_factory: LyricsSearchDialogFactory
     lyrics_cache: LyricsCacheManagementPort
+    lyrics_cache_writer: LyricsCacheWritePort
+    lyrics_search: LyricsSearchPort
     receiver: ReceiverPort
     cider: CiderPort
     mpris: MprisPort
@@ -275,6 +250,8 @@ __all__ = [
     "ConfigServicePort",
     "DisplayLifecyclePort",
     "LyricsCacheManagementPort",
+    "LyricsCacheWritePort",
+    "LyricsSearchPort",
     "MprisPort",
     "OverlayPort",
     "ReceiverPort",

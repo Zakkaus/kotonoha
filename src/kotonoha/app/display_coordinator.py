@@ -7,11 +7,20 @@ import logging
 
 from ..async_task import create_owned_task, wait_for_owned
 from ..display.contracts import DisplayPublisher
-from ..display.models import DisplayFrame, DisplayOptions, DisplayState, ResolutionState
+from ..display.models import (
+    DisplayFrame,
+    DisplayOptions,
+    DisplayState,
+    LyricsDisplayStatus,
+    ResolutionState,
+)
 from ..display.presentation import DisplayEngine
 from ..display.timeline import TimelineEngine
-from ..lyrics.models import LyricsDocument
-from ..playback.models import PlaybackObservation, PlaybackStatus
+from ..lyrics.adapter import LyricsDocumentAdapter
+from ..lyrics.artifact import LyricsArtifact
+from ..lyrics.match import Candidate, MatchConfidence, TrackMetadata, evaluate_match
+from ..lyrics.models import LyricsCacheState, LyricsDocument, LyricsOrigin
+from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 
 DISPLAY_TICK_INTERVAL_S = 1.0 / 60.0
 logger = logging.getLogger(__name__)
@@ -37,6 +46,8 @@ class DisplayCoordinator:
         self._timeline = timeline
         self._document: LyricsDocument | None = None
         self._resolution = ResolutionState.NO_TRACK
+        self._manual_document: LyricsDocument | None = None
+        self._manual_track: TrackIdentity | None = None
         self._task: asyncio.Task[None] | None = None
         self._wake_event: asyncio.Event | None = None
         self._reported_task_failure: asyncio.Task[None] | None = None
@@ -116,13 +127,50 @@ class DisplayCoordinator:
         resolution: ResolutionState,
     ) -> DisplayFrame:
         """Publish a playback/document pair with explicit source resolution."""
-        self._document = document
-        self._resolution = resolution
+        self._clear_manual_override_if_track_changed(playback.track)
+        manual_document = self._manual_document
+        self._document = manual_document if manual_document is not None else document
+        self._resolution = ResolutionState.AVAILABLE if manual_document is not None else resolution
         playback = self._timeline.set_observation(playback)
         frame = self._project_observation(playback)
         self.publish_frame(frame)
         self._wake()
         return frame
+
+    def apply_manual_artifact(self, artifact: LyricsArtifact, expected_track: TrackMetadata) -> bool:
+        """Replace the active document immediately while the expected track remains active."""
+        playback = self._timeline.advance()
+        if playback is None or playback.track is None or not self._matches_track(playback.track, expected_track):
+            return False
+        document = LyricsDocumentAdapter().adapt(
+            artifact.lines,
+            source_id=artifact.provider,
+            source_name=artifact.provider,
+            song_id=artifact.provider_song_id,
+            title=artifact.title,
+            artist=artifact.artist,
+            album=artifact.album,
+            duration_s=artifact.duration_s,
+            origin=LyricsOrigin.MANUAL,
+            cache_state=LyricsCacheState.MANUAL,
+        )
+        self._manual_track = playback.track
+        self._manual_document = document
+        self.publish_resolution(playback, document, ResolutionState.AVAILABLE)
+        return True
+
+    def current_lyrics_status(self) -> LyricsDisplayStatus:
+        """Return the source facts for the document currently shown to the user."""
+        observation = self._timeline.observation
+        track = observation.track if observation is not None else None
+        document = self._document
+        return LyricsDisplayStatus(
+            playback_source=observation.adapter_id if track is not None and observation is not None else None,
+            lyrics_source_id=document.source_id if document is not None else None,
+            lyrics_source_name=document.source_name if document is not None else None,
+            origin=document.origin if document is not None else None,
+            cache_state=document.cache_state if document is not None else LyricsCacheState.NONE,
+        )
 
     def publish_frame(self, frame: DisplayFrame) -> bool:
         """Publish an already projected frame through the sole Qt bridge."""
@@ -130,6 +178,8 @@ class DisplayCoordinator:
         if frame.state is DisplayState.NO_TRACK and frame.track is None:
             self._document = None
             self._resolution = ResolutionState.NO_TRACK
+            self._manual_document = None
+            self._manual_track = None
             self._timeline.reset()
         return self._publisher.publish(frame)
 
@@ -143,6 +193,47 @@ class DisplayCoordinator:
 
     def _project_observation(self, playback: PlaybackObservation) -> DisplayFrame:
         return self._presenter.project_observation(playback, self._document, self._resolution)
+
+    def _clear_manual_override_if_track_changed(self, track: TrackIdentity | None) -> None:
+        """Drop the manual document when a publication belongs to another track."""
+        if self._manual_document is not None and not self._same_track(self._manual_track, track):
+            self._manual_document = None
+            self._manual_track = None
+
+    @staticmethod
+    def _same_track(expected: TrackIdentity | None, actual: TrackIdentity | None) -> bool:
+        """Compare normalized track identity across adapters without requiring shared IDs."""
+        if expected is None or actual is None:
+            return False
+        if expected.track_ref is not None and actual.track_ref is not None:
+            if expected.adapter_id == actual.adapter_id and expected.player_id == actual.player_id:
+                return expected.track_ref == actual.track_ref
+        return (
+            expected.title == actual.title
+            and expected.artist == actual.artist
+            and expected.album == actual.album
+        )
+
+    @staticmethod
+    def _matches_track(track: TrackIdentity, expected: TrackMetadata) -> bool:
+        """Ensure a delayed apply cannot replace lyrics for a later track."""
+        candidate = TrackMetadata(
+            title=track.title,
+            artist=track.artist,
+            album=track.album,
+            duration_s=track.duration_s,
+        )
+        evidence = evaluate_match(
+            candidate=Candidate(
+                song_id="current-track",
+                title=expected.title,
+                artist=expected.artist,
+                album=expected.album,
+                duration_s=expected.duration_s,
+            ),
+            track=candidate,
+        )
+        return evidence.confidence is not MatchConfidence.NONE
 
     async def _run(self) -> None:
         wake_event = self._wake_event

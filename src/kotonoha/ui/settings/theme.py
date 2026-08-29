@@ -216,6 +216,18 @@ def _resolve_theme(value: str) -> str:
     return "light" if scheme == Qt.ColorScheme.Light else "dark"
 
 
+def _card_background(theme: str, frosted: bool = False, opacity: float = 1.0) -> str:
+    """Return the effective content-card background for a settings surface."""
+    if frosted:
+        return "rgba(255, 255, 255, 120)" if theme == "light" else "rgba(255, 255, 255, 16)"
+    if opacity < 0.999 and theme == "light":
+        return f"rgba(255, 255, 255, {max(0, min(255, round(255 * opacity)))})"
+    value = _PALETTES.get(theme, _PALETTES["dark"])["CARD_BG"]
+    if not isinstance(value, str):
+        raise TypeError("theme card background must be a string")
+    return value
+
+
 def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: float = 1.0) -> str:
     """Fill the QSS template from the theme palette, accent colour and checkmark.
     When `frosted`, the content card is made translucent so the KWin backdrop-blur
@@ -224,10 +236,7 @@ def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: floa
     is thinned so the desktop shows through it (dark's card is already translucent,
     so its window fill — painted in paintEvent — carries the effect)."""
     palette = dict(_PALETTES.get(theme, _PALETTES["dark"]))
-    if frosted:
-        palette["CARD_BG"] = "rgba(255, 255, 255, 120)" if theme == "light" else "rgba(255, 255, 255, 16)"
-    elif opacity < 0.999 and theme == "light":
-        palette["CARD_BG"] = f"rgba(255, 255, 255, {max(0, min(255, round(255 * opacity)))})"
+    palette["CARD_BG"] = _card_background(theme, frosted, opacity)
     qss = _QSS
     for token, value in palette.items():
         if isinstance(value, str):
@@ -270,4 +279,12 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: tran
 
 
 
-__all__ = ["_CHECKMARK_PATH", "_PALETTES", "_QSS", "_popup_skin", "_skin", "_resolve_theme"]
+__all__ = [
+    "_CHECKMARK_PATH",
+    "_PALETTES",
+    "_QSS",
+    "_card_background",
+    "_popup_skin",
+    "_skin",
+    "_resolve_theme",
+]

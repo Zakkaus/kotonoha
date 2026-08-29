@@ -118,21 +118,14 @@ class ThemedSettingsDialog(QDialog):
         super().hideEvent(a0)
 
     def done(self, a0: int) -> None:
-        """Close the platform surface before the dialog becomes hidden."""
+        """Finish the Qt dialog before releasing its native platform surface."""
+        super().done(a0)
         surface_result = self._close_platform()
         if not surface_result.succeeded:
             logger.warning("Settings surface shutdown was incomplete: %s", surface_result.reason)
-            return
-        super().done(a0)
 
     def closeEvent(self, a0: QCloseEvent | None) -> None:
-        """Release the platform surface when the dialog is explicitly closed."""
-        surface_result = self._close_platform()
-        if not surface_result.succeeded:
-            logger.warning("Settings surface shutdown was incomplete: %s", surface_result.reason)
-            if a0 is not None:
-                a0.ignore()
-            return
+        """Let QDialog finish and release the platform surface from :meth:`done`."""
         super().closeEvent(a0)
 
     def _close_platform(self) -> SurfaceResult:

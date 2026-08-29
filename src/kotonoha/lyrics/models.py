@@ -14,6 +14,26 @@ class TimingKind(StrEnum):
     WORD = "Word"
 
 
+class LyricsOrigin(StrEnum):
+    """Describe how the currently displayed lyric document entered Kotonoha."""
+
+    NETWORK = "network"
+    CACHE = "cache"
+    LIVE = "live"
+    SIDECAR = "sidecar"
+    EMBEDDED = "embedded"
+    ADAPTER = "adapter"
+    MANUAL = "manual"
+
+
+class LyricsCacheState(StrEnum):
+    """Describe the persistence relationship of the displayed lyric document."""
+
+    NONE = "none"
+    FROM_CACHE = "from-cache"
+    MANUAL = "manual"
+
+
 @dataclass(frozen=True)
 class LyricWord:
     """One optional timed word inside a lyric line."""
@@ -55,6 +75,8 @@ class LyricsDocument:
     album: str | None = None
     duration_s: float | None = None
     lines: tuple[LyricLine, ...] = ()
+    origin: LyricsOrigin = LyricsOrigin.NETWORK
+    cache_state: LyricsCacheState = LyricsCacheState.NONE
 
     @property
     def has_word_timing(self) -> bool:

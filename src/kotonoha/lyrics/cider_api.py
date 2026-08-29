@@ -9,7 +9,7 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 
 from ..playback.models import TrackIdentity
-from .models import LyricLine, LyricsDocument, LyricWord, TimingKind, validate_document
+from .models import LyricLine, LyricsDocument, LyricsOrigin, LyricWord, TimingKind, validate_document
 
 
 class CiderLyricsPayloadError(ValueError):
@@ -53,6 +53,7 @@ class CiderLyricsResponseAdapter:
             album=track.album,
             duration_s=duration_s if duration_s is not None else track.duration_s,
             lines=lines,
+            origin=LyricsOrigin.LIVE,
         )
         try:
             validate_document(document)

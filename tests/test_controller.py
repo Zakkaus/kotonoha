@@ -9,12 +9,13 @@ from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication
 
 from kotonoha.app.application_controller import AppController
+from kotonoha.app.cache_management import CacheManagementController
 from kotonoha.app.components import ApplicationComponents
 from kotonoha.app.config_service import ConfigService
 from kotonoha.app.intents import ChangeTrackOffset, SearchCache
 from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.config import Config
-from kotonoha.display.models import DisplayOptions
+from kotonoha.display.models import DisplayOptions, LyricsDisplayStatus
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.cache import (
     CacheDeleteResult,
@@ -26,6 +27,8 @@ from kotonoha.lyrics.cache import (
     LyricsCacheMode,
     LyricsCacheQuery,
 )
+from kotonoha.lyrics.match import TrackMetadata
+from kotonoha.lyrics.search import LyricsSearchQuery, LyricsSearchResponse
 from kotonoha.platform.overlay_contracts import SurfaceResult
 from kotonoha.players import PlayerInfo
 from kotonoha.ui.settings.dialog import SettingsDialog
@@ -56,6 +59,7 @@ class _FakeOverlay:
         self._events = events
         self.passthrough_toggle_requested = _Signal()
         self.settings_requested = _Signal()
+        self.lyrics_search_requested = _Signal()
         self.position_changed = _Signal()
         self.track_offset_changed = _Signal()
         self.visible = False
@@ -89,6 +93,7 @@ class _FakeDisplay:
         self.start_calls = 0
         self.stop_calls = 0
         self.options: DisplayOptions | None = None
+        self.status = LyricsDisplayStatus()
 
     async def start(self) -> None:
         self.start_calls += 1
@@ -104,6 +109,80 @@ class _FakeDisplay:
 
     def set_options(self, options: DisplayOptions) -> None:
         self.options = options
+
+    def apply_manual_artifact(self, artifact: LyricsArtifact, expected_track: TrackMetadata) -> bool:
+        del artifact, expected_track
+        return True
+
+    def current_lyrics_status(self) -> LyricsDisplayStatus:
+        return self.status
+
+
+class _FakeLyricsSearch:
+    def __init__(self) -> None:
+        self.started = False
+        self.start_calls = 0
+        self.stop_calls = 0
+
+    async def start(self) -> None:
+        self.start_calls += 1
+        self.started = True
+
+    async def stop(self) -> None:
+        self.stop_calls += 1
+        self.started = False
+
+    async def search(
+        self,
+        query: LyricsSearchQuery,
+        sources: Sequence[str],
+    ) -> LyricsSearchResponse:
+        del query, sources
+        return LyricsSearchResponse(())
+
+
+class _FakeLyricsSearchDialog:
+    def __init__(self) -> None:
+        self.intent_requested = _Signal()
+        self.finished = _Signal()
+
+    def show(self) -> None:
+        return None
+
+    def close(self) -> None:
+        self.finished.emit(0)
+
+    def raise_(self) -> None:
+        return None
+
+    def activateWindow(self) -> None:
+        return None
+
+    def set_results(self, query: LyricsSearchQuery, response: LyricsSearchResponse) -> None:
+        del query, response
+
+    def set_busy(self, busy: bool) -> None:
+        del busy
+
+    def show_error(self, message: str) -> None:
+        del message
+
+    def show_apply_result(self, result: CacheWriteResult, displayed: bool) -> None:
+        del result, displayed
+
+    def set_current_status(self, status: LyricsDisplayStatus) -> None:
+        del status
+
+
+class _FakeLyricsSearchDialogFactory:
+    def create(
+        self,
+        config: Config,
+        query: LyricsSearchQuery,
+        status: LyricsDisplayStatus,
+    ) -> _FakeLyricsSearchDialog:
+        del config, query, status
+        return _FakeLyricsSearchDialog()
 
 
 class _FakeReceiver:
@@ -233,6 +312,35 @@ class _FakeLyricsCache:
 
     async def clear(self) -> None:
         return None
+
+    async def upsert(
+        self,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        del mode
+        return CacheWriteResult(
+            LyricsCacheKey(artifact.provider, artifact.provider_song_id),
+            CacheWriteStatus.CREATED,
+        )
+
+
+class _BlockingLyricsCache(_FakeLyricsCache):
+    def __init__(self) -> None:
+        super().__init__()
+        self.started = asyncio.Event()
+        self.cancelled = asyncio.Event()
+        self.release = asyncio.Event()
+
+    async def search(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        self.started.set()
+        try:
+            await self.release.wait()
+        except asyncio.CancelledError:
+            self.cancelled.set()
+            raise
+        return await super().search(query)
 
 
 class _FakeCider:
@@ -378,6 +486,7 @@ class _ControllerGraph:
         restart_launcher: _FakeRestartLauncher | None = None,
         settings_factory: _SettingsFactory | None = None,
         cache_management_factory: _CacheManagementFactory | None = None,
+        lyrics_search: _FakeLyricsSearch | None = None,
     ) -> None:
         self.events: list[str] = []
         self.writer = _FakeConfigWriter()
@@ -397,6 +506,8 @@ class _ControllerGraph:
         self.cache_management_factory = (
             cache_management_factory if cache_management_factory is not None else _CacheManagementFactory()
         )
+        self.lyrics_search = lyrics_search if lyrics_search is not None else _FakeLyricsSearch()
+        self.lyrics_search_factory = _FakeLyricsSearchDialogFactory()
         self.runtime_config = _FakeRuntimeConfig()
         self.controller = AppController(
             qapp,
@@ -407,7 +518,10 @@ class _ControllerGraph:
                 overlay=self.overlay,
                 settings_factory=self.settings_factory,
                 cache_management_factory=self.cache_management_factory,
+                lyrics_search_factory=self.lyrics_search_factory,
                 lyrics_cache=self.cache,
+                lyrics_cache_writer=self.cache,
+                lyrics_search=self.lyrics_search,
                 receiver=self.receiver,
                 cider=self.cider,
                 mpris=self.mpris,
@@ -656,6 +770,30 @@ async def test_cache_management_opens_a_separate_window_and_returns_multiple_mat
     finally:
         await graph.close()
         qapp.processEvents()
+
+
+async def test_cache_management_cancels_closed_dialog_search_before_reopening():
+    cache = _BlockingLyricsCache()
+    factory = _CacheManagementFactory()
+    controller = CacheManagementController(cache, factory)
+    query = LyricsCacheQuery(keyword="song")
+
+    controller.open(Config())
+    first = factory.created[0]
+    controller.search(query)
+    await asyncio.wait_for(cache.started.wait(), timeout=1.0)
+
+    first.close()
+    await asyncio.wait_for(cache.cancelled.wait(), timeout=1.0)
+    controller.open(Config())
+    second = factory.created[1]
+    cache.release.set()
+    controller.search(query)
+    await asyncio.wait_for(second.entries_event.wait(), timeout=1.0)
+
+    assert len(factory.created) == 2
+    assert second.query == query
+    await controller.stop()
 
 
 async def test_controller_persists_track_offset(qapp):

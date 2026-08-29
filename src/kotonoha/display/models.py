@@ -8,7 +8,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from types import MappingProxyType
 
-from ..lyrics.models import LyricLine, LyricsDocument
+from ..lyrics.models import LyricLine, LyricsCacheState, LyricsDocument, LyricsOrigin
 from ..playback.models import PlaybackObservation, TrackIdentity
 
 
@@ -45,6 +45,17 @@ class ResolutionState(StrEnum):
         if playback.track is None:
             return cls.NO_TRACK
         return cls.NOT_FOUND
+
+
+@dataclass(frozen=True)
+class LyricsDisplayStatus:
+    """Source facts for the lyric document currently visible in the overlay."""
+
+    playback_source: str | None = None
+    lyrics_source_id: str | None = None
+    lyrics_source_name: str | None = None
+    origin: LyricsOrigin | None = None
+    cache_state: LyricsCacheState = LyricsCacheState.NONE
 
 
 class DisplayScript(StrEnum):

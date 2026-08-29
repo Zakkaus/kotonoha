@@ -12,19 +12,16 @@ from ..async_task import create_owned_task, wait_for_owned
 from .artifact import LyricsArtifact
 from .artist_grammar import artist_tokens
 from .cache import (
-    CacheDeleteResult,
     CacheWriteResult,
-    LyricsCacheEntry,
     LyricsCacheError,
-    LyricsCacheKey,
+    LyricsCacheHit,
     LyricsCacheMode,
-    LyricsCacheQuery,
 )
 from .catalog import LyricsSourceCatalog
 from .hint import LyricsHint
 from .http import LyricsSession
 from .match import MatchConfidence, TrackMetadata
-from .models import LyricLine
+from .models import LyricLine, LyricsCacheState, LyricsOrigin
 from .sources import (
     LyricsSource,
     LyricsSourceError,
@@ -41,7 +38,9 @@ RequestKey: TypeAlias = tuple[ResolutionCacheKey, tuple[str, ...], bool, bool, b
 _CONF_RANK = {MatchConfidence.NONE: 0, MatchConfidence.MEDIUM: 1, MatchConfidence.HIGH: 2}
 
 
-class CacheLike(Protocol):
+class ResolverCachePort(Protocol):
+    """Cache capability used by resolution, separate from cache management."""
+
     def start(self) -> None: ...
 
     async def lookup(
@@ -50,36 +49,16 @@ class CacheLike(Protocol):
         track: TrackMetadata,
         parser: Callable[[Mapping[str, str]], tuple[LyricLine, ...]],
         /,
-    ) -> LyricsArtifact | None: ...
+    ) -> LyricsCacheHit | None: ...
+
+    async def lookup_manual(
+        self,
+        track: TrackMetadata,
+        parsers: Mapping[str, Callable[[Mapping[str, str]], tuple[LyricLine, ...]]],
+        /,
+    ) -> LyricsCacheHit | None: ...
 
     async def store(self, artifact: LyricsArtifact, /) -> CacheWriteResult | None: ...
-
-    async def search(self, query: LyricsCacheQuery, /) -> tuple[LyricsCacheEntry, ...]: ...
-
-    async def get(self, key: LyricsCacheKey, /) -> LyricsCacheEntry | None: ...
-
-    async def upsert(
-        self,
-        artifact: LyricsArtifact,
-        /,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult: ...
-
-    async def update(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        /,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult: ...
-
-    async def delete(self, key: LyricsCacheKey, /) -> CacheDeleteResult: ...
-
-    async def delete_many(self, keys: tuple[LyricsCacheKey, ...], /) -> tuple[CacheDeleteResult, ...]: ...
-
-    async def clear(self) -> None: ...
 
     def close(self) -> None: ...
 
@@ -103,7 +82,7 @@ class LyricsResolver:
         self,
         *,
         catalog: LyricsSourceCatalog,
-        cache: CacheLike,
+        cache: ResolverCachePort,
         cache_enabled: bool = True,
         negative_ttl: float = 30.0,
         prefer_best: bool = True,
@@ -210,6 +189,9 @@ class LyricsResolver:
         sources: Sequence[str],
         hint: LyricsHint,
     ) -> LyricsSourceResult | None:
+        manual = await self._lookup_manual(track)
+        if manual is not None:
+            return self._result_from_cache(manual)
         try:
             return await self._exact_source.resolve(
                 session,
@@ -240,6 +222,9 @@ class LyricsResolver:
             self._cache_enabled,
             self._fuzzy,
         )
+        manual = await self._lookup_manual(track)
+        if manual is not None:
+            return ResolverLookup(self._result_from_cache(manual), frozenset())
         if self._prefer_best:
             result = await self._resolve_best(session, track, sources, track_key, failures)
         else:
@@ -278,12 +263,7 @@ class LyricsResolver:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                 else:
                     if cached is not None:
-                        result = LyricsSourceResult(
-                            source,
-                            document=LyricsSourceResult.from_artifact(cached).document,
-                            confidence=cached.confidence,
-                            duration_s=cached.duration_s,
-                        )
+                        result = self._result_from_cache(cached)
                         _log_candidate("cache", source, result)
                         return result
 
@@ -373,12 +353,7 @@ class LyricsResolver:
                     logger.warning("%s lyrics cache lookup failed: %s", source, exc)
                     cached = None
                 if cached is not None:
-                    candidate = LyricsSourceResult(
-                        source,
-                        document=LyricsSourceResult.from_artifact(cached).document,
-                        confidence=cached.confidence,
-                        duration_s=cached.duration_s,
-                    )
+                    candidate = self._result_from_cache(cached)
             if candidate is not None:
                 resolved.add(source)
                 _log_candidate("cache-or-live", source, candidate)
@@ -447,50 +422,46 @@ class LyricsResolver:
     def reset_memory(self) -> None:
         self._negative_until.clear()
 
-    async def clear_cache(self) -> None:
+    async def _lookup_manual(
+        self,
+        track: TrackMetadata,
+    ) -> LyricsCacheHit | None:
+        """Look up an explicit selection before exact hints or automatic sources."""
+        if not self._cache_enabled:
+            return None
+        parsers: dict[str, Callable[[Mapping[str, str]], tuple[LyricLine, ...]]] = {}
+        for source, adapter in self._sources.items():
+            parser = adapter.cache_parser
+            if parser is not None:
+                parsers[source] = parser
+        if not parsers:
+            return None
         try:
-            await self._cache.clear()
-        finally:
-            self.reset_memory()
+            return await self._cache.lookup_manual(track, parsers)
+        except LyricsCacheError as exc:
+            logger.warning("Manual lyrics cache lookup failed: %s", exc)
+            return None
 
-    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
-        """Search persisted cache metadata for the cache-management workflow."""
-        return await self._cache.search(query)
-
-    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
-        """Read one persisted cache entry by its stable key."""
-        return await self._cache.get(key)
-
-    async def upsert_cache(
-        self,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Persist a validated result selected by an explicit application workflow."""
-        return await self._cache.upsert(artifact, mode=mode)
-
-    async def update_cache(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Update an existing cache entry and record its selection mode."""
-        return await self._cache.update(key, artifact, mode=mode)
-
-    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
-        """Delete one persisted cache entry and report the actual outcome."""
-        result = await self._cache.delete(key)
-        self.reset_memory()
-        return result
-
-    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
-        """Delete several persisted cache entries and reset resolver miss memory."""
-        results = await self._cache.delete_many(keys)
-        self.reset_memory()
-        return results
+    @staticmethod
+    def _result_from_cache(hit: LyricsCacheHit) -> LyricsSourceResult:
+        """Project a cache hit while preserving whether it was manually confirmed."""
+        if hit.mode is LyricsCacheMode.MANUAL:
+            origin = LyricsOrigin.MANUAL
+            cache_state = LyricsCacheState.MANUAL
+        else:
+            origin = LyricsOrigin.CACHE
+            cache_state = LyricsCacheState.FROM_CACHE
+        artifact = hit.artifact
+        return LyricsSourceResult(
+            artifact.provider,
+            document=LyricsSourceResult.from_artifact(
+                artifact,
+                origin=origin,
+                cache_state=cache_state,
+            ).document,
+            confidence=artifact.confidence,
+            duration_s=artifact.duration_s,
+        )
 
 
 def _log_candidate(stage: str, source_slot: str, result: LyricsSourceResult) -> None:

@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
-from .models import LyricLine, LyricsDocument, TimingKind, validate_document
+from .models import (
+    LyricLine,
+    LyricsCacheState,
+    LyricsDocument,
+    LyricsOrigin,
+    TimingKind,
+    validate_document,
+)
 
 
 class LyricsDocumentAdapter:
@@ -22,6 +29,8 @@ class LyricsDocumentAdapter:
         artist: str | None = None,
         album: str | None = None,
         duration_s: float | None = None,
+        origin: LyricsOrigin = LyricsOrigin.NETWORK,
+        cache_state: LyricsCacheState = LyricsCacheState.NONE,
     ) -> LyricsDocument:
         """Build and validate one immutable source-neutral lyric document."""
         normalized_lines = tuple(lines)
@@ -43,6 +52,8 @@ class LyricsDocumentAdapter:
             album=album,
             duration_s=duration_s,
             lines=normalized_lines,
+            origin=origin,
+            cache_state=cache_state,
         )
         validate_document(document)
         return document

@@ -15,7 +15,7 @@ from .hint import LyricsHint
 from .http import LyricsSession
 from .local import load_embedded_lyrics, load_sidecar_lyrics
 from .match import MatchConfidence, TrackMetadata
-from .models import LyricLine, LyricsDocument
+from .models import LyricLine, LyricsCacheState, LyricsDocument, LyricsOrigin
 
 PayloadParser = Callable[[Mapping[str, str]], tuple[LyricLine, ...]]
 
@@ -50,7 +50,13 @@ class LyricsSourceResult:
     source_kind: LyricsSourceKind = LyricsSourceKind.NETWORK
 
     @classmethod
-    def from_artifact(cls, artifact: LyricsArtifact) -> LyricsSourceResult:
+    def from_artifact(
+        cls,
+        artifact: LyricsArtifact,
+        *,
+        origin: LyricsOrigin = LyricsOrigin.NETWORK,
+        cache_state: LyricsCacheState = LyricsCacheState.NONE,
+    ) -> LyricsSourceResult:
         """Convert a provider artifact into the source contract."""
         return cls(
             source_id=artifact.provider,
@@ -62,6 +68,8 @@ class LyricsSourceResult:
                 artist=artifact.artist,
                 album=artifact.album,
                 duration_s=artifact.duration_s,
+                origin=origin,
+                cache_state=cache_state,
             ),
             confidence=artifact.confidence,
             duration_s=artifact.duration_s,
@@ -203,6 +211,7 @@ class LocalLyricsSource:
                 artist=track.artist,
                 album=track.album,
                 duration_s=track.duration_s,
+                origin=LyricsOrigin.SIDECAR if source_id == self._sidecar.source_id else LyricsOrigin.EMBEDDED,
             ),
             confidence=MatchConfidence.HIGH,
             duration_s=track.duration_s,

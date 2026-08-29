@@ -3,6 +3,7 @@ from typing import cast
 
 import pytest
 
+from kotonoha.lyrics.models import LyricsOrigin
 from kotonoha.lyrics.protocol import (
     AdapterClock,
     AdapterProtocolDecoder,
@@ -65,6 +66,7 @@ def test_decoder_normalizes_snapshot_without_display_projection_fields():
     assert message.playback.track.raw_title == "Song (Official)"
     assert message.document is not None
     assert message.document.source_id == "embedded"
+    assert message.document.origin is LyricsOrigin.EMBEDDED
     assert message.document.lines[0].words[0].text == "hello"
 
 

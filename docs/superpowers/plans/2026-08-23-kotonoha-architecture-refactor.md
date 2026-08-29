@@ -110,9 +110,12 @@ src/kotonoha/
     live_source.py             # live external source adapter
     resolver.py                # source policy、缓存与 in-flight 去重
     workflow.py                # generation-owned SourcePlan 执行和结果发布
+    search.py                  # provider-neutral 手动搜索 workflow contract
+    search_policy.py           # 手动搜索的单 provider/总结果预算
     cache/                      # bounded SQLite/file cache boundary
       models.py                 # typed cache keys, entries, modes, and results
-      __init__.py               # SQLite persistence and cache lifecycle
+      __init__.py               # async worker facade, validation, and error boundary
+      storage.py                # synchronous SQLite persistence and cache matching
     protocol.py                # generic adapter v1 boundary decoder
     payload.py                 # bounded network payload readers
     translation.py             # timestamp/positional translation transforms
@@ -144,7 +147,7 @@ src/kotonoha/
 
   ui/                         # Qt presentation，按 user-facing responsibility 分组
     overlay/                   # QWidget window、KaraokeLabel、state 和 publisher
-    settings/                  # dialog、form state 和 settings pages
+    settings/                  # dialog、cache/search windows、form state 和 settings pages
   clock.py                    # smooth local media clock
   icons.py / leaf_icon.py     # Qt resource/rendering helpers
   i18n.py / strings/           # presentation text and language binding
@@ -613,11 +616,27 @@ bridge 和未定义的组合根都必须在本阶段完成处理。已有用户�
 - [x] 在可用环境执行 live MPRIS、Cider HTTP/API 和 Wayland/compositor 验证；不可用的外部环境必须记录为环境限制，并提供可执行的 opt-in 命令和 fake/integration harness，不得把功能实现顺延到下一 Phase。
 - [x] 更新 `docs/SPEC.md`、MPRIS/歌词协议文档、架构计划和开发验证说明，使它们只描述最终架构；删除 Phase 6 完成后仍会误导开发者的迁移说明。
 
+#### 6.8 手动选词功能的边界收口
+
+- [x] `LyricsCache` 以 `LyricsCacheHit` 返回 artifact 与 `AUTO`/`MANUAL` mode；resolver 在普通解析和 exact hint
+  路径都先消费 manual selection，删除后回到所属 provider 的自动 cache/网络阶段。
+- [x] `CacheManagementController` 与 `LyricsSearchController` 按 dialog identity 取消关闭窗口遗留的 search、delete、clear
+  和 apply task；旧 task 的结果/错误不能触达新打开的窗口。
+- [x] `LyricsSearchProvider` 明确 metadata search capability；QQ Music 保留 exact-id-only 说明，Cider 标记为当前播放源，
+  不再把未实现能力伪装成空结果。`LyricsSearchResponse.unavailable_sources` 保留 typed provider 与 reason，
+  搜索 UI 展示不可用来源及原因；HTTP 适配器在 boundary 将 `aiohttp` transport error 归一化为 `LyricsHttpError`。
+- [x] 移除 `MprisPort`、`MprisLyricsCoordinator`、`MprisResolutionSession` 和 `ResolverPort` 的 cache CRUD 转发，
+  保持 cache management 与 lyric selection 共享同一个 composition-root cache 实例。
+- [x] 明确共享 cache 的生命周期属于应用进程图：MPRIS 由 `AppController` 在应用生命周期内统一启停，
+  不提供独立 stop/restart 入口；resolver 对 cache 的 `start/close` 只参与该应用生命周期，不承担 cache CRUD owner。
+- [x] 将搜索 table model/格式化从 dialog 拆到 `ui/settings/lyrics_search_model.py`；手动搜索策略集中在
+  `lyrics/search_policy.py`，单 provider 上限为 30、总结果上限为 90。
+
 **Phase 6 最终验证记录（2026-08-29）**：
 
-- Python 行为测试：offscreen 套件（排除需要真实 localhost socket 的 receiver）`822 passed, 2 skipped`；
-  在允许绑定 localhost 的环境中 receiver `18 passed`，合计 `840 passed, 2 skipped`。
-- 静态与差异门禁：`ruff check .`、`ty check`、`git diff --check` 通过；架构测试、grammar/differential
+- Python 行为测试：offscreen 套件（排除需要真实 localhost socket 的 receiver）`847 passed, 10 skipped`；
+  在允许绑定 localhost 的环境中 receiver `18 passed`，合计 `865 passed, 10 skipped`。
+- 静态与差异门禁：`uv run ruff check src tests`、`uv run ty check src`、`git diff --check` 通过；架构测试、grammar/differential
   corpus、配置/Settings、publisher、失败回滚和取消路径均包含在上述测试套件中。
 - 打包：`uv build` 成功，生成 sdist 和 CMake/native wheel。Cider 插件用现有依赖目录直接执行等价命令，
   Vitest `37 passed`，`vue-tsc` 和 Vite production build 通过；当前环境没有 `pnpm` 可执行文件，但锁文件、

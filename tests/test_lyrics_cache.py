@@ -10,6 +10,7 @@ from kotonoha.lyrics.cache import (
     CacheWriteStatus,
     LyricsCache,
     LyricsCacheError,
+    LyricsCacheHit,
     LyricsCacheKey,
     LyricsCacheMode,
     LyricsCacheQuery,
@@ -63,8 +64,9 @@ async def test_lookup_is_scoped_to_provider_and_matches_metadata(tmp_path):
     hit = await cache.lookup("netease", track, netease.parse_payload)
 
     assert hit is not None
-    assert hit.provider == "netease"
-    assert hit.provider_song_id == "1"
+    assert hit.mode is LyricsCacheMode.AUTO
+    assert hit.artifact.provider == "netease"
+    assert hit.artifact.provider_song_id == "1"
 
 
 async def test_lookup_does_not_require_player_track_or_search_key(tmp_path):
@@ -77,6 +79,7 @@ async def test_lookup_does_not_require_player_track_or_search_key(tmp_path):
         columns = {row[1] for row in connection.execute("PRAGMA table_info(lyrics)")}
 
     assert hit is not None
+    assert hit.mode is LyricsCacheMode.AUTO
     assert not columns & {"player", "track_id", "search_key", "query", "alias"}
 
 
@@ -145,6 +148,37 @@ async def test_automatic_and_explicit_writes_record_the_selection_mode(tmp_path)
     assert automatic is not None and automatic.mode is LyricsCacheMode.AUTO
     assert manual is not None and manual.title == "Updated manually"
     assert manual.mode is LyricsCacheMode.AUTO
+
+
+async def test_manual_lookup_returns_the_latest_matching_selection_across_providers(tmp_path):
+    from kotonoha.lyrics import lrclib
+
+    cache = cache_for(tmp_path / "lyrics.sqlite3")
+    await cache.store(artifact(provider="netease", provider_song_id="automatic"))
+    await cache.upsert(artifact(provider="lrclib", provider_song_id="manual"))
+
+    hit = await cache.lookup_manual(
+        TrackMetadata("Song", "Artist", "Album", 180.0),
+        {"netease": netease.parse_payload, "lrclib": lrclib.parse_payload},
+    )
+
+    assert isinstance(hit, LyricsCacheHit)
+    assert hit.mode is LyricsCacheMode.MANUAL
+    assert hit.artifact.provider == "lrclib"
+
+    deleted = await cache.delete(LyricsCacheKey("lrclib", "manual"))
+    automatic = await cache.lookup(
+        "netease",
+        TrackMetadata("Song", "Artist", "Album", 180.0),
+        netease.parse_payload,
+    )
+
+    assert deleted.status is CacheDeleteStatus.DELETED
+    assert await cache.lookup_manual(
+        TrackMetadata("Song", "Artist", "Album", 180.0),
+        {"netease": netease.parse_payload, "lrclib": lrclib.parse_payload},
+    ) is None
+    assert automatic is not None and automatic.mode is LyricsCacheMode.AUTO
 
 
 async def test_legacy_rows_receive_auto_mode_during_schema_migration(tmp_path):

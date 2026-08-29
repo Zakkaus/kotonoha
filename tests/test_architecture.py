@@ -313,6 +313,36 @@ def test_cache_management_uses_a_narrow_cache_port():
     assert "kotonoha.app.components" not in _absolute_imports(path)
 
 
+def test_mpris_layers_do_not_forward_cache_management():
+    """MPRIS owns playback resolution, while cache management owns cache CRUD."""
+    forbidden = {
+        "lookup",
+        "lookup_manual",
+        "search",
+        "get",
+        "upsert",
+        "update",
+        "delete",
+        "delete_many",
+        "clear",
+        "count",
+    }
+    paths = (
+        SOURCE_ROOT / "app" / "components.py",
+        SOURCE_ROOT / "providers" / "mpris.py",
+        SOURCE_ROOT / "providers" / "mpris_lyrics.py",
+        SOURCE_ROOT / "providers" / "mpris_resolution.py",
+        SOURCE_ROOT / "lyrics" / "workflow.py",
+    )
+    violations = [
+        f"{path.relative_to(SOURCE_ROOT)}: {node.name}"
+        for path in paths
+        for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name in forbidden
+    ]
+    assert not violations, "MPRIS layers must not expose cache CRUD: " + ", ".join(violations)
+
+
 def test_lyrics_feature_does_not_depend_on_application_or_presentation_layers():
     """Lyrics contracts and workflows remain usable without application wiring or Qt."""
     forbidden = ("kotonoha.app", "PyQt6", "aiohttp.web", "kotonoha.ui")
@@ -340,6 +370,7 @@ def test_final_compatibility_modules_are_removed():
         SOURCE_ROOT / "config_schema.py",
         SOURCE_ROOT / "config_store.py",
         SOURCE_ROOT / "app" / "restart.py",
+        SOURCE_ROOT / "providers" / "mpris_http.py",
     )
     assert not [path.relative_to(SOURCE_ROOT).as_posix() for path in removed if path.exists()]
 

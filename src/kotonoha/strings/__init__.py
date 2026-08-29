@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from ..i18n import normalize_to_apple_tag, system_translation_language
 from .cache import CACHE_STRINGS
+from .search import SEARCH_STRINGS
 
 # (value, display label) for the settings picker.
 UI_LANGUAGES: tuple[tuple[str, str], ...] = (
@@ -367,6 +368,7 @@ STRINGS: dict[str, dict[str, str]] = {
 }
 
 STRINGS.update(CACHE_STRINGS)
+STRINGS.update(SEARCH_STRINGS)
 
 
 def resolve_ui_language(value: str | None) -> str:

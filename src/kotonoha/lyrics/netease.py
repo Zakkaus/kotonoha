@@ -9,7 +9,7 @@ from collections.abc import Iterator, Mapping
 import aiohttp
 
 from .artifact import LyricsArtifact
-from .http import LyricsSession
+from .http import LyricsHttpError, LyricsSession
 from .lrc_parser import parse_lrc
 from .match import (
     Candidate,
@@ -17,16 +17,20 @@ from .match import (
     MatchEvidence,
     QueryVariant,
     TrackMetadata,
+    evaluate_match,
     nearest_miss,
     query_variants,
     ranked_matches,
 )
 from .models import LyricLine
 from .payload import read_json_capped
+from .search_policy import MANUAL_SEARCH_RESULTS_PER_PROVIDER
 from .translation import TranslationMerger
 from .yrc_parser import parse_yrc
 
 logger = logging.getLogger(__name__)
+
+_MANUAL_SEARCH_CONCURRENCY = 8
 
 SEARCH_URL = "https://music.163.com/api/search/get"
 LYRIC_URL = "https://music.163.com/api/song/lyric/v1"
@@ -136,6 +140,30 @@ async def _artifact_for_match(
         lines=lines,
         confidence=match.confidence,
     )
+
+
+async def search_artifacts(
+    session: LyricsSession,
+    track: TrackMetadata,
+) -> tuple[LyricsArtifact, ...]:
+    """Return several selectable NetEase lyric artifacts for manual search."""
+    query = " ".join(part for part in (track.title.strip(), track.artist.strip()) if part)
+    candidates = (await search(session, query, limit=MANUAL_SEARCH_RESULTS_PER_PROVIDER))[
+        :MANUAL_SEARCH_RESULTS_PER_PROVIDER
+    ]
+    download_gate = asyncio.Semaphore(_MANUAL_SEARCH_CONCURRENCY)
+
+    async def fetch(candidate: Candidate) -> LyricsArtifact | None:
+        evidence = evaluate_match(candidate, track)
+        try:
+            async with download_gate:
+                return await _artifact_for_match(session, evidence)
+        except (aiohttp.ClientError, LyricsHttpError, ValueError) as exc:
+            logger.debug("NetEase manual candidate %s failed: %s", candidate.song_id, exc)
+            return None
+
+    artifacts = await asyncio.gather(*(fetch(candidate) for candidate in candidates))
+    return tuple(artifact for artifact in artifacts if artifact is not None)
 
 
 async def fetch_artifact_for_song_id(

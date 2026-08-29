@@ -8,15 +8,18 @@ from PyQt6.QtWidgets import QApplication
 
 from ..async_worker import BlockingCallRunner, BlockingWorkerPort
 from ..config import Config, ConfigStore, clamp_port
+from ..display.models import LyricsDisplayStatus
 from ..display.presentation import DisplayEngine
 from ..display.timeline import TimelineEngine
 from ..i18n import resolve_translation_language
 from ..lyrics import kugou, lrclib, netease, qqmusic
 from ..lyrics.cache import LyricsCache
 from ..lyrics.catalog import LyricsSourceCatalog
+from ..lyrics.http import new_lyrics_session
 from ..lyrics.live_source import LiveLyricsSource
 from ..lyrics.network_sources import NetworkLyricsSource
 from ..lyrics.resolver import LyricsResolver
+from ..lyrics.search import LyricsSearchProvider, LyricsSearchQuery, LyricsSearchService
 from ..lyrics.sources import EmbeddedLyricsSource, LocalLyricsSource, SidecarLyricsSource
 from ..platform import (
     DefaultOverlayPlatformFactory,
@@ -39,12 +42,13 @@ from ..ui.overlay.publisher import QtDisplayPublisher
 from ..ui.overlay.state import LyricsState
 from ..ui.settings.cache_dialog import LyricsCacheDialog
 from ..ui.settings.dialog import SettingsDialog
+from ..ui.settings.lyrics_search_dialog import LyricsSearchDialog
 from .application_controller import AppController
 from .components import ApplicationComponents, RestartLauncher
 from .config_service import ConfigService, ConfigWriter
 from .display_coordinator import DisplayCoordinator
 from .services import RuntimeConfigApplier, display_options
-from .settings_port import CacheManagementDialogFactory, SettingsDialogFactory
+from .settings_port import CacheManagementDialogFactory, LyricsSearchDialogFactory, SettingsDialogFactory
 from .source_gate import SourceOwnershipCoordinator
 
 logger = logging.getLogger(__name__)
@@ -103,6 +107,24 @@ class _QtCacheManagementDialogFactory:
         """Create one standalone cache manager using the shared UI translator."""
         return LyricsCacheDialog(
             config,
+            platform_factory=self._regular_window_factory,
+            translator=self._translator,
+        )
+
+
+class _QtLyricsSearchDialogFactory:
+    """Adapt the Qt manual-search dialog to the application-facing factory."""
+
+    def __init__(self, regular_window_factory: OverlayPlatformFactory, translator: Translator) -> None:
+        self._regular_window_factory = regular_window_factory
+        self._translator = translator
+
+    def create(self, config: Config, query: LyricsSearchQuery, status: LyricsDisplayStatus) -> LyricsSearchDialog:
+        """Create a search dialog with the current theme and track query."""
+        return LyricsSearchDialog(
+            config,
+            query,
+            status=status,
             platform_factory=self._regular_window_factory,
             translator=self._translator,
         )
@@ -245,6 +267,22 @@ class ApplicationComposition:
             local_source=local_source,
         )
         cache = LyricsCache(worker=cache_worker)
+        lyrics_search: LyricsSearchService = LyricsSearchService(
+            {
+                "netease": LyricsSearchProvider(netease.search_artifacts),
+                "lrclib": LyricsSearchProvider(lrclib.search_artifacts),
+                "kugou": LyricsSearchProvider(kugou.search_artifacts),
+                "qqmusic": LyricsSearchProvider(
+                    None,
+                    "QQ Music metadata search is unavailable; use an exact song id",
+                ),
+                "cider": LyricsSearchProvider(
+                    None,
+                    "Cider manual search is unavailable; it only exposes the active player track",
+                ),
+            },
+            new_lyrics_session,
+        )
         resolver = LyricsResolver(
             catalog=catalog,
             cache=cache,
@@ -288,6 +326,10 @@ class ApplicationComposition:
             platform_factory.for_regular_window,
             translator,
         )
+        lyrics_search_factory: LyricsSearchDialogFactory = _QtLyricsSearchDialogFactory(
+            platform_factory.for_regular_window,
+            translator,
+        )
         runtime_config = RuntimeConfigApplier(
             ui_runtime,
             display,
@@ -304,7 +346,10 @@ class ApplicationComposition:
             overlay=overlay,
             settings_factory=settings_factory,
             cache_management_factory=cache_management_factory,
+            lyrics_search_factory=lyrics_search_factory,
             lyrics_cache=cache,
+            lyrics_cache_writer=cache,
+            lyrics_search=lyrics_search,
             receiver=receiver,
             cider=cider,
             mpris=mpris,

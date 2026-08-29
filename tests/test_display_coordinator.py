@@ -3,10 +3,12 @@ import logging
 
 from kotonoha.app.display_coordinator import DisplayCoordinator
 from kotonoha.clock import MediaClock
-from kotonoha.display.models import ResolutionState
+from kotonoha.display.models import LyricsDisplayStatus, ResolutionState
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
-from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.lyrics.artifact import LyricsArtifact
+from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
+from kotonoha.lyrics.models import LyricLine, LyricsCacheState, LyricsDocument, LyricsOrigin, TimingKind
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from kotonoha.ui.overlay.publisher import QtDisplayPublisher
 from kotonoha.ui.overlay.state import LyricsState
@@ -116,3 +118,64 @@ def test_display_logs_active_source_once_per_document_and_resets_after_clear(cap
     assert any("lyric_source='Netease'" in message and "source_id='netease'" in message for message in active)
     assert all("provider_name" not in message for message in active)
     assert all("display lyric line changed" not in message for message in messages)
+
+
+def test_manual_lyrics_replace_the_active_document_and_survive_late_provider_results():
+    state = LyricsState()
+    coordinator = DisplayCoordinator(
+        QtDisplayPublisher(state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
+    track = TrackIdentity("test", "player", stable_id="song", title="Song", artist="Artist", album="Album")
+    playback = PlaybackObservation("test", "player", track, PlaybackStatus.PLAYING, 1.0, 10.0, 100.0)
+    automatic_document = LyricsDocument(
+        "lrclib",
+        source_name="LRCLIB",
+        song_id="automatic",
+        timing=TimingKind.LINE,
+        duration_s=10.0,
+        lines=(LyricLine(0, "auto", 0.0, 10.0, "automatic", ""),),
+    )
+    manual_artifact = LyricsArtifact(
+        provider="netease",
+        provider_song_id="manual",
+        title="Song (selected)",
+        artist="Artist",
+        album="Album",
+        duration_s=10.0,
+        payload={"lrc": "[00:00.00]selected"},
+        lines=(LyricLine(0, "manual", 0.0, 10.0, "selected", ""),),
+        confidence=MatchConfidence.MEDIUM,
+    )
+
+    coordinator.publish_resolution(playback, automatic_document, ResolutionState.AVAILABLE)
+
+    assert coordinator.apply_manual_artifact(
+        manual_artifact,
+        TrackMetadata("Song", "Artist", "Album", 10.0),
+    ) is True
+    assert state.frame.document is not None
+    assert state.frame.document.song_id == "manual"
+    assert coordinator.current_lyrics_status() == LyricsDisplayStatus(
+        playback_source="test",
+        lyrics_source_id="netease",
+        lyrics_source_name="netease",
+        origin=LyricsOrigin.MANUAL,
+        cache_state=LyricsCacheState.MANUAL,
+    )
+
+    # A provider response that was already in flight must not overwrite the
+    # user's choice while the same track remains active.
+    coordinator.publish_resolution(playback, automatic_document, ResolutionState.AVAILABLE)
+    assert state.frame.document is not None
+    assert state.frame.document.song_id == "manual"
+
+    next_track = TrackIdentity("test", "player", stable_id="next", title="Next", artist="Artist", album="Album")
+    next_playback = PlaybackObservation(
+        "test", "player", next_track, PlaybackStatus.PLAYING, 1.0, 10.0, 101.0
+    )
+    coordinator.publish_resolution(next_playback, automatic_document, ResolutionState.AVAILABLE)
+    assert state.frame.document is automatic_document
+    assert coordinator.current_lyrics_status().origin is LyricsOrigin.NETWORK
+    assert coordinator.current_lyrics_status().cache_state is LyricsCacheState.NONE

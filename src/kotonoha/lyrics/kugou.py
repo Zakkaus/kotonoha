@@ -9,6 +9,7 @@ artist and duration.
 
 from __future__ import annotations
 
+import asyncio
 import base64
 import binascii
 import logging
@@ -18,12 +19,14 @@ from dataclasses import dataclass
 import aiohttp
 
 from .artifact import LyricsArtifact
-from .http import LyricsSession
+from .http import LyricsHttpError, LyricsSession
 from .krc_parser import parse_krc
 from .lrc_parser import parse_lrc
-from .match import Candidate, MatchConfidence, TrackMetadata, query_variants, ranked_matches
+from .match import Candidate, MatchConfidence, TrackMetadata, evaluate_match, query_variants, ranked_matches
 from .models import LyricLine
 from .payload import read_json_capped
+from .search_policy import MANUAL_SEARCH_RESULTS_PER_PROVIDER
+from .title_grammar import base_title
 
 logger = logging.getLogger(__name__)
 
@@ -34,6 +37,7 @@ TIMEOUT = aiohttp.ClientTimeout(total=8.0, connect=4.0)
 # A title search returns many same-title covers; cap how many we actually download
 # lyrics for so a common title can't fan out into a pile of requests.
 _MAX_FETCHES = 5
+_MANUAL_SEARCH_CONCURRENCY = 8
 
 
 @dataclass(frozen=True)
@@ -128,6 +132,29 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
     return tuple(parse_lrc(payload.get("lrc", "")))
 
 
+async def search_artifacts(
+    session: LyricsSession,
+    track: TrackMetadata,
+) -> tuple[LyricsArtifact, ...]:
+    """Return several selectable Kugou lyric artifacts for manual search."""
+    keyword = base_title(track.title).strip() or track.artist.strip()
+    records = (await search(session, keyword))[:MANUAL_SEARCH_RESULTS_PER_PROVIDER]
+    download_gate = asyncio.Semaphore(_MANUAL_SEARCH_CONCURRENCY)
+
+    async def fetch(record: Record) -> LyricsArtifact | None:
+        candidate = Candidate(record.cand_id, record.title, record.artist, record.duration_s)
+        evidence = evaluate_match(candidate, track)
+        try:
+            async with download_gate:
+                return await _artifact_for_record(session, record, evidence.confidence)
+        except (aiohttp.ClientError, LyricsHttpError, ValueError) as exc:
+            logger.debug("Kugou manual candidate %s failed: %s", record.cand_id, exc)
+            return None
+
+    artifacts = await asyncio.gather(*(fetch(record) for record in records))
+    return tuple(artifact for artifact in artifacts if artifact is not None)
+
+
 def _query_keywords(track: TrackMetadata, fuzzy: bool) -> tuple[str, ...]:
     """The search strings for one track, from the shared ladder.
 
@@ -173,50 +200,52 @@ async def fetch_artifact(
     for attempt, (confidence, record) in enumerate(ranked):
         if attempt >= _MAX_FETCHES:
             break
-        # Fetching and parsing are separated because they fail differently: a
-        # candidate that could not be fetched has nothing left to try, while one that
-        # arrived unusable still has the LRC endpoint. Sharing one try block left krc
-        # unbound after a download error, so the branch below raised
-        # UnboundLocalError on the first candidate and silently reused the previous
-        # candidate's bytes on any later one.
         try:
-            krc = await download_krc(session, record)
-        except (aiohttp.ClientError, ValueError):
+            artifact = await _artifact_for_record(session, record, confidence)
+        except (aiohttp.ClientError, LyricsHttpError, ValueError):
             continue
-        try:
-            lines = tuple(parse_krc(krc))
-        except ValueError:
-            lines = ()
-        if lines:
-            payload = {"krc": base64.b64encode(krc).decode("ascii")}
-        else:
-            # A few compatible endpoints return plain LRC for a KRC request.
-            plain_lrc = krc.decode("utf-8", "replace")
-            lines = parse_payload({"lrc": plain_lrc})
-            if lines:
-                payload = {"lrc": plain_lrc}
-            elif not krc:
-                # An empty KRC means this candidate carries nothing; the next one is
-                # a better use of the fetch budget than a second request for it.
-                continue
-            else:
-                try:
-                    lrc = await download_lrc(session, record)
-                except (aiohttp.ClientError, ValueError):
-                    continue
-                lines = parse_payload({"lrc": lrc})
-                payload = {"lrc": lrc}
-        if not lines:
-            continue
-        return LyricsArtifact(
-            provider="kugou",
-            provider_song_id=record.cand_id,
-            title=record.title,
-            artist=record.artist,
-            album="",
-            duration_s=record.duration_s,
-            payload=payload,
-            lines=lines,
-            confidence=confidence,
-        )
+        if artifact is not None:
+            return artifact
     return None
+
+
+async def _artifact_for_record(
+    session: LyricsSession,
+    record: Record,
+    confidence: MatchConfidence,
+) -> LyricsArtifact | None:
+    """Download and parse one Kugou record for automatic or manual selection."""
+    # Fetching and parsing are separated because they fail differently: a candidate
+    # that cannot be fetched has nothing left to try, while an unusable KRC can still
+    # have a plain LRC representation at the same endpoint.
+    krc = await download_krc(session, record)
+    try:
+        lines = tuple(parse_krc(krc))
+    except ValueError:
+        lines = ()
+    if lines:
+        payload = {"krc": base64.b64encode(krc).decode("ascii")}
+    else:
+        plain_lrc = krc.decode("utf-8", "replace")
+        lines = parse_payload({"lrc": plain_lrc})
+        if lines:
+            payload = {"lrc": plain_lrc}
+        elif not krc:
+            return None
+        else:
+            lrc = await download_lrc(session, record)
+            lines = parse_payload({"lrc": lrc})
+            payload = {"lrc": lrc}
+    if not lines:
+        return None
+    return LyricsArtifact(
+        provider="kugou",
+        provider_song_id=record.cand_id,
+        title=record.title,
+        artist=record.artist,
+        album="",
+        duration_s=record.duration_s,
+        payload=payload,
+        lines=lines,
+        confidence=confidence,
+    )

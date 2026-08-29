@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import StrEnum
 
+from ..artifact import LyricsArtifact
+
 
 @dataclass(frozen=True, slots=True)
 class LyricsCacheKey:
@@ -27,6 +29,14 @@ class LyricsCacheMode(StrEnum):
 
     AUTO = "auto"
     MANUAL = "manual"
+
+
+@dataclass(frozen=True, slots=True)
+class LyricsCacheHit:
+    """Return one validated artifact together with its persisted selection mode."""
+
+    artifact: LyricsArtifact
+    mode: LyricsCacheMode
 
 
 @dataclass(frozen=True, slots=True)
@@ -80,6 +90,7 @@ __all__ = [
     "CacheWriteResult",
     "CacheWriteStatus",
     "LyricsCacheEntry",
+    "LyricsCacheHit",
     "LyricsCacheKey",
     "LyricsCacheMode",
     "LyricsCacheQuery",

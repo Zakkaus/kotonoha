@@ -10,15 +10,6 @@ from ..async_task import create_owned_task, wait_for_owned
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..display.contracts import MprisDisplayPort
 from ..display.models import ResolutionState
-from ..lyrics.artifact import LyricsArtifact
-from ..lyrics.cache import (
-    CacheDeleteResult,
-    CacheWriteResult,
-    LyricsCacheEntry,
-    LyricsCacheKey,
-    LyricsCacheMode,
-    LyricsCacheQuery,
-)
 from ..lyrics.match import MatchConfidence
 from ..lyrics.models import LyricsDocument
 from ..lyrics.sources import LyricsSourceKind
@@ -128,45 +119,6 @@ class MprisLyricsCoordinator:
         """Toggle fuzzy matching and reload the current track."""
         self._resolution.set_fuzzy(enabled)
         self._force_reload()
-
-    async def clear_cache(self) -> None:
-        """Clear persistent lyric cache data through the resolution session."""
-        await self._resolution.clear_cache()
-
-    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
-        """Search persisted cache metadata through the resolution owner."""
-        return await self._resolution.search_cache(query)
-
-    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
-        """Read one persisted cache entry through the resolution owner."""
-        return await self._resolution.get_cache(key)
-
-    async def upsert_cache(
-        self,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Persist a validated result selected by an explicit user workflow."""
-        return await self._resolution.upsert_cache(artifact, mode=mode)
-
-    async def update_cache(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Update one existing cache entry through the resolution owner."""
-        return await self._resolution.update_cache(key, artifact, mode=mode)
-
-    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
-        """Delete one persisted cache entry through the resolution owner."""
-        return await self._resolution.delete_cache(key)
-
-    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
-        """Delete several persisted cache entries through the resolution owner."""
-        return await self._resolution.delete_cache_many(keys)
 
     def on_playback_commit(self, commit: TrackCommit) -> None:
         """Start resolution for a stable playback transition."""

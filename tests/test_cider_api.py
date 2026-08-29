@@ -13,7 +13,7 @@ from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
 from kotonoha.lyrics.cider_api import CiderLyricsResponseAdapter
 from kotonoha.lyrics.match import TrackMetadata
-from kotonoha.lyrics.models import LyricsDocument, TimingKind
+from kotonoha.lyrics.models import LyricsDocument, LyricsOrigin, TimingKind
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from kotonoha.providers.cider_api import CIDER_API_CLIENT_ID, CiderApiProvider
 from kotonoha.providers.cider_client import CiderApiClient, CiderPlaybackResponseAdapter
@@ -89,6 +89,7 @@ def test_cider_lyrics_adapter_keeps_the_final_provider_identity():
     assert document.source_name == "Apple Music"
     assert document.song_id == "song-1"
     assert document.timing is TimingKind.LINE
+    assert document.origin is LyricsOrigin.LIVE
     assert document.lines[0].end == 3.0
 
 

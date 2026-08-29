@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from typing import TypeAlias
 
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
-from .models import LyricLine, LyricsDocument, LyricWord, TimingKind, validate_document
+from .models import LyricLine, LyricsDocument, LyricsOrigin, LyricWord, TimingKind, validate_document
 
 PROTOCOL_NAME = "kotonoha.adapter"
 PROTOCOL_VERSION = 1
@@ -214,6 +214,13 @@ def _parse_document(
         album=album if album is not None else track.album if track is not None else None,
         duration_s=duration_s if duration_s is not None else track.duration_s if track is not None else None,
         lines=lines,
+        origin=(
+            LyricsOrigin.EMBEDDED
+            if source_id == "embedded"
+            else LyricsOrigin.SIDECAR
+            if source_id == "sidecar"
+            else LyricsOrigin.ADAPTER
+        ),
     )
     if lines and document.timing is None:
         raise AdapterProtocolError("lyrics with lines must declare timing")

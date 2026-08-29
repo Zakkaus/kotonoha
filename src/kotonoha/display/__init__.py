@@ -13,6 +13,7 @@ from .models import (
     InterludeCountdown,
     InterludeMarkerStyle,
     LineProgress,
+    LyricsDisplayStatus,
     ResolutionState,
     WordProgress,
 )
@@ -30,6 +31,7 @@ __all__ = [
     "InterludeCountdown",
     "InterludeMarkerStyle",
     "LineProgress",
+    "LyricsDisplayStatus",
     "ResolutionState",
     "TextFitDecision",
     "WordProgress",

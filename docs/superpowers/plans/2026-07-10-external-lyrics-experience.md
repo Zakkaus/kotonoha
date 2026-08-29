@@ -1,5 +1,9 @@
 # External Lyrics Experience Implementation Plan
 
+> Historical implementation plan. Current public contracts and ownership live in
+> `docs/SPEC-mpris-lyrics.md` and the architecture plan; code snippets below describe
+> the staged migration and may use pre-refactor APIs.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Make MPRIS track changes stable, improve external lyric matching and fetch reliability, and add provider-scoped persistent caching while preserving configured provider order and the existing HUD renderer.

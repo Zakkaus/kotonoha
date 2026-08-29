@@ -8,15 +8,6 @@ from dataclasses import dataclass
 from typing import Protocol, TypeAlias
 
 from ..async_task import create_owned_task, wait_for_owned
-from .artifact import LyricsArtifact
-from .cache import (
-    CacheDeleteResult,
-    CacheWriteResult,
-    LyricsCacheEntry,
-    LyricsCacheKey,
-    LyricsCacheMode,
-    LyricsCacheQuery,
-)
 from .hint import LyricsHint
 from .http import LyricsSession
 from .match import MatchConfidence, TrackMetadata
@@ -111,37 +102,6 @@ class ResolverPort(WorkflowResolverPort, Protocol):
     def set_prefer_best(self, enabled: bool, /) -> None: ...
 
     def set_fuzzy(self, enabled: bool, /) -> None: ...
-
-    async def search_cache(self, query: LyricsCacheQuery, /) -> tuple[LyricsCacheEntry, ...]: ...
-
-    async def get_cache(self, key: LyricsCacheKey, /) -> LyricsCacheEntry | None: ...
-
-    async def upsert_cache(
-        self,
-        artifact: LyricsArtifact,
-        /,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult: ...
-
-    async def update_cache(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        /,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult: ...
-
-    async def delete_cache(self, key: LyricsCacheKey, /) -> CacheDeleteResult: ...
-
-    async def delete_cache_many(
-        self,
-        keys: tuple[LyricsCacheKey, ...],
-        /,
-    ) -> tuple[CacheDeleteResult, ...]: ...
-
-    async def clear_cache(self) -> None: ...
 
     async def cancel_inflight(self) -> None: ...
 

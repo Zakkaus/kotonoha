@@ -5,11 +5,9 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from typing import Protocol
 
-import aiohttp
-
 from .artifact import LyricsArtifact
 from .hint import LyricsHint
-from .http import LyricsSession
+from .http import LyricsHttpError, LyricsSession
 from .match import TrackMetadata
 from .sources import LyricsSourceError, LyricsSourceResult, PayloadParser
 
@@ -69,7 +67,7 @@ class NetworkLyricsSource:
             raise LyricsSourceError(f"network source {self._source_id!r} requires an HTTP session")
         try:
             artifact = await self._fetch(session, track, fuzzy=fuzzy)
-        except aiohttp.ClientError as exc:
+        except LyricsHttpError as exc:
             raise LyricsSourceError(f"{self._source_id} HTTP request failed") from exc
         return None if artifact is None else LyricsSourceResult.from_artifact(artifact)
 
@@ -86,7 +84,7 @@ class NetworkLyricsSource:
             raise LyricsSourceError(f"exact source {self._source_id!r} requires an HTTP session")
         try:
             artifact = await self._exact_fetch(session, track, hint.song_id)
-        except aiohttp.ClientError as exc:
+        except LyricsHttpError as exc:
             raise LyricsSourceError(f"{self._source_id} exact HTTP request failed") from exc
         return None if artifact is None else LyricsSourceResult.from_artifact(artifact)
 

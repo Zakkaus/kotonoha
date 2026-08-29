@@ -8,15 +8,6 @@ import logging
 from ..app.source_contracts import MprisSourcePort
 from ..config import DEFAULT_LYRICS_SOURCES
 from ..display.contracts import MprisDisplayPort
-from ..lyrics.artifact import LyricsArtifact
-from ..lyrics.cache import (
-    CacheDeleteResult,
-    CacheWriteResult,
-    LyricsCacheEntry,
-    LyricsCacheKey,
-    LyricsCacheMode,
-    LyricsCacheQuery,
-)
 from ..lyrics.workflow import ResolverPort
 from ..players import PlayerInfo
 from .mpris_adapter import MprisPlaybackAdapter
@@ -99,45 +90,6 @@ class MprisProvider:
             return
         self._fuzzy = updated
         self._lyrics.set_fuzzy(updated)
-
-    async def clear_cache(self) -> None:
-        """Clear the resolver's persistent cache."""
-        await self._lyrics.clear_cache()
-
-    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
-        """Search persisted lyric cache metadata."""
-        return await self._lyrics.search_cache(query)
-
-    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
-        """Read one persisted lyric cache entry."""
-        return await self._lyrics.get_cache(key)
-
-    async def upsert_cache(
-        self,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Persist a validated result selected by an explicit lyric workflow."""
-        return await self._lyrics.upsert_cache(artifact, mode=mode)
-
-    async def update_cache(
-        self,
-        key: LyricsCacheKey,
-        artifact: LyricsArtifact,
-        *,
-        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
-    ) -> CacheWriteResult:
-        """Update one existing persisted lyric cache entry and record its mode."""
-        return await self._lyrics.update_cache(key, artifact, mode=mode)
-
-    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
-        """Delete one persisted lyric cache entry."""
-        return await self._lyrics.delete_cache(key)
-
-    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
-        """Delete several persisted lyric cache entries."""
-        return await self._lyrics.delete_cache_many(keys)
 
     async def start(self) -> None:
         """Start MPRIS polling and lyric HTTP resources."""

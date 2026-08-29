@@ -12,11 +12,12 @@ import aiohttp
 from ..async_task import create_owned_task
 from .artifact import LyricsArtifact
 from .artist_grammar import primary_artist
-from .http import LyricsSession
+from .http import LyricsHttpError, LyricsSession
 from .lrc_parser import parse_lrc
-from .match import Candidate, TrackMetadata, best_match, query_variants
+from .match import Candidate, MatchEvidence, TrackMetadata, best_match, evaluate_match, query_variants
 from .models import LyricLine
 from .payload import read_json_capped
+from .search_policy import MANUAL_SEARCH_RESULTS_PER_PROVIDER
 from .title_grammar import base_title
 
 logger = logging.getLogger(__name__)
@@ -29,8 +30,6 @@ HEADERS = {"User-Agent": "kotonoha/0.1 (https://github.com/locez/kotonoha)"}
 # request and the whole source looks dead. This runs off the UI thread, so
 # waiting is fine; the session-wide safety net (20s) still bounds a true hang.
 TIMEOUT = aiohttp.ClientTimeout(total=15.0, connect=5.0)
-
-
 @dataclass(frozen=True)
 class Record:
     song_id: str
@@ -95,6 +94,21 @@ def parse_payload(payload: Mapping[str, str]) -> tuple[LyricLine, ...]:
     return tuple(parse_lrc(payload.get("syncedLyrics", "")))
 
 
+async def search_artifacts(
+    session: LyricsSession,
+    track: TrackMetadata,
+) -> tuple[LyricsArtifact, ...]:
+    """Return several selectable LRCLIB lyric artifacts for manual search."""
+    records = (await search_records(session, track))[:MANUAL_SEARCH_RESULTS_PER_PROVIDER]
+    artifacts: list[LyricsArtifact] = []
+    for record in records:
+        candidate = Candidate(record.song_id, record.title, record.artist, record.duration_s, album=record.album)
+        artifact = _artifact_from_record(record, evaluate_match(candidate, track))
+        if artifact is not None:
+            artifacts.append(artifact)
+    return tuple(artifacts)
+
+
 async def fetch_artifact(
     session: LyricsSession,
     track: TrackMetadata,
@@ -134,7 +148,7 @@ async def fetch_artifact(
                 try:
                     records.extend(task.result())
                     successful_requests += 1
-                except (TimeoutError, aiohttp.ClientError, ValueError) as exc:
+                except (TimeoutError, aiohttp.ClientError, LyricsHttpError, ValueError) as exc:
                     errors.append(exc)
                     logger.debug("LRCLIB %s lookup failed: %s: %s", stage, type(exc).__name__, exc)
 
@@ -171,6 +185,11 @@ def _artifact_from_records(
         for item in records
         if Candidate(item.song_id, item.title, item.artist, item.duration_s, album=item.album) == match.candidate
     )
+    return _artifact_from_record(record, match)
+
+
+def _artifact_from_record(record: Record, evidence: MatchEvidence) -> LyricsArtifact | None:
+    """Build one validated artifact while retaining the search result metadata."""
     payload = {"syncedLyrics": record.synced_lyrics}
     lines = parse_payload(payload)
     if not lines:
@@ -184,5 +203,5 @@ def _artifact_from_records(
         duration_s=record.duration_s,
         payload=payload,
         lines=lines,
-        confidence=match.confidence,
+        confidence=evidence.confidence,
     )

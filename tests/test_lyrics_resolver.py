@@ -18,6 +18,7 @@ from kotonoha.lyrics.cache import (
     CacheWriteStatus,
     LyricsCacheEntry,
     LyricsCacheError,
+    LyricsCacheHit,
     LyricsCacheKey,
     LyricsCacheMode,
     LyricsCacheQuery,
@@ -28,7 +29,7 @@ from kotonoha.lyrics.http import LyricsSession
 from kotonoha.lyrics.live_contracts import LiveSourceMatch
 from kotonoha.lyrics.live_source import LiveLyricsSource, LiveSourcePort
 from kotonoha.lyrics.match import MatchConfidence, TrackMetadata
-from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
+from kotonoha.lyrics.models import LyricLine, LyricsCacheState, LyricsDocument, LyricsOrigin, TimingKind
 from kotonoha.lyrics.network_sources import NetworkLyricsSource
 from kotonoha.lyrics.resolver import LyricsResolver
 from kotonoha.lyrics.sources import (
@@ -68,10 +69,11 @@ def artifact(*, provider: str = "netease", confidence: MatchConfidence = MatchCo
 
 
 class FakeCache:
-    def __init__(self, calls, hits=None, *, lookup_error=None):
+    def __init__(self, calls, hits=None, *, lookup_error=None, manual_hit=None):
         self.calls = calls
         self.hits = hits or {}
         self.lookup_error = lookup_error
+        self.manual_hit = manual_hit
 
     def start(self):
         self.calls.append("start")
@@ -80,7 +82,11 @@ class FakeCache:
         self.calls.append(f"cache:{provider}")
         if self.lookup_error is not None:
             raise self.lookup_error
-        return self.hits.get(provider)
+        hit = self.hits.get(provider)
+        return None if hit is None else LyricsCacheHit(hit, LyricsCacheMode.AUTO)
+
+    async def lookup_manual(self, _track, _parsers):
+        return self.manual_hit
 
     async def store(self, value: LyricsArtifact) -> CacheWriteResult:
         self.calls.append(f"store:{value.provider}")
@@ -282,6 +288,49 @@ async def test_exact_qqmusic_hint_fetches_only_when_source_is_enabled(monkeypatc
     assert result is not None and result.source_id == "qqmusic"
     assert [line.text for line in result.document.lines] == ["exact"]
     assert calls == ["003aAYrm3GE0Ac"]
+
+
+async def test_manual_cache_selection_precedes_exact_hint_and_network():
+    calls = []
+    selected = artifact(provider="lrclib")
+    cache = FakeCache(calls, manual_hit=LyricsCacheHit(selected, LyricsCacheMode.MANUAL))
+    resolver = resolver_with_fakes(
+        calls,
+        cache=cache,
+        network_hits={"netease": artifact(provider="netease")},
+    )
+
+    result = await resolver.resolve_hint(
+        SESSION,
+        TRACK,
+        ["netease"],
+        LyricsHint("netease", "42"),
+    )
+
+    assert result is not None
+    assert result.source_id == "lrclib"
+    assert result.document.origin is LyricsOrigin.MANUAL
+    assert result.document.cache_state is LyricsCacheState.MANUAL
+    assert calls == []
+
+
+async def test_manual_cache_selection_is_used_by_ordinary_resolution():
+    calls = []
+    selected = artifact(provider="lrclib")
+    cache = FakeCache(calls, manual_hit=LyricsCacheHit(selected, LyricsCacheMode.MANUAL))
+    resolver = resolver_with_fakes(
+        calls,
+        cache=cache,
+        network_hits={"netease": artifact(provider="netease")},
+    )
+
+    result = await resolver.resolve(SESSION, TRACK, ["netease"])
+
+    assert result is not None
+    assert result.source_id == "lrclib"
+    assert result.document.origin is LyricsOrigin.MANUAL
+    assert result.document.cache_state is LyricsCacheState.MANUAL
+    assert calls == []
 
 
 async def test_local_hint_wins_without_using_sources_or_network(monkeypatch, tmp_path: Path):
@@ -566,6 +615,8 @@ async def test_best_mode_cached_hit_short_circuits_network():
     assert result.source_id == "netease"
     assert "network:netease" not in calls
     assert "network:lrclib" not in calls
+    assert result.document.origin is LyricsOrigin.CACHE
+    assert result.document.cache_state is LyricsCacheState.FROM_CACHE
 
 
 async def test_best_mode_cider_beats_lower_priority_cache_hit():
