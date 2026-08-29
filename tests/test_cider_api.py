@@ -1,5 +1,6 @@
 import asyncio
 import json
+import logging
 from typing import cast
 
 import aiohttp
@@ -352,6 +353,39 @@ async def test_cider_provider_publishes_canonical_document_and_final_provider_na
         assert state.frame.document.source_name == "Apple Music"
         assert state.frame.track is not None
         assert state.frame.track.stable_id == "song-1"
+    finally:
+        await provider.stop()
+
+
+@pytest.mark.asyncio
+async def test_cider_provider_marks_a_candidate_not_displayed_when_mpris_owns_display(caplog):
+    track = TrackIdentity("cider", "cider-api", "song-1", "Song", "Song", "Artist", "Album", None, 180.0)
+    observation = PlaybackObservation("cider", "cider-api", track, PlaybackStatus.PLAYING, 1.5, 180.0, 1.0)
+    document = CiderLyricsResponseAdapter().adapt(_lyrics_payload(), track=track, duration_s=180.0)
+    client = _FakeCiderClient(observation, document)
+    ownership = SourceOwnershipCoordinator(display_sources=["mpris"])
+    assert ownership.select_external() is True
+    caplog.set_level(logging.DEBUG)
+    provider = CiderApiProvider(
+        display=_display(LyricsState()),
+        ownership=ownership,
+        client=client,
+        poll_interval=60.0,
+    )
+
+    await provider.start()
+    await asyncio.wait_for(client.playback_called.wait(), timeout=1.0)
+    await asyncio.wait_for(client.lyrics_called.wait(), timeout=1.0)
+    await asyncio.sleep(0)
+    await asyncio.sleep(0)
+    try:
+        assert any(
+            "Cider lyric candidate: outcome=not_displayed" in record.getMessage()
+            and "display_owner='external'" in record.getMessage()
+            and "source_slot='cider'" in record.getMessage()
+            and "lyric_source='Apple Music'" in record.getMessage()
+            for record in caplog.records
+        )
     finally:
         await provider.stop()
 

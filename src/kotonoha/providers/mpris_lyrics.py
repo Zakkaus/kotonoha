@@ -183,7 +183,7 @@ class MprisLyricsCoordinator:
             if not self._select_late_live_source():
                 logger.info(
                     "lyrics resolution finished: generation=%d track=%r / %r "
-                    "selected=none reason=%s unreachable=%s",
+                    "selected_lyric_source=none reason=%s unreachable=%s",
                     commit.generation,
                     commit.info.title,
                     commit.info.artist,
@@ -200,7 +200,7 @@ class MprisLyricsCoordinator:
                 self._content_owner = "none"
                 logger.info(
                     "lyrics resolution finished: generation=%d track=%r / %r "
-                    "selected=none reason=live-candidate-no-longer-matches",
+                    "selected_lyric_source=none reason=live-candidate-no-longer-matches",
                     commit.generation,
                     commit.info.title,
                     commit.info.artist,
@@ -265,7 +265,7 @@ class MprisLyricsCoordinator:
         self._content_owner = "resolving"
         logger.info(
             "lyrics resolution started: generation=%d player=%r track=%r / %r "
-            "id=%r sources=%s",
+            "id=%r source_order=%s",
             commit.generation,
             commit.player_name,
             commit.info.title,
@@ -329,12 +329,20 @@ class MprisLyricsCoordinator:
             return False
         self._ownership.select_live(match.client_id)
         self._content_owner = "live"
-        logger.info(
-            "lyrics source switched during playback: generation=%d previous=%r "
-            "slot=%r client=%r",
+        source_label = (
+            match.document.source_name
+            if match.document.source_name is not None
+            else match.document.source_id
+        )
+        logger.debug(
+            "lyrics display source transition: generation=%d previous_slot=%r "
+            "current_slot=%r lyric_source=%r source_id=%r playback_source=%r client=%r",
             current.generation,
             before_source if before_source is not None else "none",
             self._resolution.live_source_id,
+            source_label,
+            match.document.source_id,
+            "mpris",
             match.client_id,
         )
         self._log_document_selection(
@@ -358,18 +366,19 @@ class MprisLyricsCoordinator:
         confidence: MatchConfidence,
         duration_s: float | None,
     ) -> None:
-        """Log both the resolver slot and final provider identity for one result."""
-        logger.info(
-            "lyrics selected: generation=%d player=%r track=%r / %r "
-            "slot=%r provider=%r provider_name=%r kind=%s timing=%s lines=%d "
+        """Log the MPRIS workflow commit without presenting it as the active display source."""
+        source_label = document.source_name if document.source_name is not None else document.source_id
+        logger.debug(
+            "MPRIS lyric result committed: generation=%d player=%r track=%r / %r "
+            "source_slot=%r lyric_source=%r source_id=%r kind=%s timing=%s lines=%d "
             "duration=%s confidence=%s",
             commit.generation,
             commit.player_name,
             commit.info.title,
             commit.info.artist,
             source_slot,
+            source_label,
             document.source_id,
-            document.source_name,
             source_kind,
             document.timing,
             len(document.lines),

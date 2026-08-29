@@ -248,21 +248,23 @@ class CiderApiProvider:
             return
         self._document = document
         if document is None:
-            logger.info(
-                "Cider lyrics finished: generation=%d track=%r / %r provider=none lines=0",
+            logger.debug(
+                "Cider lyric candidate unavailable: generation=%d track=%r / %r "
+                "source_slot='cider' outcome=not_found",
                 generation,
                 track.title,
                 track.artist,
             )
         else:
-            logger.info(
-                "Cider lyrics resolved: generation=%d track=%r / %r provider=%r "
-                "provider_name=%r timing=%s lines=%d",
+            source_label = document.source_name if document.source_name is not None else document.source_id
+            logger.debug(
+                "Cider lyric candidate ready: generation=%d track=%r / %r "
+                "source_slot='cider' lyric_source=%r source_id=%r timing=%s lines=%d",
                 generation,
                 track.title,
                 track.artist,
+                source_label,
                 document.source_id,
-                document.source_name,
                 document.timing,
                 len(document.lines),
             )
@@ -288,6 +290,13 @@ class CiderApiProvider:
             observation.status is PlaybackStatus.PLAYING,
         )
         accepted = self._ownership.accepts(CIDER_API_CLIENT_ID)
+        source_label = (
+            document.source_name
+            if document is not None and document.source_name is not None
+            else document.source_id
+            if document is not None
+            else "none"
+        )
         publish_key = (
             observation.track.track_ref if observation.track is not None else None,
             accepted,
@@ -298,13 +307,13 @@ class CiderApiProvider:
         if publish_key != self._last_log_publish_key:
             self._last_log_publish_key = publish_key
             logger.debug(
-                "Cider candidate publication: track_ref=%r provider=%r provider_name=%r "
-                "accepted=%s owner=%s",
-                publish_key[0],
-                publish_key[3],
-                publish_key[4],
-                accepted,
+                "Cider lyric candidate: outcome=%s display_owner=%r source_slot='cider' "
+                "lyric_source=%r source_id=%r track_ref=%r",
+                "displayed" if accepted else "not_displayed",
                 self._ownership.mode,
+                source_label,
+                document.source_id if document is not None else None,
+                publish_key[0],
             )
         if accepted:
             self._display.publish_resolution(observation, document, resolution)

@@ -422,15 +422,30 @@ class LyricsResolver:
 
 
 def _log_candidate(stage: str, source_slot: str, result: LyricsSourceResult) -> None:
-    """Log the source slot and canonical provider for one resolver result."""
+    """Log one resolver candidate or selected result without implying display ownership."""
     document = result.document
+    source_label = document.source_name if document.source_name is not None else document.source_id
+    if stage == "selected":
+        logger.debug(
+            "lyrics resolution selected: source_slot=%r lyric_source=%r source_id=%r "
+            "kind=%s timing=%s lines=%d confidence=%s duration=%s",
+            source_slot,
+            source_label,
+            document.source_id,
+            result.source_kind,
+            document.timing,
+            len(document.lines),
+            result.confidence,
+            "-" if result.duration_s is None else f"{result.duration_s:.3f}s",
+        )
+        return
     logger.debug(
-        "lyrics candidate: stage=%s slot=%r provider=%r provider_name=%r "
+        "lyrics resolution candidate: origin=%s source_slot=%r lyric_source=%r source_id=%r "
         "kind=%s timing=%s lines=%d confidence=%s duration=%s",
         stage,
         source_slot,
+        source_label,
         document.source_id,
-        document.source_name,
         result.source_kind,
         document.timing,
         len(document.lines),

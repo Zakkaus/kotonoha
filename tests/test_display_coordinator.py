@@ -71,7 +71,7 @@ def test_display_tick_does_not_revert_to_a_lagging_polled_line():
     assert state.frame.current.id == "line-1"
 
 
-def test_display_logs_provider_metadata_once_per_document_and_resets_after_clear(caplog):
+def test_display_logs_active_source_once_per_document_and_resets_after_clear(caplog):
     state = LyricsState()
     coordinator = DisplayCoordinator(
         QtDisplayPublisher(state),
@@ -110,8 +110,9 @@ def test_display_logs_provider_metadata_once_per_document_and_resets_after_clear
         coordinator.publish_resolution(playback, first_document, ResolutionState.AVAILABLE)
 
     messages = [record.getMessage() for record in caplog.records]
-    metadata = [message for message in messages if "display lyric metadata" in message]
-    assert len(metadata) == 3
-    assert sum("provider='lrclib'" in message for message in metadata) == 2
-    assert any("provider='netease'" in message and "lines=2" in message for message in metadata)
+    active = [message for message in messages if "LYRICS DISPLAY ACTIVE" in message]
+    assert len(active) == 3
+    assert sum("lyric_source='LRCLIB'" in message for message in active) == 2
+    assert any("lyric_source='Netease'" in message and "source_id='netease'" in message for message in active)
+    assert all("provider_name" not in message for message in active)
     assert all("display lyric line changed" not in message for message in messages)

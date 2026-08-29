@@ -523,9 +523,10 @@ async def test_external_result_is_projected_to_the_canonical_frame(caplog):
     assert state.frame.document.language == "en"
     assert state.frame.current is not None
     assert any(
-        "lyrics selected: generation=1" in record.getMessage()
-        and "slot='lrclib'" in record.getMessage()
-        and "provider='lrclib'" in record.getMessage()
+        "LYRICS DISPLAY ACTIVE" in record.getMessage()
+        and "lyric_source='Resolved Provider'" in record.getMessage()
+        and "source_id='lrclib'" in record.getMessage()
+        and "playback_source='mpris'" in record.getMessage()
         for record in caplog.records
     )
 
@@ -576,7 +577,7 @@ async def test_mpris_resolution_keeps_a_paused_playback_observation():
 
 
 async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog):
-    caplog.set_level(logging.INFO)
+    caplog.set_level(logging.DEBUG)
     resolver = RecordingResolver()
     gate = SourceOwnershipCoordinator()
     state = LyricsState()
@@ -594,10 +595,11 @@ async def test_cider_frame_can_take_over_after_a_late_external_miss(caplog):
     assert gate.accepts(10) is True
     assert state.frame.document is not None
     assert any(
-        "lyrics source switched during playback" in record.getMessage()
-        and "slot='cider'" in record.getMessage()
+        "lyrics display source transition" in record.getMessage()
+        and "current_slot='cider'" in record.getMessage()
         for record in caplog.records
     )
+    assert any("LYRICS DISPLAY ACTIVE" in record.getMessage() for record in caplog.records)
 
 
 async def test_matching_cider_clock_can_drive_external_timeline():

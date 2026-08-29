@@ -180,8 +180,8 @@ async def test_resolver_logs_source_candidates_and_final_selection(caplog):
 
     assert result is not None
     messages = [record.getMessage() for record in caplog.records]
-    assert any("lyrics candidate: stage=network slot='lrclib'" in message for message in messages)
-    assert any("lyrics candidate: stage=selected slot='lrclib'" in message for message in messages)
+    assert any("lyrics resolution candidate: origin=network source_slot='lrclib'" in message for message in messages)
+    assert any("lyrics resolution selected: source_slot='lrclib'" in message for message in messages)
 
 
 async def test_resolver_does_not_change_display_ownership():

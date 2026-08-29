@@ -99,15 +99,14 @@ class SourceOwnershipCoordinator:
         if previous is None or self._candidate_log_key(previous) != self._candidate_log_key(candidate):
             track = observation.track
             logger.debug(
-                "lyrics live candidate updated: client=%r track=%r / %r ref=%r "
-                "lyrics=%s provider=%r provider_name=%r lines=%d",
+                "live lyric candidate updated: adapter=%r track=%r artist=%r ref=%r "
+                "lyric_source=%r source_id=%r lines=%d",
                 client_id,
                 track.title if track is not None else "",
                 track.artist if track is not None else "",
                 track.track_ref if track is not None else None,
-                document is not None and bool(document.lines),
+                _lyric_source_label(document),
                 document.source_id if document is not None else None,
-                document.source_name if document is not None else None,
                 len(document.lines) if document is not None else 0,
             )
 
@@ -166,12 +165,14 @@ class SourceOwnershipCoordinator:
         candidate = self._registry.clear_client(client_id)
         if candidate is not None:
             track = candidate.observation.track
-            logger.info(
-                "lyrics live candidate removed: client=%r track=%r / %r ref=%r provider=%r",
+            logger.debug(
+                "live lyric candidate removed: adapter=%r track=%r artist=%r ref=%r "
+                "lyric_source=%r source_id=%r",
                 client_id,
                 track.title if track is not None else "",
                 track.artist if track is not None else "",
                 track.track_ref if track is not None else None,
+                _lyric_source_label(candidate.document),
                 candidate.document.source_id if candidate.document is not None else None,
             )
         if self._mode == "standalone":
@@ -267,7 +268,7 @@ class SourceOwnershipCoordinator:
             return
         previous = previous_mode if previous_client is None else f"{previous_mode}:{previous_client!r}"
         current = mode if client_id is None else f"{mode}:{client_id!r}"
-        logger.info("lyrics display ownership changed: %s -> %s", previous, current)
+        logger.info("lyrics display owner changed: previous=%s current=%s", previous, current)
 
     @staticmethod
     def _candidate_log_key(candidate: LiveSourceCandidate) -> tuple[object, ...]:
@@ -283,6 +284,12 @@ class SourceOwnershipCoordinator:
             len(document.lines) if document is not None else 0,
             document.timing if document is not None else None,
         )
+
+def _lyric_source_label(document: LyricsDocument | None) -> str:
+    """Return the human-facing source name used in candidate diagnostics."""
+    if document is None:
+        return "none"
+    return document.source_name if document.source_name is not None else document.source_id
 
 
 __all__ = [
