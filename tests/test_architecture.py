@@ -551,6 +551,7 @@ def test_playback_domain_does_not_depend_on_player_adapters():
 def test_large_ui_modules_are_explicitly_scoped():
     allowed: dict[str, str] = {
         "ui/overlay/window.py": "cohesive Qt window lifecycle and signal boundary",
+        "ui/overlay/surface.py": "cohesive Qt surface binding and platform lifecycle boundary",
         "ui/settings/dialog.py": "cohesive Qt dialog composition and signal boundary",
         "lyrics/resolver.py": "cohesive source arbitration and cache policy boundary",
     }

@@ -6,7 +6,7 @@ import logging
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, QRect
 
 from ...config import Config
 from ...platform.overlay_contracts import (
@@ -142,15 +142,30 @@ class OverlayPositionController:
         """Register the callback for an asynchronously completed placement."""
         self._position_commit_handler = handler
 
-    def begin_drag(self, local: QPoint, global_position: QPoint) -> DragMode:
+    def begin_drag(
+        self,
+        local: QPoint,
+        global_position: QPoint,
+        panel: QRect,
+    ) -> DragMode:
         """Start a manual drag through the selected drag port."""
-        return self._drag.begin(local, global_position)
+        return self._drag.begin(local, global_position, self._layer_pos, panel)
 
-    def update_drag(self, local: QPoint, global_position: QPoint) -> SurfaceResult:
-        """Apply one incremental drag delta and retain the platform result."""
-        updated_position, result = self._drag.update(self._layer_pos, local, global_position)
+    def update_drag(
+        self,
+        local: QPoint,
+        global_position: QPoint,
+        panel: QRect,
+    ) -> SurfaceResult:
+        """Apply one unrestricted drag step and retain the platform position."""
+        updated_position, result = self._drag.update(
+            self._layer_pos,
+            local,
+            global_position,
+            panel,
+        )
         self._layer_pos = updated_position
-        return result
+        return result.operation
 
     def end_drag(self) -> DragRelease:
         """End the gesture and state whether persistence is safe."""

@@ -129,17 +129,21 @@ class ThemedSettingsDialog(QDialog):
         super().closeEvent(a0)
 
     def _close_platform(self) -> SurfaceResult:
-        """Close the optional platform surface and report whether it completed."""
+        """Release only the optional blur borrowed by this ordinary dialog.
+
+        Settings is a normal Qt dialog, not the output-bound overlay surface.
+        Closing the selected adapter would hide and destroy the Qt surface that
+        owns this dialog, so blur is the only compositor resource released here.
+        """
         if self._platform is None:
             return SurfaceResult.applied()
-        return self._platform.surface.close()
+        blur = self._platform.blur
+        if blur is None:
+            return SurfaceResult.applied()
+        return blur.set_blur_region(None)
 
     def show(self) -> None:
-        """Prepare the optional platform surface before Qt maps the window."""
-        if self._platform is not None:
-            prepared = self._platform.surface.prepare()
-            if not prepared.succeeded:
-                self._log_surface_failure("preparation", prepared)
+        """Show the normal Qt dialog without changing its native surface."""
         super().show()
 
     def resizeEvent(self, a0: QResizeEvent | None) -> None:
@@ -148,12 +152,8 @@ class ThemedSettingsDialog(QDialog):
         self._apply_blur()
 
     def showEvent(self, a0: QShowEvent | None) -> None:
-        """Activate the optional platform surface after the window is mapped."""
+        """Apply optional blur after the normal Qt dialog is mapped."""
         super().showEvent(a0)
-        if self._platform is not None:
-            activated = self._platform.surface.activate()
-            if not activated.succeeded:
-                self._log_surface_failure("activation", activated)
         self._apply_blur()
 
     @staticmethod

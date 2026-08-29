@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from .overlay_contracts import (
     _NO_WINDOW_OPACITY,
+    DragGeometry,
     DragMode,
     DragPort,
     DragStartResult,
+    DragUpdateResult,
     LayerShellBridge,
     OverlayCapabilities,
     SurfaceResult,
@@ -27,18 +29,30 @@ class OrdinaryWindowDragStrategy:
         self._client_positioning = client_positioning
         self._origin: WindowPoint | None = None
         self._window_origin = WindowPoint(0, 0)
+        self._surface_position = WindowPoint(0, 0)
+        self._panel_position: WindowPoint | None = None
 
     @property
     def client_positioning(self) -> bool:
         """Return whether ordinary-window moves can be persisted on this session."""
         return self._client_positioning
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
         del global_position
         current = self._host.window_position()
         if current is None:
             current = self._window_origin
         self._window_origin = current
+        self._surface_position = geometry.surface_position
+        self._panel_position = WindowPoint(
+            geometry.surface_position.x + geometry.panel.x,
+            geometry.surface_position.y + geometry.panel.y,
+        )
         self._origin = local_position
         return DragStartResult(DragMode.MANUAL)
 
@@ -46,32 +60,61 @@ class OrdinaryWindowDragStrategy:
         """Synchronize the drag origin after an ordinary-window move."""
         self._window_origin = position
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+    def update_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragUpdateResult:
         del global_position
-        if self._origin is None:
-            return SurfaceResult.rejected("Window drag has not started")
+        origin = self._origin
+        panel_position = self._panel_position
+        if origin is None or panel_position is None:
+            return DragUpdateResult(
+                SurfaceResult.rejected("Window drag has not started"),
+                self._surface_position,
+            )
         # move_to already refuses here; the drag path went straight to the host and
         # so reported every update as applied on a compositor that moves nothing.
         # The two paths have to answer the same question the same way.
         if not self._client_positioning:
-            return SurfaceResult.not_supported(_NO_CLIENT_POSITIONING)
+            return DragUpdateResult(
+                SurfaceResult.not_supported(_NO_CLIENT_POSITIONING),
+                self._surface_position,
+            )
+        attempted_panel = WindowPoint(
+            panel_position.x + local_position.x - origin.x,
+            panel_position.y + local_position.y - origin.y,
+        )
+        surface_position = geometry.surface_for_panel(attempted_panel)
+        displacement = WindowPoint(
+            surface_position.x - self._surface_position.x,
+            surface_position.y - self._surface_position.y,
+        )
         position = WindowPoint(
-            self._window_origin.x + local_position.x - self._origin.x,
-            self._window_origin.y + local_position.y - self._origin.y,
+            self._window_origin.x + displacement.x,
+            self._window_origin.y + displacement.y,
         )
         try:
-            self._host.move_window(position)
+            if displacement != WindowPoint(0, 0):
+                self._host.move_window(position)
         except RuntimeError as exc:
-            return SurfaceResult.failed(f"Window move failed: {exc}", retryable=True)
+            return DragUpdateResult(
+                SurfaceResult.failed(f"Window move failed: {exc}", retryable=True),
+                self._surface_position,
+            )
         # The window origin advances; the press point does not. The window follows
         # the pointer, so the pointer's local position re-settles toward where the
         # press landed — advancing that anchor too counts the settling twice and
         # the window snaps back or stalls. Same model as the Layer Shell anchor.
         self._window_origin = position
-        return SurfaceResult.applied()
+        self._surface_position = surface_position
+        self._panel_position = attempted_panel
+        return DragUpdateResult(SurfaceResult.applied(), surface_position)
 
     def end_drag(self) -> None:
         self._origin = None
+        self._panel_position = None
 
 
 class QtWindowPlatform:
@@ -238,15 +281,28 @@ class QtWindowPlatform:
             self._closed = True
         return result
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
         if self._closed:
             return DragStartResult(DragMode.UNAVAILABLE, "The ordinary-window adapter is closed.")
-        return self._drag_strategy.begin_drag(local_position, global_position)
+        return self._drag_strategy.begin_drag(local_position, global_position, geometry)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+    def update_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragUpdateResult:
         if self._closed:
-            return SurfaceResult.rejected("The ordinary-window adapter is closed.")
-        return self._drag_strategy.update_drag(local_position, global_position)
+            return DragUpdateResult(
+                SurfaceResult.rejected("The ordinary-window adapter is closed."),
+                geometry.surface_position,
+            )
+        return self._drag_strategy.update_drag(local_position, global_position, geometry)
 
     def end_drag(self) -> None:
         self._drag_strategy.end_drag()

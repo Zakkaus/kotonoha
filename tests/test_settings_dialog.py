@@ -1,5 +1,6 @@
 import os
 from typing import cast
+from unittest.mock import patch
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
@@ -986,12 +987,15 @@ def test_a_refused_blur_falls_back_to_a_solid_panel(qapp, caplog) -> None:
 
 
 def test_settings_window_stays_visible_when_a_platform_adapter_is_injected(qapp) -> None:
-    """A platform prepare that changes flags must happen before the dialog maps."""
-    from kotonoha.platform.overlay_contracts import OverlayPlatformAdapters
+    """An injected adapter must not recreate or activate the normal Qt dialog."""
+    from kotonoha.platform.overlay_contracts import OverlayPlatformAdapters, WindowHost
     from kotonoha.platform.qt_window import QtWindowPlatform
 
-    def factory(host):
+    adapters: list[QtWindowPlatform] = []
+
+    def factory(host: WindowHost) -> OverlayPlatformAdapters:
         adapter = QtWindowPlatform(host)
+        adapters.append(adapter)
         return OverlayPlatformAdapters(
             surface=adapter,
             input_region=adapter,
@@ -1006,16 +1010,25 @@ def test_settings_window_stays_visible_when_a_platform_adapter_is_injected(qapp)
     qapp.processEvents()
 
     dialog = SettingsDialog(Config(), platform_factory=factory)
-    dialog.show()
-    qapp.processEvents()
+    adapter = adapters[0]
+    with (
+        patch.object(adapter, "prepare", wraps=adapter.prepare) as prepare,
+        patch.object(adapter, "activate", wraps=adapter.activate) as activate,
+        patch.object(adapter, "close", wraps=adapter.close) as close,
+    ):
+        dialog.show()
+        qapp.processEvents()
 
-    assert dialog.isVisible()
-    assert dialog.size() == baseline.size()
-    assert not dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
-    assert dialog.windowFlags() & Qt.WindowType.Dialog
-    close_button = next(button for button in dialog.findChildren(QPushButton) if button.text() == "✕")
-    assert close_button.isVisible()
-    dialog.close()
+        assert dialog.isVisible()
+        assert dialog.size() == baseline.size()
+        assert not dialog.windowFlags() & Qt.WindowType.WindowStaysOnTopHint
+        assert dialog.windowFlags() & Qt.WindowType.Dialog
+        close_button = next(button for button in dialog.findChildren(QPushButton) if button.text() == "✕")
+        assert close_button.isVisible()
+        prepare.assert_not_called()
+        activate.assert_not_called()
+        dialog.close()
+        close.assert_not_called()
     baseline.close()
     qapp.processEvents()
 

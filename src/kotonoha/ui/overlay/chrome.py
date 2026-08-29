@@ -66,14 +66,14 @@ class OverlayChromeController:
         overlay._lock_btn.setIconSize(QSize(15, 15))
         overlay._lock_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         overlay._lock_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
-        overlay._lock_btn.clicked.connect(overlay.passthrough_toggle_requested.emit)
+        overlay._lock_btn.clicked.connect(overlay._on_lock_clicked)
         bar.addWidget(overlay._lock_btn)
 
         overlay._earlier_btn = self._make_offset_button(container, earlier_icon, "overlay.offset.earlier")
-        overlay._earlier_btn.clicked.connect(overlay._nudge_earlier)
+        overlay._earlier_btn.clicked.connect(overlay._on_earlier_clicked)
         bar.addWidget(overlay._earlier_btn)
         overlay._later_btn = self._make_offset_button(container, later_icon, "overlay.offset.later")
-        overlay._later_btn.clicked.connect(overlay._nudge_later)
+        overlay._later_btn.clicked.connect(overlay._on_later_clicked)
         bar.addWidget(overlay._later_btn)
 
         overlay._settings_btn = QToolButton(container)
@@ -82,7 +82,7 @@ class OverlayChromeController:
         overlay._settings_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         overlay._settings_btn.setStyleSheet(CONTROL_BUTTON_STYLE)
         overlay._settings_btn.setToolTip(self._translator.text("overlay.settings"))
-        overlay._settings_btn.clicked.connect(overlay.settings_requested.emit)
+        overlay._settings_btn.clicked.connect(overlay._on_settings_clicked)
         bar.addWidget(overlay._settings_btn)
         self.update_icons()
         return overlay._control_bar

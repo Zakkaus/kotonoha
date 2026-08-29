@@ -28,7 +28,12 @@ from PyQt6.QtGui import QGuiApplication, QMouseEvent
 from PyQt6.QtWidgets import QApplication, QWidget
 
 from kotonoha.config import Config, PanelStyle
-from kotonoha.platform.overlay_contracts import Output, SurfaceResult, WindowRectangle
+from kotonoha.platform.overlay_contracts import (
+    DragUpdateResult,
+    Output,
+    SurfaceResult,
+    WindowRectangle,
+)
 from kotonoha.ui.overlay.geometry import OverlayGeometry
 from kotonoha.ui.overlay.state import LyricsState
 
@@ -55,22 +60,33 @@ def test_drag_crosses_output_without_recreating_the_layer_surface(qapp):
     overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
     overlay._active_screen = source
     overlay._layer_pos = QPoint(1900, 100)
-    overlay._dragging = True
-    overlay._drag_local = QPoint(20, 20)
-
-    event = QMouseEvent(
-        QEvent.Type.MouseMove,
-        QPointF(200, 20),
-        Qt.MouseButton.NoButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
     with patch.object(QGuiApplication, "screens", return_value=[source, target]):
-        overlay.mouseMoveEvent(event)
+        overlay.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress,
+                QPointF(20, 20),
+                QPointF(20, 20),
+                QPointF(1920, 120),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(200, 20),
+                QPointF(200, 20),
+                QPointF(2100, 120),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
 
-    assert overlay._layer_pos == QPoint(2080, 100)
+    assert overlay._layer_pos.x() == 2080
     assert overlay._active_screen is source
-    assert OverlayGeometry.screen_for_global_point(QPoint(2280, 120), [source, target], source) is target
+    assert OverlayGeometry.screen_for_global_point(QPoint(2100, 120), [source, target], source) is target
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -124,25 +140,36 @@ def test_release_at_horizontal_edge_keeps_the_configured_offset(qapp):
     qapp.processEvents()
 
 
-def test_drag_keeps_the_original_vertical_bottom_range(qapp):
+def test_drag_can_cross_the_vertical_output_edge(qapp):
     screen = FakeScreen("HDMI-A-1", 0, 0, 2048, 1152)
     overlay = LyricsOverlay(LyricsState(), Config(), UnavailableController())
     overlay._active_screen = screen
     overlay._layer_pos = QPoint(400, 1000)
-    overlay._dragging = True
-    overlay._drag_local = QPoint(20, 20)
-
-    event = QMouseEvent(
-        QEvent.Type.MouseMove,
-        QPointF(20, 200),
-        Qt.MouseButton.NoButton,
-        Qt.MouseButton.LeftButton,
-        Qt.KeyboardModifier.NoModifier,
-    )
     with patch.object(QGuiApplication, "screens", return_value=[screen]):
-        overlay.mouseMoveEvent(event)
+        overlay.mousePressEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonPress,
+                QPointF(20, 20),
+                QPointF(20, 20),
+                QPointF(420, 1020),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+        overlay.mouseMoveEvent(
+            QMouseEvent(
+                QEvent.Type.MouseMove,
+                QPointF(20, 200),
+                QPointF(20, 200),
+                QPointF(420, 1200),
+                Qt.MouseButton.NoButton,
+                Qt.MouseButton.LeftButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
 
-    assert overlay._layer_pos == QPoint(400, 1180)
+    assert overlay._layer_pos.y() == 1180
     overlay.deleteLater()
     qapp.processEvents()
 
@@ -294,8 +321,9 @@ def test_a_drag_whose_update_failed_is_not_persisted(qapp):
     overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
     committed: list[object] = []
 
-    def _fail(local, glob):
-        return SurfaceResult.rejected("no window handle")
+    def _fail(local, glob, geometry):
+        del local, glob
+        return DragUpdateResult(SurfaceResult.rejected("no window handle"), geometry.surface_position)
 
     with patch.object(overlay._platform, "update_drag", _fail), patch.object(
         overlay, "_commit_drag_position", lambda cursor=None: committed.append(cursor)
@@ -333,9 +361,51 @@ def test_a_drag_whose_update_failed_is_not_persisted(qapp):
     qapp.processEvents()
 
 
+def test_completed_drag_reapplies_the_visible_panel_input_region(qapp):
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    overlay._dragging = True
+    overlay._drag_moved = True
+
+    with patch.object(overlay, "_commit_drag_position"), patch.object(
+        overlay, "_apply_input_region"
+    ) as apply_input_region:
+        overlay.mouseReleaseEvent(
+            QMouseEvent(
+                QEvent.Type.MouseButtonRelease,
+                QPointF(20, 20),
+                Qt.MouseButton.LeftButton,
+                Qt.MouseButton.NoButton,
+                Qt.KeyboardModifier.NoModifier,
+            )
+        )
+
+    apply_input_region.assert_called_once_with()
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
+def test_drag_release_retargeted_to_lock_does_not_enable_passthrough(qapp):
+    overlay = LyricsOverlay(LyricsState(), Config(), LayerShellStub())
+    requests: list[bool] = []
+    overlay.passthrough_toggle_requested.connect(lambda: requests.append(True))
+    overlay._dragging = True
+    overlay._drag_moved = True
+
+    with patch.object(overlay, "_commit_drag_position"), patch.object(overlay, "_apply_input_region"):
+        overlay._on_lock_clicked()
+
+    assert requests == []
+    assert not overlay._dragging
+    qapp.processEvents()
+    overlay._on_lock_clicked()
+    assert requests == [True]
+    overlay.deleteLater()
+    qapp.processEvents()
+
+
 def test_saved_position_from_a_larger_output_stays_fully_visible(qapp):
-    # A margin dragged on a wide output must not push the panel off a smaller one.
-    # The partial bounds a drag uses would keep only 80x60 px of it on screen.
+    # A persisted margin on a wide output must not push the panel off its output
+    # when the saved placement is reconstructed after a restart.
     screen = FakeScreen("HDMI-A-1", 0, 0, 4096, 1152)
     overlay = LyricsOverlay(
         LyricsState(), Config(margin_x=2518, margin_edge=1092, anchor_top=True), UnavailableController()

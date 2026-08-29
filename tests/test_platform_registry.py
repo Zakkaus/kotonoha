@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from kotonoha.platform.layer_shell import LayerShellAnchorDragStrategy, LayerShellPlatform, NiriLayerShellDragStrategy
 from kotonoha.platform.overlay_contracts import (
+    DragGeometry,
     DragMode,
     Output,
     SurfaceResult,
@@ -133,6 +134,13 @@ class _RetryReleaseHost(_FakeHost):
         super().destroy_surface()
 
 
+def _drag_geometry(position: WindowPoint | None = None) -> DragGeometry:
+    return DragGeometry(
+        position if position is not None else WindowPoint(0, 0),
+        WindowRectangle(0, 0, 100, 50),
+    )
+
+
 def _assert_measures_global_pointer(platform, controller) -> None:
     """The niri model: the surface follows the global pointer reading.
 
@@ -141,18 +149,20 @@ def _assert_measures_global_pointer(platform, controller) -> None:
     move the global one, and only this model commits a new anchor. Asserting the
     concrete strategy object would tie the test to a private field instead.
     """
-    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210))
-    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213))
+    geometry = _drag_geometry()
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210), geometry)
+    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213), geometry)
     anchors = [call for call in controller.calls if call[0] == "set_anchor_position"]
     assert anchors and anchors[-1][1][1:] == (5, 3), f"global displacement was not applied: {anchors}"
 
 
 def _assert_measures_local_pointer(platform, controller) -> None:
     """The default model: the surface follows the press-relative local reading."""
-    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210))
-    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213))
+    geometry = _drag_geometry()
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210), geometry)
+    platform.update_drag(WindowPoint(10, 10), WindowPoint(115, 213), geometry)
     anchors = [call for call in controller.calls if call[0] == "set_anchor_position"]
-    assert anchors and anchors[-1][1][1:] == (0, 0), f"a still pointer moved the surface: {anchors}"
+    assert not anchors or anchors[-1][1][1:] == (0, 0), f"a still pointer moved the surface: {anchors}"
 
 
 def test_provider_order_selects_layer_shell_before_fallbacks() -> None:
@@ -279,8 +289,9 @@ def test_layer_shell_registry_selects_and_exercises_anchor_strategy() -> None:
     # The anchor call below is what distinguishes this strategy from the ordinary
     # one, which moves the window instead. Asserting the concrete strategy object
     # would only restate the selection the behaviour already proves.
-    assert platform.drag.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
-    assert platform.drag.update_drag(WindowPoint(15, 13), WindowPoint(115, 213)).succeeded
+    geometry = _drag_geometry()
+    assert platform.drag.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210), geometry).mode is DragMode.MANUAL
+    assert platform.drag.update_drag(WindowPoint(15, 13), WindowPoint(115, 213), geometry).succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 5, 3))
     platform.drag.end_drag()
 
@@ -323,20 +334,82 @@ def test_niri_strategy_integrates_global_pointer_displacement() -> None:
     strategy = NiriLayerShellDragStrategy(host, controller)
     strategy.set_position(WindowPoint(100, 200))
 
-    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
-    assert strategy.update_drag(WindowPoint(10, 10), WindowPoint(115, 213)).succeeded
+    geometry = _drag_geometry(WindowPoint(100, 200))
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210), geometry).mode is DragMode.MANUAL
+    first = strategy.update_drag(WindowPoint(10, 10), WindowPoint(115, 213), geometry)
+    assert first.succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 105, 203))
-    assert strategy.update_drag(WindowPoint(99, 99), WindowPoint(108, 205)).succeeded
+    second_geometry = _drag_geometry(first.position)
+    assert strategy.update_drag(WindowPoint(99, 99), WindowPoint(108, 205), second_geometry).succeeded
     assert controller.calls[-1] == ("set_anchor_position", (1, 98, 195))
     strategy.end_drag()
+
+
+def test_niri_drag_result_keeps_persisted_position_in_sync_with_the_surface() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+    geometry = DragGeometry(
+        WindowPoint(100, 100),
+        WindowRectangle(400, 20, 200, 100),
+    )
+
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(100, 100), geometry)
+    first = strategy.update_drag(WindowPoint(20, 10), WindowPoint(110, 100), geometry)
+    second_geometry = DragGeometry(first.position, geometry.panel)
+    second = strategy.update_drag(WindowPoint(30, 10), WindowPoint(120, 100), second_geometry)
+
+    assert first.position == WindowPoint(110, 100)
+    assert second.position == WindowPoint(120, 100)
+    assert controller.calls[-1] == ("set_anchor_position", (1, 120, 100))
+
+
+def test_niri_drag_tracks_the_visible_panel_when_the_surface_shrinks() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+    initial = DragGeometry(
+        WindowPoint(100, 100),
+        WindowRectangle(400, 20, 200, 100),
+    )
+
+    strategy.begin_drag(WindowPoint(500, 60), WindowPoint(1000, 500), initial)
+    configured = DragGeometry(
+        initial.surface_position,
+        WindowRectangle(300, 20, 200, 100),
+    )
+    result = strategy.update_drag(WindowPoint(530, 60), WindowPoint(1030, 500), configured)
+
+    assert result.position == WindowPoint(230, 100)
+    assert result.position.x + configured.panel.x == 530
+    assert controller.calls[-1] == ("set_anchor_position", (1, 230, 100))
+
+
+def test_niri_drag_continues_across_output_edges() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+    initial = DragGeometry(
+        WindowPoint(1900, 100),
+        WindowRectangle(0, 0, 100, 50),
+    )
+
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(1910, 110), initial)
+    result = strategy.update_drag(
+        WindowPoint(20, 10), WindowPoint(2060, 110), initial
+    )
+
+    assert result.position == WindowPoint(2050, 100)
+    assert controller.calls[-1] == ("set_anchor_position", (1, 2050, 100))
 
 
 def test_ordinary_window_strategy_moves_from_local_anchor() -> None:
     host = _MovingHost()
     strategy = OrdinaryWindowDragStrategy(host)
 
-    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210)).mode is DragMode.MANUAL
-    assert strategy.update_drag(WindowPoint(25, 17), WindowPoint(125, 217)).succeeded
+    geometry = _drag_geometry(WindowPoint(100, 200))
+    assert strategy.begin_drag(WindowPoint(10, 10), WindowPoint(110, 210), geometry).mode is DragMode.MANUAL
+    assert strategy.update_drag(WindowPoint(25, 17), WindowPoint(125, 217), geometry).succeeded
     assert host.moves == [WindowPoint(115, 207)]
     strategy.end_drag()
 
@@ -350,11 +423,13 @@ def test_anchor_drag_does_not_oscillate_when_the_surface_follows_the_pointer() -
     controller = _FakeController(available=True)
     strategy = LayerShellAnchorDragStrategy(_FakeHost(), controller)
     strategy.set_position(WindowPoint(100, 100))
-    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+    geometry = _drag_geometry(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0), geometry)
 
-    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    result = strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0), geometry)   # pointer moves right
     for _ in range(3):                                             # surface caught up
-        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+        geometry = _drag_geometry(result.position)
+        result = strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0), geometry)
 
     moves = [(x, y) for name, (_ptr, x, y) in controller.calls if name == "set_anchor_position"]
     assert moves[0] == (120, 100), "the first delta should move the surface"
@@ -368,11 +443,13 @@ def test_the_ordinary_window_drag_measures_every_delta_from_the_press_point() ->
     host = _RecordingHost()
     strategy = OrdinaryWindowDragStrategy(host)
     strategy.set_position(WindowPoint(100, 100))
-    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+    geometry = _drag_geometry(WindowPoint(100, 100))
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0), geometry)
 
-    strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))   # pointer moves right
+    result = strategy.update_drag(WindowPoint(30, 10), WindowPoint(0, 0), geometry)   # pointer moves right
     for _ in range(3):                                            # window caught up
-        strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0))
+        geometry = _drag_geometry(result.position)
+        result = strategy.update_drag(WindowPoint(10, 10), WindowPoint(0, 0), geometry)
 
     assert host.moves[0] == WindowPoint(120, 100), "the first delta should move the window"
     assert all(move == WindowPoint(120, 100) for move in host.moves[1:]), f"window oscillated: {host.moves}"
@@ -397,8 +474,9 @@ def test_a_wayland_fallback_drag_reports_that_nothing_moved() -> None:
     host = _RecordingHost()
     platform = QtWindowPlatform(host, client_positioning=False)
 
-    platform.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0))
-    result = platform.update_drag(WindowPoint(30, 10), WindowPoint(0, 0))
+    geometry = _drag_geometry(WindowPoint(100, 100))
+    platform.begin_drag(WindowPoint(10, 10), WindowPoint(0, 0), geometry)
+    result = platform.update_drag(WindowPoint(30, 10), WindowPoint(0, 0), geometry)
 
     assert not result.succeeded
     assert result.reason == platform.capabilities.client_positioning_reason

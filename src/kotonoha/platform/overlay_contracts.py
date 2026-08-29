@@ -187,6 +187,45 @@ class DragStartResult:
             raise ValueError("Available drag results cannot include a failure reason")
 
 
+@dataclass(frozen=True, slots=True)
+class DragGeometry:
+    """Describe the surface and visible panel in one coordinate space.
+
+    ``panel`` is relative to the transparent surface. The panel is deliberately
+    not bounded here: a grabbed surface may cross output boundaries while the
+    platform-specific coordinate strategy keeps the pointer movement continuous.
+    """
+
+    surface_position: WindowPoint
+    panel: WindowRectangle
+
+    def __post_init__(self) -> None:
+        if self.panel.width <= 0 or self.panel.height <= 0:
+            raise ValueError("Drag panel geometry must be positive")
+
+    def surface_for_panel(self, position: WindowPoint) -> WindowPoint:
+        """Translate a visible-panel position into a surface position."""
+        return WindowPoint(position.x - self.panel.x, position.y - self.panel.y)
+
+
+@dataclass(frozen=True, slots=True)
+class DragUpdateResult:
+    """Return the platform result together with the position actually applied."""
+
+    operation: SurfaceResult
+    position: WindowPoint
+
+    @property
+    def succeeded(self) -> bool:
+        """Whether the platform applied this drag step."""
+        return self.operation.succeeded
+
+    @property
+    def reason(self) -> str | None:
+        """Return the platform failure reason, when present."""
+        return self.operation.reason
+
+
 class WindowHost(Protocol):
     """Toolkit-neutral surface used by platform adapters."""
 
@@ -274,12 +313,22 @@ class DragPort(Protocol):
         """Whether a client-side movement can be trusted for persistence."""
         ...
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
         """Start a platform-specific gesture from the pointer coordinates."""
         ...
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
-        """Apply one drag update and report the platform result."""
+    def update_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragUpdateResult:
+        """Apply one drag update and report the resulting position."""
         ...
 
     def end_drag(self) -> None:

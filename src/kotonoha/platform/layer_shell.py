@@ -5,9 +5,11 @@ from __future__ import annotations
 import logging
 
 from .overlay_contracts import (
+    DragGeometry,
     DragMode,
     DragPort,
     DragStartResult,
+    DragUpdateResult,
     LayerShellBridge,
     OverlayCapabilities,
     SurfaceResult,
@@ -39,6 +41,7 @@ class _LayerShellDragStrategy:
         self._host = host
         self._controller = controller
         self._position = WindowPoint(0, 0)
+        self._panel_position: WindowPoint | None = None
         self._origin: WindowPoint | None = None
 
     @property
@@ -52,32 +55,62 @@ class _LayerShellDragStrategy:
     def set_position(self, position: WindowPoint) -> None:
         self._position = position
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
+        self._position = geometry.surface_position
+        self._panel_position = WindowPoint(
+            geometry.surface_position.x + geometry.panel.x,
+            geometry.surface_position.y + geometry.panel.y,
+        )
         self._origin = self._reading(local_position, global_position)
         return DragStartResult(DragMode.MANUAL)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
-        if self._origin is None:
-            return SurfaceResult.rejected(f"{self._label} drag has not started")
+    def update_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragUpdateResult:
+        origin = self._origin
+        panel_position = self._panel_position
+        if origin is None or panel_position is None:
+            return DragUpdateResult(
+                SurfaceResult.rejected(f"{self._label} drag has not started"),
+                self._position,
+            )
         reading = self._reading(local_position, global_position)
-        position = WindowPoint(
-            self._position.x + reading.x - self._origin.x,
-            self._position.y + reading.y - self._origin.y,
+        attempted_panel = WindowPoint(
+            panel_position.x + reading.x - origin.x,
+            panel_position.y + reading.y - origin.y,
         )
+        position = geometry.surface_for_panel(attempted_panel)
         pointer = self._host.native_window_pointer()
         if pointer is None:
-            return SurfaceResult.failed("Layer Shell window handle is unavailable", retryable=True)
-        try:
-            self._controller.set_anchor_position(pointer, position.x, position.y)
-        except (OSError, RuntimeError):
-            return SurfaceResult.failed("Layer Shell position update failed", retryable=True)
+            return DragUpdateResult(
+                SurfaceResult.failed("Layer Shell window handle is unavailable", retryable=True),
+                self._position,
+            )
+        if position != self._position:
+            try:
+                self._controller.set_anchor_position(pointer, position.x, position.y)
+            except (OSError, RuntimeError):
+                return DragUpdateResult(
+                    SurfaceResult.failed("Layer Shell position update failed", retryable=True),
+                    self._position,
+                )
         self._position = position
+        self._panel_position = attempted_panel
         if self._reanchors:
             self._origin = reading
-        return SurfaceResult.applied()
+        return DragUpdateResult(SurfaceResult.applied(), position)
 
     def end_drag(self) -> None:
         self._origin = None
+        self._panel_position = None
 
 
 class LayerShellAnchorDragStrategy(_LayerShellDragStrategy):
@@ -299,15 +332,28 @@ class LayerShellPlatform:
             return SurfaceResult.failed(f"Blur release failed: {exc}", retryable=True)
         return SurfaceResult.applied()
 
-    def begin_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> DragStartResult:
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
         if self._closed:
             return DragStartResult(DragMode.UNAVAILABLE, "The Layer Shell adapter is closed.")
-        return self._drag_strategy.begin_drag(local_position, global_position)
+        return self._drag_strategy.begin_drag(local_position, global_position, geometry)
 
-    def update_drag(self, local_position: WindowPoint, global_position: WindowPoint) -> SurfaceResult:
+    def update_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragUpdateResult:
         if self._closed:
-            return SurfaceResult.rejected("The Layer Shell adapter is closed.")
-        return self._drag_strategy.update_drag(local_position, global_position)
+            return DragUpdateResult(
+                SurfaceResult.rejected("The Layer Shell adapter is closed."),
+                geometry.surface_position,
+            )
+        return self._drag_strategy.update_drag(local_position, global_position, geometry)
 
     def end_drag(self) -> None:
         self._drag_strategy.end_drag()

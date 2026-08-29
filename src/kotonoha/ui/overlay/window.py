@@ -71,8 +71,10 @@ class LyricsOverlay(QWidget):
     _activation_retry_timer: QTimer
     _input_region_timer: QTimer
     _blur_timer: QTimer
+    _control_click_timer: QTimer
     _closed: bool
     _closing: bool
+    _suppress_control_click: bool
 
     def __init__(
         self,
@@ -88,6 +90,7 @@ class LyricsOverlay(QWidget):
         self._translator = translator if translator is not None else Translator(config.ui_language)
         self._closed = False
         self._closing = False
+        self._suppress_control_click = False
         self._passthrough = config.passthrough
         self._chrome = OverlayChromeController(self, self._translator)
         app = QApplication.instance()
@@ -103,6 +106,9 @@ class LyricsOverlay(QWidget):
         self._blur_timer = QTimer(self)
         self._blur_timer.setSingleShot(True)
         self._blur_timer.timeout.connect(self._apply_blur)
+        self._control_click_timer = QTimer(self)
+        self._control_click_timer.setSingleShot(True)
+        self._control_click_timer.timeout.connect(self._clear_control_click_suppression)
         self._surface = OverlaySurfaceController(
             self,
             config,
@@ -203,6 +209,7 @@ class LyricsOverlay(QWidget):
         self._activation_retry_timer.stop()
         self._input_region_timer.stop()
         self._blur_timer.stop()
+        self._control_click_timer.stop()
         self._content.stop()
         result = self._surface.close()
         if result.succeeded:
@@ -406,6 +413,35 @@ class LyricsOverlay(QWidget):
         if not self._closed and not self._closing:
             self._content.nudge_later()
 
+    def _on_lock_clicked(self) -> None:
+        """Suppress a lock click retargeted from a completed window drag."""
+        if not self._finish_control_drag_if_needed():
+            self.passthrough_toggle_requested.emit()
+
+    def _on_earlier_clicked(self) -> None:
+        """Suppress an offset click retargeted from a completed window drag."""
+        if not self._finish_control_drag_if_needed():
+            self._nudge_earlier()
+
+    def _on_later_clicked(self) -> None:
+        """Suppress an offset click retargeted from a completed window drag."""
+        if not self._finish_control_drag_if_needed():
+            self._nudge_later()
+
+    def _on_settings_clicked(self) -> None:
+        """Suppress a settings click retargeted from a completed window drag."""
+        if not self._finish_control_drag_if_needed():
+            self.settings_requested.emit()
+
+    def _finish_control_drag_if_needed(self) -> bool:
+        """Finish a release delivered to a moving child without activating it."""
+        if self._dragging and self._drag_moved:
+            self._finish_drag(None)
+        return self._suppress_control_click
+
+    def _clear_control_click_suppression(self) -> None:
+        self._suppress_control_click = False
+
     def _emit_track_offset_changed(self, track_key: str, offset_ms: int) -> None:
         """Publish an offset applied by the content owner."""
         self.track_offset_changed.emit(ChangeTrackOffset(track_key, offset_ms))
@@ -439,12 +475,11 @@ class LyricsOverlay(QWidget):
     # --- drag to reposition (only while unlocked) ---
     #
     # Wayland forbids client-side self.move(); a layer surface is moved by updating
-    # its margins. Use BiliHUD's incremental *local* delta — it is accurate ("cursor
-    # stops where you release") because the cursor's local position re-settles as the
-    # surface follows. (globalPosition() is unreliable for a layer surface on Wayland
-    # — it can be off by half a screen — which is why BiliHUD avoids it.) To fix the
-    # big-font flicker we commit via the bridge and skip the Qt repaint, so the heavy
-    # lyric text isn't re-rendered every frame.
+    # its margins. The selected platform drag port owns the compositor-specific
+    # pointer model: local press-relative feedback for KWin and incremental global
+    # feedback for niri. Both return the position actually applied after coordinate
+    # conversion, so persistence never reconstructs movement from a second source.
+    # The platform commit also avoids repainting heavy lyric text.
 
     def mousePressEvent(self, a0: QMouseEvent | None) -> None:
         if a0 is not None and not self._passthrough and a0.button() == Qt.MouseButton.LeftButton:
@@ -483,25 +518,37 @@ class LyricsOverlay(QWidget):
     def mouseReleaseEvent(self, a0: QMouseEvent | None) -> None:
         if self._dragging:
             cursor_local = a0.position().toPoint() if a0 is not None else None
-            release = self._surface.end_drag()
-            if release.should_commit:
-                self._commit_drag_position(cursor_local)
-            elif release.moved:
-                # The window never went where the drag asked, so saving that
-                # position would put the config and the visible window out of step.
-                logger.info(
-                    "Not saving the dragged position: %s",
-                    self._platform.capabilities.client_positioning_reason,
-                )
+            self._finish_drag(cursor_local)
             if a0 is not None:
                 a0.accept()
         else:
             super().mouseReleaseEvent(a0)
 
+    def _finish_drag(self, cursor_local: QPoint | None) -> None:
+        """End, persist, and restore native state for one manual drag."""
+        release = self._surface.end_drag()
+        if release.should_commit:
+            self._commit_drag_position(cursor_local)
+        elif release.moved:
+            # The window never went where the drag asked, so saving that position
+            # would put the config and the visible window out of step.
+            logger.info(
+                "Not saving the dragged position: %s",
+                self._platform.capabilities.client_positioning_reason,
+            )
+        if not release.moved:
+            return
+        # A compositor may reconfigure or crop the transparent surface at an output
+        # edge. Re-submit the panel's input rectangle after the final placement so
+        # the next grab remains live.
+        self._apply_input_region()
+        self._suppress_control_click = True
+        self._control_click_timer.start(0)
+
     def _commit_drag_position(self, cursor_local: QPoint | None = None) -> None:
         """Persist the output and edge placement after a drag.
 
-        The layer surface can cross output boundaries while it is grabbed. Only
+        The overlay surface can cross output boundaries while it is grabbed. Only
         after release do we select the output under the cursor and remap the
         surface, when necessary, so the next drag starts with that output as its
         local coordinate system.

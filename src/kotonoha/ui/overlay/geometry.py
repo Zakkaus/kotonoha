@@ -188,7 +188,7 @@ class OverlayGeometry:
         height: int,
         allow_partial: bool,
     ) -> QPoint:
-        """Clamp a surface position using drag or startup visibility bounds."""
+        """Clamp a position for startup or release-time visibility."""
         if screen is None:
             return pos
         geometry = screen.geometry()

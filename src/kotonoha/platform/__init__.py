@@ -4,9 +4,11 @@ from .layer_shell import LayerShellPlatform
 from .native import LayerShellController, default_package_dir
 from .overlay_contracts import (
     BlurPort,
+    DragGeometry,
     DragMode,
     DragPort,
     DragStartResult,
+    DragUpdateResult,
     InputRegionPort,
     Output,
     OutputBindingPort,
@@ -32,9 +34,11 @@ from .window_platform import DefaultOverlayPlatformFactory
 __all__ = [
     "DefaultOverlayPlatformFactory",
     "BlurPort",
+    "DragGeometry",
     "DragMode",
     "DragPort",
     "DragStartResult",
+    "DragUpdateResult",
     "InputRegionPort",
     "LayerShellController",
     "OverlayCapabilities",

@@ -388,11 +388,19 @@ class OverlaySurfaceController:
 
     def begin_drag(self, local: QPoint, global_position: QPoint) -> DragMode:
         """Start a manual drag through the selected drag port."""
-        return self._position.begin_drag(local, global_position)
+        return self._position.begin_drag(
+            local,
+            global_position,
+            self._container_geometry(),
+        )
 
     def update_drag(self, local: QPoint, global_position: QPoint) -> SurfaceResult:
-        """Apply one incremental drag delta and retain the platform result."""
-        return self._position.update_drag(local, global_position)
+        """Apply one visible-panel drag step and retain the platform result."""
+        return self._position.update_drag(
+            local,
+            global_position,
+            self._container_geometry(),
+        )
 
     def end_drag(self) -> DragRelease:
         """End the gesture and state whether persistence is safe."""
@@ -407,7 +415,7 @@ class OverlaySurfaceController:
         height: int,
         allow_partial: bool,
     ) -> QPoint:
-        """Clamp a surface position using the drag or startup visibility bounds."""
+        """Clamp a position for startup or release-time visibility."""
         return self._position.clamp_to_screen(
             pos,
             screen=screen,

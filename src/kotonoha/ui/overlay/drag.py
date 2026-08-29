@@ -4,9 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from PyQt6.QtCore import QPoint
+from PyQt6.QtCore import QPoint, QRect
 
-from ...platform.overlay_contracts import DragMode, DragPort, SurfaceResult, WindowPoint
+from ...platform.overlay_contracts import (
+    DragGeometry,
+    DragMode,
+    DragPort,
+    DragUpdateResult,
+    WindowPoint,
+    WindowRectangle,
+)
 
 
 @dataclass(frozen=True)
@@ -73,11 +80,26 @@ class OverlayDragController:
     def local(self, value: QPoint) -> None:
         self._drag_local = value
 
-    def begin(self, local: QPoint, global_position: QPoint) -> DragMode:
+    @staticmethod
+    def _geometry(position: QPoint, panel: QRect) -> DragGeometry:
+        """Translate Qt geometry into the toolkit-neutral drag contract."""
+        return DragGeometry(
+            WindowPoint(position.x(), position.y()),
+            WindowRectangle(panel.x(), panel.y(), panel.width(), panel.height()),
+        )
+
+    def begin(
+        self,
+        local: QPoint,
+        global_position: QPoint,
+        position: QPoint,
+        panel: QRect,
+    ) -> DragMode:
         """Ask the platform for a manual drag and initialize gesture state."""
         result = self._platform.begin_drag(
             WindowPoint(local.x(), local.y()),
             WindowPoint(global_position.x(), global_position.y()),
+            self._geometry(position, panel),
         )
         if result.mode is not DragMode.MANUAL:
             return result.mode
@@ -92,18 +114,21 @@ class OverlayDragController:
         position: QPoint,
         local: QPoint,
         global_position: QPoint,
-    ) -> tuple[QPoint, SurfaceResult]:
-        """Apply one local delta and return the platform result plus new position."""
-        diff = local - self._drag_local
-        if not diff.isNull():
-            self._drag_moved = True
-        updated_position = position + diff
+        panel: QRect,
+    ) -> tuple[QPoint, DragUpdateResult]:
+        """Apply one platform drag step and retain its actual surface position."""
         result = self._platform.update_drag(
             WindowPoint(local.x(), local.y()),
             WindowPoint(global_position.x(), global_position.y()),
+            self._geometry(position, panel),
         )
         if not result.succeeded:
             self._drag_applied = False
+            return position, result
+        self._drag_local = local
+        updated_position = QPoint(result.position.x, result.position.y)
+        if updated_position != position:
+            self._drag_moved = True
         return updated_position, result
 
     def end(self) -> DragRelease:
