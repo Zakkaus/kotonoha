@@ -380,89 +380,6 @@ jobs:
           path: dist/*-linux_x86_64.whl
           if-no-files-found: error
 
-  cider:
-    name: Build Cider plugin
-    needs:
-      - validate
-      - version
-    runs-on: ubuntu-latest
-    env:
-      VERSION: ${{ needs.version.outputs.version }}
-    defaults:
-      run:
-        working-directory: plugins/cider/lyrics
-    steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
-      - uses: pnpm/action-setup@fc06bc1257f339d1d5d8b3a19a8cae5388b55320 # v5
-        with:
-          version: 9.10.0
-          run_install: false
-      - uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6
-        with:
-          node-version: 20
-          cache: pnpm
-          cache-dependency-path: plugins/cider/lyrics/pnpm-lock.yaml
-      - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: Test
-        run: pnpm test
-      - name: Build versioned plugin
-        run: KOTONOHA_VERSION="$VERSION" pnpm build
-      - name: Verify versioned plugin
-        run: |
-          set -euo pipefail
-          plugin_dir=dist/dev.locez.kotonoha.cider.lyrics
-          test -f "$plugin_dir/plugin.js"
-          test -f "$plugin_dir/plugin.yml"
-          mapfile -t entries < <(find "$plugin_dir" -mindepth 1 -maxdepth 1 -printf '%f\n' | sort)
-          test "${#entries[@]}" -eq 2
-          test "${entries[0]}" = plugin.js
-          test "${entries[1]}" = plugin.yml
-          node --input-type=module -e '
-            import { readFileSync } from "node:fs";
-            import { parse } from "yaml";
-            const manifest = parse(readFileSync("dist/dev.locez.kotonoha.cider.lyrics/plugin.yml", "utf8"));
-            if (manifest.version !== process.env.VERSION) {
-              throw new Error(`expected manifest version ${process.env.VERSION}, found ${manifest.version}`);
-            }
-          '
-      - name: Package plugin ZIP
-        run: |
-          set -euo pipefail
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          from zipfile import ZIP_DEFLATED, ZipFile
-
-          version = os.environ["VERSION"]
-          plugin_dir = Path("dist/dev.locez.kotonoha.cider.lyrics")
-          archive_path = Path(os.environ["GITHUB_WORKSPACE"]) / f"kotonoha-cider-lyrics-{version}.zip"
-          with ZipFile(archive_path, "w", compression=ZIP_DEFLATED) as archive:
-              for filename in ("plugin.js", "plugin.yml"):
-                  path = plugin_dir / filename
-                  archive.write(path, f"{plugin_dir.name}/{filename}")
-          PY
-          python3 - <<'PY'
-          from pathlib import Path
-          import os
-          from zipfile import ZipFile
-
-          version = os.environ["VERSION"]
-          archive_path = Path(os.environ["GITHUB_WORKSPACE"]) / f"kotonoha-cider-lyrics-{version}.zip"
-          expected = [
-              "dev.locez.kotonoha.cider.lyrics/plugin.js",
-              "dev.locez.kotonoha.cider.lyrics/plugin.yml",
-          ]
-          with ZipFile(archive_path) as archive:
-              if sorted(archive.namelist()) != expected:
-                  raise SystemExit(f"unexpected ZIP layout: {archive.namelist()}")
-          PY
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7
-        with:
-          name: kotonoha-cider-plugin
-          path: kotonoha-cider-lyrics-${{ needs.version.outputs.version }}.zip
-          if-no-files-found: error
-
   assemble:
     name: Assemble release bundle
     needs:
@@ -470,7 +387,6 @@ jobs:
       - deb
       - rpm
       - wheel
-      - cider
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6

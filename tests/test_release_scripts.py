@@ -106,7 +106,6 @@ def create_artifacts(artifacts_dir: Path) -> dict[str, bytes]:
         "kotonoha_1.2.3_amd64.deb": b"deb package",
         "kotonoha-1.2.3-1.x86_64.rpm": b"rpm package",
         "kotonoha-1.2.3-linux_x86_64.whl": b"python wheel",
-        "kotonoha-cider-lyrics-1.2.3.zip": b"cider plugin",
     }
     for index, (filename, content) in enumerate(contents.items()):
         artifact_path = artifacts_dir / f"job-{index}" / filename
@@ -115,7 +114,7 @@ def create_artifacts(artifacts_dir: Path) -> dict[str, bytes]:
     return contents
 
 
-def test_assemble_release_copies_four_artifacts_and_writes_checksums(tmp_path: Path) -> None:
+def test_assemble_release_copies_three_artifacts_and_writes_checksums(tmp_path: Path) -> None:
     artifacts_dir = tmp_path / "artifacts"
     output_dir = tmp_path / "release"
     contents = create_artifacts(artifacts_dir)
@@ -126,7 +125,7 @@ def test_assemble_release_copies_four_artifacts_and_writes_checksums(tmp_path: P
     assert copied == tuple(output_dir / filename for filename in sorted(contents))
     assert {path.name: path.read_bytes() for path in copied} == contents
     checksum_lines = (output_dir / "SHA256SUMS").read_text(encoding="utf-8").splitlines()
-    assert len(checksum_lines) == 4
+    assert len(checksum_lines) == 3
     assert checksum_lines == [
         f"{hashlib.sha256(contents[filename]).hexdigest()}  {filename}" for filename in sorted(contents)
     ]

@@ -10,7 +10,6 @@ ARTIFACT_PATTERNS = (
     (".deb", "*.deb"),
     (".rpm", "*.rpm"),
     ("Linux x86_64 wheel", "*-linux_x86_64.whl"),
-    ("Cider lyrics ZIP", "kotonoha-cider-lyrics-*.zip"),
 )
 
 

@@ -318,9 +318,9 @@ class AdapterReceiver:
 
 - 路由：`GET /kotonoha/adapter`（WS upgrade），同时保留 POST 调试入口。
 - 仅监听 `127.0.0.1`（本机，隐私）。
-- 端口可在 config 覆盖（默认 `28745`，对齐探针默认 `CIDER_LYRICS_PROBE_PORT`）。
+- 端口可在 config 覆盖（默认 `28745`）。
 - 用 `qasync` 事件循环承载 aiohttp，**与 Qt 同循环**，无需额外线程。
-- 容错：单个客户端断开/坏帧不影响服务端；服务端长期 `listen`，等探针随时重连。
+- 容错：单个客户端断开/坏帧不影响服务端；服务端长期 `listen`，等外部 adapter 随时重连。
 - （可选）保留一个 `POST` 调试路由，便于用 curl 灌测试帧——不是主路径。
 
 ### 7.2 客户端（可选外部 adapter）
@@ -333,7 +333,7 @@ class AdapterReceiver:
 - `onclose / onerror` 可使用指数退避重连，接收端不依赖任何 Cider 专用字段；
 - WebSocket adapter 断开时，接收端丢弃该连接的 candidate；如果它仍是当前展示拥有者，
   会发布明确的 `NoTrack`，避免歌词残留在浮窗中；MPRIS 已接管时不会覆盖 MPRIS 展示；
-- Cider 插件只是一个可选 adapter producer，Cider HTTP 路径不依赖它。
+- Cider HTTP 路径不依赖外部 adapter；其他播放器可以直接实现这个 generic producer。
 
 ---
 
@@ -418,8 +418,8 @@ dependencies = ["PyQt6", "qasync", "aiohttp"]
 
 - 系统依赖（README 需补充，照 BiliHUD）：`qt6-base`、`qt6-wayland`、`layer-shell-qt`、`wayland`、qmake/pkg-config、`g++`。
 - 运行：`uv sync && uv run kotonoha`。
-- Cider 探针保留为可选的独立 Vite/pnpm 插件包；当前 Python 主链路不依赖它。需要接入其他播放器时，
-  外部客户端使用 generic `kotonoha.adapter` v1 的 `snapshot` / `clock` 消息。
+- 不保留 Cider 专用的 Vite/pnpm 插件包；当前 Python 主链路直接使用 Cider HTTP。需要接入其他播放器时，
+  外部客户端使用 generic `kotonoha.adapter` v1 的 `snapshot` / `clock` 消息，具体字段见 `../plugins/README.md`。
 
 ---
 

@@ -10,7 +10,7 @@
   <summary>Synchronized lyrics overlay for MPRIS media players</summary>
   <summary xml:lang="zh_CN">为 MPRIS 播放器显示同步歌词的悬浮窗</summary>
   <description>
-    <p>Kotonoha is a translucent, click-through, always-on-top Wayland overlay showing word-by-word synced lyrics for whatever you are playing. It reads now-playing metadata from any MPRIS player over D-Bus and fetches timed lyrics from Netease, lrclib, and optionally the Cider Apple Music plugin.</p>
+    <p>Kotonoha is a translucent, click-through, always-on-top Wayland overlay showing word-by-word synced lyrics for whatever you are playing. It reads now-playing metadata from any MPRIS player over D-Bus and fetches timed lyrics from Netease, lrclib, Kugou, or Cider's public HTTP API.</p>
     <ul>
       <li>Word-by-word karaoke sweep with an optional translation line</li>
       <li>Multi-source, user-ordered lyric providers with a local cache</li>

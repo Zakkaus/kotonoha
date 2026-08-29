@@ -160,8 +160,8 @@ def test_a_contraction_does_not_close_a_quoted_title():
 
 def test_lyric_video_brackets_and_topic_channels_are_shared_grammar():
     # Both describe how a publisher decorates an upload, not how the metadata
-    # travelled, so every ingest path must reach them — the Cider plugin supplies
-    # track metadata that never passes through MPRIS, where these used to live.
+    # travelled, so every ingest path must reach them. External adapters can
+    # supply track metadata that never passes through MPRIS.
     assert clean_title("隱形的翅膀 張韶涵『動態歌詞Lyrics』") == "隱形的翅膀 張韶涵"
     assert clean_title("告白氣球『歌词版』") == "告白氣球"
     assert performing_artist("Eason Chan - Topic") == "Eason Chan"

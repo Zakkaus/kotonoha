@@ -59,12 +59,10 @@ Do not develop directly on the default branch.
 - `src/kotonoha/providers/`: player integrations (MPRIS and Cider HTTP) at external boundaries.
 - `src/kotonoha/layer_shell_bridge.cpp`: the C++ Wayland bridge, built to `libkoto-layer.so`.
 - `tests/`: Python tests for the root package.
-- `plugins/cider/lyrics/`: Cider lyrics probe plugin built with Vite and TypeScript.
-- `plugins/cider/lyrics/src/probe/`: Cider playback, TTML parsing, payload, and plugin state logic.
-- `plugins/cider/lyrics/src/__tests__/`: Vitest tests for the Cider probe.
+- `plugins/`: documentation and extension guidance for generic external player adapters.
 
-Keep generated output out of version control. Python caches, `node_modules/`, Cider
-`dist/`, and npm/yarn lockfiles under `plugins/cider/` are ignored.
+Keep generated output out of version control. Python caches and build output are
+ignored or kept outside the repository.
 
 ## Architecture
 
@@ -155,8 +153,8 @@ background tasks cancellable. Follow Ruff's configured line length, use
 `pathlib.Path` for paths, and `dataclass` or small typed objects for structured data.
 Use snake_case for modules, functions, and variables; PascalCase for classes.
 
-TypeScript uses ES modules, strict compiler settings, and camelCase identifiers. Keep
-probe logic in `plugins/cider/lyrics/src/probe/`, and use `.test.ts` for Vitest files.
+External player adapters must follow the versioned WebSocket contract documented
+in `plugins/README.md`; player-specific data must be normalized at that boundary.
 
 ## File Size
 
@@ -266,14 +264,6 @@ changed lines or restate the implementation.
 
   The Qt tests need a platform plugin; `tests/conftest.py` defaults to `offscreen`,
   and CI runs them under `xvfb-run -a`.
-
-- Cider plugin checks run from `plugins/cider/lyrics/`:
-
-  ```bash
-  pnpm install
-  pnpm test
-  pnpm build
-  ```
 
 - Update this section when the canonical project commands change.
 - Run `git diff --check` before committing.

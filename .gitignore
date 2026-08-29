@@ -62,14 +62,3 @@ node_modules/
 
 # Compiled Wayland layer-shell bridge (built by build_bridge.sh)
 src/kotonoha/libkoto-layer*.so
-
-# Cider plugin package-manager output
-plugins/cider/**/package-lock.json
-plugins/cider/**/yarn.lock
-
-# Cider plugin build artifacts
-plugins/cider/**/dist/
-plugins/cider/**/build/
-plugins/cider/**/coverage/
-plugins/cider/**/.vite/
-plugins/cider/**/*.tsbuildinfo

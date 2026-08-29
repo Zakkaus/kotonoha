@@ -118,7 +118,7 @@ def test_cmake_and_package_workflows_verify_native_bridge() -> None:
 
 def test_python_workflow_uses_bash_for_bash_only_commands() -> None:
     workflow = read_packaging_file(TEST_WORKFLOW)
-    python_job = workflow.split("  python:\n", maxsplit=1)[1].split("\n  cider:\n", maxsplit=1)[0]
+    python_job = workflow.split("  python:\n", maxsplit=1)[1]
 
     assert "    defaults:\n      run:\n        shell: bash\n" in python_job
 
