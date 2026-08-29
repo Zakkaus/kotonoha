@@ -93,6 +93,24 @@ def test_apply_intent_reports_only_fields_changed_since_last_apply(qapp):
     dialog.close()
 
 
+def test_unchanged_font_style_survives_platform_font_normalization(qapp, monkeypatch):
+    from kotonoha.ui.settings import pages
+
+    monkeypatch.setattr(pages, "available_font_styles", lambda _family: ["Book"])
+    dialog = SettingsDialog(Config(font_style="Regular"))
+    intents = []
+    dialog.intent_requested.connect(intents.append)
+    theme = dialog.form_widgets.theme_combo
+    theme.setCurrentIndex(theme.findData(ThemeMode.LIGHT.value))
+
+    dialog._emit()
+
+    assert isinstance(intents[-1], ApplyConfig)
+    assert intents[-1].changed_fields == frozenset({"theme"})
+    assert dialog.current_config().font_style == "Regular"
+    dialog.close()
+
+
 def test_cider_token_is_editable_on_sources_page(qapp):
     dialog = SettingsDialog(Config(cider_api_token="test-token"))
 

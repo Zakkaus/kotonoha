@@ -61,9 +61,11 @@ class SettingsWidgets:
         self.icon_pickers: list[IconPicker] = []
 
         self.font_family = SettingsFontComboBox()
+        self.font_style = SettingsComboBox()
+        self.font_style_configured = ""
+        self.font_style_user_changed = False
         self.font_family_shown = ""
         self.font_family_configured = ""
-        self.font_style = SettingsComboBox()
         self.font_size = QSpinBox()
         self.context_font_size = QSpinBox()
         self.translation_font_size = QSpinBox()

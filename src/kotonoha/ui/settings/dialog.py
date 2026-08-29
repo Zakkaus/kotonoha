@@ -216,6 +216,11 @@ class SettingsDialog(ThemedSettingsDialog):
             if view is not None:
                 view.setObjectName("settingsComboPopup")
                 view.setStyleSheet(popup_style)
+                viewport = view.viewport()
+                if viewport is not None:
+                    viewport.setStyleSheet(
+                        f"background: {theme._popup_background(self._theme)};"
+                    )
                 popup = view.window()
                 if popup is not None and popup is not view:
                     popup.setObjectName("settingsComboPopupFrame")
@@ -382,7 +387,7 @@ class SettingsDialog(ThemedSettingsDialog):
             icon_name=selected_icon_name(w.tray_icon_list),
             window_icon_name=selected_icon_name(w.window_icon_list),
             font_family=self._page_builder.chosen_font_family(),
-            font_style=w.font_style.currentText(),
+            font_style=self._page_builder.chosen_font_style(),
             font_size=w.font_size.value(),
             context_font_size=w.context_font_size.value(),
             translation_font_size=w.translation_font_size.value(),

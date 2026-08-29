@@ -255,9 +255,10 @@ def _skin(accent: str, theme: str = "dark", frosted: bool = False, opacity: floa
 def _popup_skin(accent: str, theme: str = "dark") -> str:
     """Build the item-view stylesheet used by standalone combo-box popups."""
     palette = _PALETTES.get(theme, _PALETTES["dark"])
+    popup_background = _popup_background(theme)
     return f"""
 QAbstractItemView {{
-    background: {palette["POPUP_BG"]};
+    background: {popup_background};
     color: {palette["TEXT"]};
     border: 1px solid {palette["FIELD_BORDER"]};
     border-radius: 8px;
@@ -266,10 +267,13 @@ QAbstractItemView {{
     selection-background-color: {accent};
     selection-color: #FFFFFF;
 }}
+QAbstractItemView > QWidget#qt_scrollarea_viewport {{
+    background: {popup_background};
+}}
 QAbstractItemView::item {{ padding: 5px 8px; border-radius: 5px; }}
 QAbstractItemView::item:hover {{ background: {palette["ITEM_SEL"]}; color: {palette["TEXT_STRONG"]}; }}
 QAbstractItemView::item:selected {{ background: {accent}; color: #FFFFFF; }}
-QFrame#settingsComboPopupFrame {{ background: {palette["POPUP_BG"]}; border: none; }}
+QFrame#settingsComboPopupFrame {{ background: {popup_background}; border: none; }}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 4px 2px; }}
 QScrollBar::handle:vertical {{ background: {palette["FIELD_BORDER"]}; min-height: 30px; border-radius: 4px; }}
 QScrollBar::handle:vertical:hover {{ background: {palette["FIELD_BORDER_HOVER"]}; }}
@@ -278,12 +282,21 @@ QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{ background: tran
 """
 
 
+def _popup_background(theme: str) -> str:
+    """Return the opaque background used by a standalone combo popup viewport."""
+    value = _PALETTES.get(theme, _PALETTES["dark"])["POPUP_BG"]
+    if not isinstance(value, str):
+        raise TypeError("theme popup background must be a string")
+    return value
+
+
 
 __all__ = [
     "_CHECKMARK_PATH",
     "_PALETTES",
     "_QSS",
     "_card_background",
+    "_popup_background",
     "_popup_skin",
     "_skin",
     "_resolve_theme",

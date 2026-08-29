@@ -68,6 +68,7 @@ class SettingsPageBuilder:
         w.restart_button.clicked.connect(d._request_restart)
         w.ui_language.currentIndexChanged.connect(d._update_restart_hint)
         w.font_family.currentFontChanged.connect(self.on_font_family_changed)
+        w.font_style.currentTextChanged.connect(self.on_font_style_changed)
         w.panel_width_mode.currentIndexChanged.connect(self.update_panel_width_enabled)
         w.panel.currentIndexChanged.connect(self.on_panel_style_changed)
         w.accent.activated.connect(self.on_accent_activated)
@@ -132,6 +133,8 @@ class SettingsPageBuilder:
         w.font_family.setCurrentFont(QFont(w.font_family_shown))
         form.addRow(t("set.font_family"), w.font_family)
 
+        w.font_style_configured = self._config.font_style
+        w.font_style_user_changed = False
         self.rebuild_style_options(w.font_family.currentFont().family(), prefer=self._config.font_style)
         form.addRow(t("set.font_style"), w.font_style)
 
@@ -354,6 +357,10 @@ class SettingsPageBuilder:
         """Refresh the style picker after a family selection."""
         self.rebuild_style_options(font.family())
 
+    def on_font_style_changed(self, _style: str) -> None:
+        """Remember an explicit style selection separately from list rebuilding."""
+        self._widgets.font_style_user_changed = True
+
     def emit_clear_cache(self, _checked: bool = False) -> None:
         """Forward the clear-cache action through the source-page owner."""
         self._sources.emit_clear_cache(_checked)
@@ -375,6 +382,15 @@ class SettingsPageBuilder:
         w = self._widgets
         selected = w.font_family.currentFont().family()
         return w.font_family_configured if selected == w.font_family_shown else selected
+
+    def chosen_font_style(self) -> str:
+        """Preserve an untouched style when the platform normalizes its font list."""
+        w = self._widgets
+        selected_family = w.font_family.currentFont().family()
+        selected_style = w.font_style.currentText()
+        if selected_family == w.font_family_shown and not w.font_style_user_changed:
+            return w.font_style_configured
+        return selected_style
 
     def rebuild_style_options(self, family: str, prefer: str | None = None) -> None:
         """Repopulate styles and retain the current choice where possible."""
