@@ -13,6 +13,8 @@ It works with browsers, Spotify, VLC, mpv, Cider, and other MPRIS-compatible pla
 - Any MPRIS player through D-Bus; no player-specific plugin is required.
 - Word-by-word karaoke highlighting, translation, and smooth playback interpolation.
 - Multiple lyric sources with configurable order, matching, fallback, and local cache.
+- Manual lyric search and selection, with immediate application and persistent `MANUAL` cache entries.
+- Local cache management with fuzzy metadata search, selective deletion, and full clearing.
 - Wayland layer-shell overlay with click-through mode, dragging, translucency, and blur.
 - Settings and system tray controls for fonts, colors, position, opacity, icons, and language.
 
@@ -93,6 +95,19 @@ Open **Settings** from the tray. Under **Sources**, lyric providers can be reord
 
 **Prefer best match** is enabled by default: cached results and matching Cider snapshots are considered first, then network sources compete by match quality. Disable it for strict ordered fallback.
 
+The magnifying-glass button on the overlay opens manual lyric search for the current
+track. Title, artist, and album are editable; the current duration is shown as
+read-only context. Search results include provider, track metadata, duration, lyric
+format, translation availability, and match confidence. Applying a result writes it
+to the local cache as `MANUAL` and updates the visible lyrics immediately when the
+same track is still playing. The search window also shows the active lyric provider,
+acquisition path, playback source, and cache state.
+
+**Local lyrics cache** in **Settings -> Sources** opens the cache manager. It searches
+title, artist, album, provider, and provider song ID, and supports deleting selected
+entries or clearing the cache. The manager intentionally does not edit lyric content;
+manual replacement is performed through the current-track search flow.
+
 Settings also controls fonts, colors, opacity, position, translation, icons, panel style, and lyric effects.
 
 ## Cider HTTP API (optional)
@@ -117,9 +132,15 @@ boundary.
 ## Development checks
 
 ```bash
-uv sync --extra test --extra embedded-lyrics
+uv sync --locked --extra test --extra embedded-lyrics
 QT_QPA_PLATFORM=offscreen uv run pytest -q
 uv run ruff check .
 uv run ty check
 uv build
 ```
+
+## Documentation
+
+- [当前架构](docs/SPEC.md)
+- [歌词、cache 和手动选词](docs/SPEC-lyrics.md)
+- [外部 adapter 协议](plugins/README.zh-CN.md)

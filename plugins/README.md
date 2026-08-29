@@ -7,6 +7,10 @@ not ship a player-specific plugin here. An adapter can be written in any
 language and only needs to publish normalized playback facts and a complete
 timed lyric document over the generic WebSocket protocol.
 
+Application-side lyric resolution, source priority, caching, and manual
+selection are outside this protocol; see
+[`docs/SPEC-lyrics.md`](../docs/SPEC-lyrics.md).
+
 ## Connection
 
 Connect to the local receiver:
