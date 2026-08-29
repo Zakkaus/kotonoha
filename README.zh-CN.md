@@ -1,5 +1,11 @@
 # Kotonoha
 
+[![CI](https://img.shields.io/github/actions/workflow/status/locez/kotonoha/test.yml?branch=main&label=CI)](https://github.com/locez/kotonoha/actions/workflows/test.yml)
+[![Latest release](https://img.shields.io/github/v/release/locez/kotonoha?display_name=tag&sort=semver)](https://github.com/locez/kotonoha/releases/latest)
+[![Platform](https://img.shields.io/badge/platform-Linux-FCC624?logo=linux&logoColor=black)](https://github.com/locez/kotonoha)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-3776AB?logo=python&logoColor=white)](https://github.com/locez/kotonoha/blob/main/pyproject.toml)
+[![License: MIT](https://img.shields.io/badge/license-MIT-6f42c1)](https://github.com/locez/kotonoha/blob/main/LICENSE)
+
 [English](README.md)
 
 Kotonoha 是一个 Linux 桌面歌词悬浮窗。它从支持 MPRIS 的播放器读取当前歌曲和播放位置，并在半透明的 Wayland 悬浮层中显示同步歌词。
