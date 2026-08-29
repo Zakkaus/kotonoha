@@ -6,8 +6,6 @@ from .models import (
     DEFAULT_ICON_NAME,
     DEFAULT_LYRICS_SOURCES,
     LEAD_MS_LIMIT,
-    TRACK_OFFSET_CAP,
-    TRACK_OFFSET_STEP_MS,
     VALID_DISPLAY_SOURCES,
     VALID_LYRICS_SOURCES,
     Config,
@@ -21,8 +19,6 @@ from .models import (
     ThemeMode,
     UiLanguage,
     clamp_port,
-    clamp_track_offset,
-    set_track_offset,
 )
 from .schema import SETTINGS_CONFIG_FIELDS, SETTINGS_PAGE_FIELDS
 from .store import (
@@ -56,17 +52,13 @@ __all__ = [
     "PanelWidthMode",
     "SETTINGS_CONFIG_FIELDS",
     "SETTINGS_PAGE_FIELDS",
-    "TRACK_OFFSET_CAP",
-    "TRACK_OFFSET_STEP_MS",
     "ThemeMode",
     "UiLanguage",
     "VALID_DISPLAY_SOURCES",
     "VALID_LYRICS_SOURCES",
     "clamp_port",
-    "clamp_track_offset",
     "config_dir",
     "config_path",
     "load_config",
     "save_config",
-    "set_track_offset",
 ]

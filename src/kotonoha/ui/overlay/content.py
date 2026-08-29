@@ -7,10 +7,15 @@ from collections.abc import Callable
 from PyQt6.QtCore import Qt, QTimer
 from PyQt6.QtWidgets import QLabel, QWidget
 
-from ...config import TRACK_OFFSET_STEP_MS, Config, clamp_track_offset
+from ...config import Config
 from ...display.models import EMPTY_FRAME, DisplayFrame, DisplayState
+from ...display.offsets import (
+    TRACK_OFFSET_STEP_MS,
+    TrackOffsetKey,
+    TrackOffsetReader,
+    clamp_track_offset,
+)
 from ...lyrics.models import LyricLine
-from ...playback.identity import track_identity_key
 from ...strings import Translator
 from .karaoke_label import KaraokeLabel
 from .state import LyricsState
@@ -33,7 +38,8 @@ class OverlayContentController:
         *,
         timer_parent: QWidget,
         on_input_region_refresh: Callable[[], None],
-        on_offset_changed: Callable[[str, int], None],
+        on_offset_changed: Callable[[TrackOffsetKey, int], None],
+        track_offsets: TrackOffsetReader,
         translator: Translator,
     ) -> None:
         """Create a content owner around the already-built lyric widgets."""
@@ -46,9 +52,10 @@ class OverlayContentController:
         self._container = container
         self._on_input_region_refresh = on_input_region_refresh
         self._on_offset_changed = on_offset_changed
+        self._track_offsets = track_offsets
         self._translator = translator
         self._frame = EMPTY_FRAME
-        self._track_key = ""
+        self._track_key: TrackOffsetKey | None = None
         self._interlude_active = False
         self._feedback_timer = QTimer(timer_parent)
         self._feedback_timer.setSingleShot(True)
@@ -141,11 +148,12 @@ class OverlayContentController:
         self.on_frame(EMPTY_FRAME)
 
     def _nudge_offset(self, delta_ms: int) -> None:
-        if not self._track_key:
+        key = self._track_key
+        if key is None:
             return
-        current = self._config.track_offsets.get(self._track_key, 0)
+        current = self._track_offsets.offset_for(key)
         offset = clamp_track_offset(current + delta_ms)
-        self._on_offset_changed(self._track_key, offset)
+        self._on_offset_changed(key, offset)
         self.show_offset_feedback(offset)
         self.refresh_media_time()
 
@@ -154,15 +162,8 @@ class OverlayContentController:
         self.on_frame(self._state.frame)
 
     def _set_track_key_from_frame(self, frame: DisplayFrame) -> None:
-        """Derive the offset key from normalized track or document metadata."""
-        track = frame.track
-        document = frame.document
-        title_value = track.title if track is not None else document.title if document is not None else None
-        artist_value = track.artist if track is not None else document.artist if document is not None else None
-        duration = track.duration_s if track is not None else document.duration_s if document is not None else None
-        title = title_value if title_value is not None else ""
-        artist = artist_value if artist_value is not None else ""
-        self._track_key = track_identity_key(title, artist, duration)
+        """Use the identity calculated once by the display projection."""
+        self._track_key = frame.track_offset_key
 
     def _show_interlude(self, frame: DisplayFrame) -> None:
         """Keep surrounding lines visible while rendering an intro or break marker."""
@@ -183,7 +184,7 @@ class OverlayContentController:
         self._current.set_progress(frame.line_progress, None)
 
     def _show_empty(self, frame: DisplayFrame) -> None:
-        self._track_key = ""
+        self._track_key = None
         self._previous.setText("")
         self._next.setText("")
         self._translation.set_line(None, False)

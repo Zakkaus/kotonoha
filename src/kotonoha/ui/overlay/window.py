@@ -29,6 +29,7 @@ from PyQt6.QtWidgets import (
 from ...app.intents import ChangePosition, ChangeTrackOffset
 from ...config import Config
 from ...display.models import DisplayFrame
+from ...display.offsets import EMPTY_TRACK_OFFSETS, TrackOffsetKey, TrackOffsetReader
 from ...lyrics.match import TrackMetadata
 from ...platform import OverlayPlatformFactory, QtWindowHost
 from ...platform.overlay_contracts import DragMode, SurfacePort, SurfaceResult
@@ -72,6 +73,7 @@ class LyricsOverlay(QWidget):
     _input_region_timer: QTimer
     _blur_timer: QTimer
     _control_click_timer: QTimer
+    _track_offsets: TrackOffsetReader
     _closed: bool
     _closing: bool
     _suppress_control_click: bool
@@ -83,10 +85,12 @@ class LyricsOverlay(QWidget):
         *,
         platform_factory: OverlayPlatformFactory,
         translator: Translator | None = None,
+        track_offsets: TrackOffsetReader = EMPTY_TRACK_OFFSETS,
     ) -> None:
         super().__init__()
         self._state = state
         self._config = config
+        self._track_offsets = track_offsets
         self._translator = translator if translator is not None else Translator(config.ui_language)
         self._closed = False
         self._closing = False
@@ -247,6 +251,7 @@ class LyricsOverlay(QWidget):
             timer_parent=self,
             on_input_region_refresh=self._refresh_input_region,
             on_offset_changed=self._emit_track_offset_changed,
+            track_offsets=self._track_offsets,
             translator=self._translator,
         )
 
@@ -442,7 +447,7 @@ class LyricsOverlay(QWidget):
     def _clear_control_click_suppression(self) -> None:
         self._suppress_control_click = False
 
-    def _emit_track_offset_changed(self, track_key: str, offset_ms: int) -> None:
+    def _emit_track_offset_changed(self, track_key: TrackOffsetKey, offset_ms: int) -> None:
         """Publish an offset applied by the content owner."""
         self.track_offset_changed.emit(ChangeTrackOffset(track_key, offset_ms))
 

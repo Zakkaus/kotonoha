@@ -315,9 +315,9 @@ def test_lyrics_feature_does_not_depend_on_application_or_presentation_layers():
     assert not violations, "lyrics feature depends on outer layers: " + ", ".join(violations)
 
 
-def test_display_package_is_free_of_toolkit_and_ui_state_dependencies():
-    """Display policy and timing cannot depend on Qt presentation state."""
-    forbidden_modules = ("PyQt6", "ui.overlay", "QtDisplayPublisher")
+def test_display_package_is_free_of_toolkit_ui_and_persistence_dependencies():
+    """Display policy and timing cannot depend on Qt or concrete persistence state."""
+    forbidden_modules = ("PyQt6", "ui.overlay", "QtDisplayPublisher", "sqlite3")
     forbidden_names = {"LyricsState", "QtDisplayPublisher", "LyricsSnapshot"}
     violations: list[str] = []
     for path in (SOURCE_ROOT / "display").rglob("*.py"):
@@ -411,19 +411,19 @@ def test_component_boundary_dependencies_are_required():
     assert not violations, "provider dependencies have concrete fallbacks: " + ", ".join(violations)
 
 
-def test_track_identity_has_one_value_owner():
-    """Every offset key is produced by the playback identity value boundary."""
+def test_track_offset_identity_has_one_value_owner():
+    """Structured timing-correction identities have one domain owner."""
     definitions: list[str] = []
-    separator_literals: list[str] = []
+    constructors: list[str] = []
     for path in _python_modules():
         tree = ast.parse(path.read_text(encoding="utf-8"))
         for node in ast.walk(tree):
-            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "track_identity_key":
+            if isinstance(node, ast.ClassDef) and node.name == "TrackOffsetKey":
                 definitions.append(path.relative_to(SOURCE_ROOT).as_posix())
-            if isinstance(node, ast.Constant) and node.value == "\x1f":
-                separator_literals.append(path.relative_to(SOURCE_ROOT).as_posix())
-    assert definitions == ["playback/identity.py"]
-    assert separator_literals == ["playback/identity.py"]
+            if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)) and node.name == "track_offset_key":
+                constructors.append(path.relative_to(SOURCE_ROOT).as_posix())
+    assert definitions == ["display/offsets.py"]
+    assert constructors == ["display/offsets.py"]
 
 
 def test_timeline_engine_is_clock_only():

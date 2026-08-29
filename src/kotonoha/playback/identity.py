@@ -3,11 +3,8 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Final
 
 from .models import PlaybackObservation
-
-TRACK_IDENTITY_SEPARATOR: Final[str] = "\x1f"
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,15 +60,7 @@ class PlaybackTrackKey:
         )
 
 
-def track_identity_key(title: str, artist: str, duration_s: float | None = None) -> str:
-    """Return the stable offset key for one recording's normalized title and artist."""
-    del duration_s  # Duration varies by source and must not split one recording's key.
-    return TRACK_IDENTITY_SEPARATOR.join((title.strip().casefold(), artist.strip().casefold()))
-
-
 __all__ = [
-    "TRACK_IDENTITY_SEPARATOR",
     "PlaybackTrackKey",
     "TrackMetadataKey",
-    "track_identity_key",
 ]

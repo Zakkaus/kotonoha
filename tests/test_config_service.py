@@ -70,16 +70,13 @@ async def test_persists_latest_validated_configuration_with_cider_token() -> Non
 
     service.apply_settings(Config(cider_api_token="secret-token"), frozenset({"cider_api_token"}))
     service.set_passthrough(True)
-    service.set_track_offset("song", 123)
 
     await service.close()
 
     assert service.config.passthrough is True
-    assert service.config.track_offsets == {"song": 123}
     assert service.config.cider_api_token == "secret-token"
     assert len(writer.saved) == 1
     assert writer.saved[0].passthrough is True
-    assert writer.saved[0].track_offsets == {"song": 123}
     assert writer.saved[0].cider_api_token == "secret-token"
 
 
@@ -142,7 +139,7 @@ async def test_persistence_failure_is_observable_and_can_be_retried() -> None:
 async def test_apply_settings_preserves_runtime_changes_made_while_form_was_open() -> None:
     writer = MemoryConfigWriter()
     service = ConfigService(
-        Config(margin_edge=32, margin_x=4, passthrough=False, track_offsets={"song": 20}),
+        Config(margin_edge=32, margin_x=4, passthrough=False),
         writer=writer,
         worker=BlockingCallRunner("test-config-service"),
     )
@@ -150,7 +147,6 @@ async def test_apply_settings_preserves_runtime_changes_made_while_form_was_open
 
     service.set_passthrough(True)
     service.set_position(96, 8, "HDMI-A-1", 1920, 1080)
-    service.set_track_offset("song", 120)
     submitted_config = replace(opened_config, theme=ThemeMode.DARK)
 
     applied = service.apply_settings(submitted_config, frozenset({"theme"}))
@@ -160,7 +156,6 @@ async def test_apply_settings_preserves_runtime_changes_made_while_form_was_open
     assert applied.margin_edge == 96
     assert applied.margin_x == 8
     assert applied.screen_name == "HDMI-A-1"
-    assert applied.track_offsets == {"song": 120}
     await service.close()
 
 

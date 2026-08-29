@@ -41,8 +41,6 @@ ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (
 )
 
 DEFAULT_ICON_NAME = "default"
-TRACK_OFFSET_CAP = 100
-TRACK_OFFSET_STEP_MS = 50
 
 
 class PanelStyle(StrEnum):
@@ -153,7 +151,6 @@ class Config:
     passthrough: bool = False        # start unlocked (interactive) so first-run positioning is easy
     karaoke: bool = True             # per-word sweep when timing == "Word"
     lead_ms: int = 120               # advance the sweep by this many ms (compensate pipeline latency)
-    track_offsets: dict[str, int] = field(default_factory=dict)
     show_translation: bool = True    # bilingual
     current_line_only: bool = False  # hide the previous and next context lines
     translation_language: str = "auto"  # "auto" -> from system locale, else an Apple tag (zh-Hans/en/ja/...)
@@ -215,7 +212,6 @@ class Config:
             passthrough=_clean_bool(self.passthrough, False),
             karaoke=_clean_bool(self.karaoke, True),
             lead_ms=_clamp_int(self.lead_ms, -LEAD_MS_LIMIT, LEAD_MS_LIMIT, 120),
-            track_offsets=_clean_track_offsets(self.track_offsets),
             show_translation=_clean_bool(self.show_translation, True),
             current_line_only=_clean_bool(self.current_line_only, False),
             translation_language=str(self.translation_language),
@@ -368,34 +364,9 @@ def _clean_icon_name(value: object) -> str:
     return value if Path(value).name == value else DEFAULT_ICON_NAME
 
 
-def _clean_track_offsets(value: object) -> dict[str, int]:
-    if not isinstance(value, Mapping):
-        return {}
-    cleaned: dict[str, int] = {}
-    for key, offset in value.items():
-        if isinstance(key, str) and key:
-            cleaned[key] = _clamp_int(offset, -10_000, 10_000, 0)
-    return dict(list(cleaned.items())[-TRACK_OFFSET_CAP:])
-
-
-def set_track_offset(config: Config, key: str, offset_ms: int) -> int:
-    """Store a recent track offset and return its clamped value."""
-    offset = clamp_track_offset(offset_ms)
-    config.track_offsets.pop(key, None)
-    config.track_offsets[key] = offset
-    while len(config.track_offsets) > TRACK_OFFSET_CAP:
-        config.track_offsets.pop(next(iter(config.track_offsets)))
-    return offset
-
-
 def clamp_port(port: int) -> int:
     """Return a receiver port constrained to the valid TCP range."""
     return _clamp_int(port, 1, 65535, 28745)
-
-
-def clamp_track_offset(offset_ms: int) -> int:
-    """Return a track offset constrained to the persisted timing range."""
-    return _clamp_int(offset_ms, -10_000, 10_000, 0)
 
 
 def _clamp_float(value: object, low: float, high: float, default: float) -> float:

@@ -8,6 +8,7 @@ from typing import Protocol
 
 from ..config import Config
 from ..display.models import DisplayOptions, LyricsDisplayStatus
+from ..display.offsets import TrackOffsetKey, TrackOffsetSnapshot
 from ..lyrics.artifact import LyricsArtifact
 from ..lyrics.match import TrackMetadata
 from ..lyrics.search import LyricsSearchPort
@@ -68,11 +69,6 @@ class ConfigServicePort(Protocol):
     ) -> Config:
         """Update and persist output-local overlay placement."""
         ...
-
-    def set_track_offset(self, key: str, offset_ms: int) -> Config:
-        """Update and persist one track's display offset."""
-        ...
-
 
 class SignalPort(Protocol):
     """Minimal signal surface required by controller-owned UI ports."""
@@ -218,6 +214,26 @@ class RuntimeConfigPort(Protocol):
         ...
 
 
+class TrackOffsetPort(Protocol):
+    """Application-owned timing-correction state used by display and HUD."""
+
+    def snapshot(self) -> TrackOffsetSnapshot:
+        """Return the immutable corrections currently active in display projection."""
+        ...
+
+    def offset_for(self, key: TrackOffsetKey) -> int:
+        """Return the correction for one structured lyric timeline identity."""
+        ...
+
+    def set_offset(self, key: TrackOffsetKey, offset_ms: int) -> TrackOffsetSnapshot:
+        """Update one correction and schedule its persistence."""
+        ...
+
+    async def close(self) -> None:
+        """Flush pending persistence and release the offset worker."""
+        ...
+
+
 @dataclass(frozen=True, slots=True)
 class ApplicationComponents:
     """All long-lived collaborators that the application controller owns.
@@ -227,6 +243,7 @@ class ApplicationComponents:
     """
 
     config_service: ConfigServicePort
+    track_offsets: TrackOffsetPort
     restart_launcher: RestartLauncher
     display: DisplayLifecyclePort
     overlay: OverlayPort
@@ -256,6 +273,7 @@ __all__ = [
     "OverlayPort",
     "ReceiverPort",
     "RuntimeConfigPort",
+    "TrackOffsetPort",
     "RestartLauncher",
     "SignalPort",
     "TrayPort",

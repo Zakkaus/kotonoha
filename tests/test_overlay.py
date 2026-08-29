@@ -21,10 +21,10 @@ from kotonoha.display.models import (
     ResolutionState,
     WordProgress,
 )
+from kotonoha.display.offsets import track_offset_key
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
 from kotonoha.platform.overlay_contracts import SurfaceResult
-from kotonoha.playback.identity import track_identity_key
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from kotonoha.ui.overlay.state import LyricsState
 
@@ -91,6 +91,7 @@ def display_frame(
             "",
             (),
         )
+    offset_key = track_offset_key(track, document if has_lyrics else None)
     return DisplayFrame(
         state,
         track=track,
@@ -103,6 +104,7 @@ def display_frame(
         next=next,
         around=around,
         interlude=interlude,
+        track_offset_key=offset_key,
     )
 
 
@@ -499,7 +501,9 @@ def test_offset_buttons_shift_sweep_and_hide_with_lock(qapp):
     changes = []
     overlay.track_offset_changed.connect(changes.append)
     overlay._earlier_btn.click()
-    assert changes[-1].key == track_identity_key("Song", "Artist", 180.0)
+    key = track_offset_key(snapshot.track, snapshot.document)
+    assert key is not None
+    assert changes[-1].key == key
     assert changes[-1].offset_ms == 50
     assert overlay._current.text == "Sync offset: +50 ms"
     overlay.set_passthrough(True)

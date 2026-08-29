@@ -7,6 +7,7 @@ from typing import TypeAlias
 
 from ..config import Config
 from ..config.schema import SETTINGS_CONFIG_FIELDS
+from ..display.offsets import TrackOffsetKey
 from ..lyrics.cache import LyricsCacheKey, LyricsCacheQuery
 from ..lyrics.search import LyricsSearchQuery, LyricsSearchResult
 
@@ -55,9 +56,9 @@ class RequestRestart:
 
 @dataclass(frozen=True, slots=True)
 class ChangeTrackOffset:
-    """Persist one output timing correction for a normalized track key."""
+    """Persist one display timing correction for a structured lyric timeline key."""
 
-    key: str
+    key: TrackOffsetKey
     offset_ms: int
 
 

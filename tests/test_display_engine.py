@@ -9,6 +9,7 @@ from kotonoha.display.models import (
     InterludeMarkerStyle,
     ResolutionState,
 )
+from kotonoha.display.offsets import track_offset_key
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, LyricWord, TimingKind
 from kotonoha.playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
@@ -127,9 +128,11 @@ def test_display_engine_returns_interlude_marker_and_semantic_progress():
 def test_display_engine_applies_options_at_the_display_boundary():
     line = LyricLine(0, "line", 1.0, 5.0, "简体", "翻译")
     document = LyricsDocument("test", title="Song", artist="Artist", timing=TimingKind.LINE, lines=(line,))
+    key = track_offset_key(_track(), document)
+    assert key is not None
     options = DisplayOptions(
         lead_ms=100,
-        track_offsets_ms={"song\x1fartist": 50},
+        track_offsets_ms={key: 50},
         lyrics_script=DisplayScript.ZH_HANT,
     )
 
@@ -138,6 +141,7 @@ def test_display_engine_applies_options_at_the_display_boundary():
     )
 
     assert frame.current_time == 1.15
+    assert frame.track_offset_key == key
     assert frame.current is not None
     assert frame.current.text == "簡體"
     assert frame.current.translation == "翻譯"

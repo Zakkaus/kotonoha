@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import replace
 
 from ..lyrics.models import LyricLine, LyricsDocument
-from ..playback.identity import track_identity_key
 from ..playback.models import PlaybackObservation, PlaybackStatus, TrackIdentity
 from .karaoke import (
     active_word_index,
@@ -25,6 +24,7 @@ from .models import (
     ResolutionState,
     WordProgress,
 )
+from .offsets import TrackOffsetKey, TrackOffsetKeyResolver
 from .rules import find_current_index, in_interlude, interlude_at, sweep_end, typical_span
 from .text import DisplayTextTransformer, ScriptTextTransformer
 
@@ -45,6 +45,7 @@ class DisplayEngine:
     ) -> None:
         self._options = options if options is not None else DisplayOptions()
         self._text_transformer = text_transformer if text_transformer is not None else ScriptTextTransformer()
+        self._offset_key_resolver = TrackOffsetKeyResolver()
 
     @property
     def options(self) -> DisplayOptions:
@@ -59,8 +60,10 @@ class DisplayEngine:
         """Project one complete normalized input into a display frame."""
         playback = display_input.playback
         options = display_input.options
-        document = self._display_document(display_input.document, options)
-        position = self._display_position(playback, document, options)
+        source_document = display_input.document
+        document = self._display_document(source_document, options)
+        offset_key = self._offset_key_resolver.resolve(playback.track, source_document)
+        position = self._display_position(playback, offset_key, options)
         state = display_input.resolution.display_state()
         lines = document.lines if document is not None else ()
 
@@ -78,6 +81,7 @@ class DisplayEngine:
                 is_playing=playback.status is PlaybackStatus.PLAYING,
                 fallback=self._fallback_line(playback.track, document, options),
                 diagnostic=diagnostic,
+                track_offset_key=offset_key,
             )
 
         index = find_current_index(lines, position)
@@ -122,6 +126,7 @@ class DisplayEngine:
             interlude_line=interlude_line,
             line_progress=line_result,
             word_progress=word_result,
+            track_offset_key=offset_key,
         )
 
     def project_observation(
@@ -163,20 +168,14 @@ class DisplayEngine:
     def _display_position(
         self,
         playback: PlaybackObservation,
-        document: LyricsDocument | None,
+        offset_key: TrackOffsetKey | None,
         options: DisplayOptions,
     ) -> float | None:
         """Apply configured lead and per-track offset at the display boundary."""
         position = playback.position_s
         if position is None:
             return None
-        track = playback.track
-        title_value = track.title if track is not None else document.title if document is not None else None
-        artist_value = track.artist if track is not None else document.artist if document is not None else None
-        title = title_value if title_value is not None else ""
-        artist = artist_value if artist_value is not None else ""
-        key = track_identity_key(title, artist, track.duration_s if track is not None else None)
-        offset_ms = options.track_offsets_ms.get(key, 0)
+        offset_ms = options.track_offsets_ms.get(offset_key, 0) if offset_key is not None else 0
         return position + (options.lead_ms + offset_ms) / 1000.0
 
     def _fallback_line(

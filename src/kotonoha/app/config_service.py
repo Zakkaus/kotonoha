@@ -10,7 +10,7 @@ from typing import Protocol
 
 from ..async_task import create_owned_task, wait_for_owned
 from ..async_worker import BlockingWorkerPort
-from ..config import Config, set_track_offset
+from ..config import Config
 from ..config.schema import SETTINGS_CONFIG_FIELDS
 from .config_merge import merge_settings
 
@@ -126,15 +126,6 @@ class ConfigService:
             screen_width=screen_width,
             screen_height=screen_height,
         ).clamped()
-        self._schedule_persist()
-        return self.config
-
-    def set_track_offset(self, key: str, offset_ms: int) -> Config:
-        """Commit one track offset and persist the updated configuration."""
-        self._ensure_open()
-        updated = self._config.clamped()
-        set_track_offset(updated, key, offset_ms)
-        self._config = updated.clamped()
         self._schedule_persist()
         return self.config
 

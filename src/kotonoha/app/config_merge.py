@@ -15,9 +15,9 @@ def merge_settings(
 ) -> Config:
     """Return ``current`` with only the submitted Settings fields replaced.
 
-    Runtime-owned values such as track offsets and detected output geometry are
-    deliberately excluded from the Settings merge. This module is stateless on
-    purpose: it owns a field mapping, not configuration lifecycle or persistence.
+    Detected output geometry is deliberately excluded from the Settings merge.
+    This module is stateless on purpose: it owns a field mapping, not
+    configuration lifecycle or persistence.
 
     Raises:
         ValueError: if ``changed_fields`` contains a non-Settings field.

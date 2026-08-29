@@ -9,6 +9,7 @@ from PyQt6.QtWidgets import QApplication
 from ..async_worker import BlockingCallRunner, BlockingWorkerPort
 from ..config import Config, ConfigStore, clamp_port
 from ..display.models import LyricsDisplayStatus
+from ..display.offsets import EMPTY_TRACK_OFFSETS, TrackOffsetSnapshot
 from ..display.presentation import DisplayEngine
 from ..display.timeline import TimelineEngine
 from ..i18n import resolve_translation_language
@@ -35,6 +36,7 @@ from ..providers.mpris import MprisProvider
 from ..providers.mpris_adapter import MprisPlaybackAdapter
 from ..providers.mpris_session import MprisSession
 from ..receiver import AdapterReceiver
+from ..state import TrackOffsetStore, TrackOffsetStoreError
 from ..strings import Translator
 from ..tray import KotonohaTray, load_icon
 from ..ui.overlay import LyricsOverlay
@@ -50,6 +52,7 @@ from .display_coordinator import DisplayCoordinator
 from .services import RuntimeConfigApplier, display_options
 from .settings_port import CacheManagementDialogFactory, LyricsSearchDialogFactory, SettingsDialogFactory
 from .source_gate import SourceOwnershipCoordinator
+from .track_offset_service import TrackOffsetService, TrackOffsetWriter
 
 logger = logging.getLogger(__name__)
 
@@ -140,12 +143,18 @@ class ApplicationComposition:
         *,
         config_writer: ConfigWriter,
         config_worker: BlockingWorkerPort,
+        track_offsets: TrackOffsetSnapshot,
+        track_offset_writer: TrackOffsetWriter,
+        track_offset_worker: BlockingWorkerPort,
         restart_launcher: RestartLauncher,
     ) -> None:
         self._app = app
         self._config = config.clamped()
         self._config_writer = config_writer
         self._config_worker = config_worker
+        self._track_offsets = track_offsets
+        self._track_offset_writer = track_offset_writer
+        self._track_offset_worker = track_offset_worker
         self._restart_launcher = restart_launcher
         self._controller: AppController | None = None
 
@@ -165,21 +174,32 @@ class ApplicationComposition:
         """
         config_store = ConfigStore(Config)
         config_worker = BlockingCallRunner("kotonoha-config")
-        worker_transferred = False
+        track_offset_store = TrackOffsetStore()
+        track_offset_worker = BlockingCallRunner("kotonoha-track-offsets")
+        workers_transferred = False
         try:
             initial_config = config if config is not None else await config_worker.run(config_store.load)
+            try:
+                initial_offsets = await track_offset_worker.run(track_offset_store.load)
+            except TrackOffsetStoreError as exc:
+                logger.warning("Could not load track offsets: %s", exc)
+                initial_offsets = EMPTY_TRACK_OFFSETS
             composition = cls(
                 app,
                 apply_cli_port(initial_config, cli_port),
                 config_writer=config_store,
                 config_worker=config_worker,
+                track_offsets=initial_offsets,
+                track_offset_writer=track_offset_store,
+                track_offset_worker=track_offset_worker,
                 restart_launcher=QProcessRestartLauncher(),
             )
-            worker_transferred = True
+            workers_transferred = True
             return composition
         finally:
-            if not worker_transferred:
+            if not workers_transferred:
                 config_worker.close()
+                track_offset_worker.close()
 
     def build(self) -> AppController:
         """Build the graph once and return its application lifecycle owner."""
@@ -197,6 +217,7 @@ class ApplicationComposition:
             # failure is re-raised after the resources are released.
             self._close_build_worker(local_worker, "local lyrics")
             self._close_build_worker(cache_worker, "lyrics cache")
+            self._close_build_worker(self._track_offset_worker, "track offsets")
             self._close_build_worker(self._config_worker, "configuration")
             raise
         self._controller = controller
@@ -215,6 +236,11 @@ class ApplicationComposition:
             worker=self._config_worker,
         )
         config = config_service.config
+        track_offsets = TrackOffsetService(
+            self._track_offsets,
+            writer=self._track_offset_writer,
+            worker=self._track_offset_worker,
+        )
         translator = Translator(config.ui_language)
         ui_runtime = _QtRuntimePort(self._app, translator)
         ui_runtime.set_language(config.ui_language)
@@ -224,7 +250,7 @@ class ApplicationComposition:
         publisher = QtDisplayPublisher(state)
         display = DisplayCoordinator(
             publisher,
-            presenter=DisplayEngine(display_options(config)),
+            presenter=DisplayEngine(display_options(config, track_offsets.snapshot())),
             timeline=TimelineEngine(),
         )
 
@@ -237,7 +263,13 @@ class ApplicationComposition:
             platform_name=platform_name,
             current_desktop=desktop,
         )
-        overlay = LyricsOverlay(state, config, platform_factory=platform_factory, translator=translator)
+        overlay = LyricsOverlay(
+            state,
+            config,
+            platform_factory=platform_factory,
+            translator=translator,
+            track_offsets=track_offsets,
+        )
 
         ownership = SourceOwnershipCoordinator(display_sources=config.display_sources)
         local_source = LocalLyricsSource(
@@ -338,9 +370,11 @@ class ApplicationComposition:
             mpris,
             cider,
             ownership,
+            track_offsets,
         )
         components = ApplicationComponents(
             config_service=config_service,
+            track_offsets=track_offsets,
             restart_launcher=self._restart_launcher,
             display=display,
             overlay=overlay,

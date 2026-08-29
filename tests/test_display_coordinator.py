@@ -3,7 +3,8 @@ import logging
 
 from kotonoha.app.display_coordinator import DisplayCoordinator
 from kotonoha.clock import MediaClock
-from kotonoha.display.models import LyricsDisplayStatus, ResolutionState
+from kotonoha.display.models import DisplayOptions, LyricsDisplayStatus, ResolutionState
+from kotonoha.display.offsets import track_offset_key
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
 from kotonoha.lyrics.artifact import LyricsArtifact
@@ -65,10 +66,45 @@ def test_display_tick_does_not_revert_to_a_lagging_polled_line():
     assert state.frame.current is not None
     assert state.frame.current.id == "line-1"
 
+
     # A coarse player sample can lag the smooth clock just after the boundary.
     monotonic.value = 100.4
     coordinator.tick(4.9, PlaybackStatus.PLAYING)
 
+    assert state.frame.current is not None
+    assert state.frame.current.id == "line-1"
+
+
+def test_set_options_reprojects_the_active_frame_with_a_new_track_offset():
+    state = LyricsState()
+    coordinator = DisplayCoordinator(
+        QtDisplayPublisher(state),
+        presenter=DisplayEngine(),
+        timeline=TimelineEngine(),
+    )
+    track = TrackIdentity("test", "player", stable_id="song", title="Song", artist="Artist")
+    playback = PlaybackObservation("test", "player", track, PlaybackStatus.PAUSED, 0.0, 10.0, 100.0)
+    document = LyricsDocument(
+        "test",
+        title="Song",
+        artist="Artist",
+        timing=TimingKind.LINE,
+        duration_s=10.0,
+        lines=(
+            LyricLine(0, "line-0", 0.0, 1.0, "first", ""),
+            LyricLine(1, "line-1", 1.0, 2.0, "second", ""),
+        ),
+    )
+
+    coordinator.publish_resolution(playback, document, ResolutionState.AVAILABLE)
+    assert state.frame.current is not None
+    assert state.frame.current.id == "line-0"
+    key = track_offset_key(track, document)
+    assert key is not None
+
+    coordinator.set_options(DisplayOptions(track_offsets_ms={key: 1000}))
+
+    assert state.frame.current_time == 1.0
     assert state.frame.current is not None
     assert state.frame.current.id == "line-1"
 

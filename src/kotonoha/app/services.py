@@ -12,6 +12,7 @@ from ..display.models import (
     InterludeCountdown,
     InterludeMarkerStyle,
 )
+from ..display.offsets import TrackOffsetSnapshot
 from ..i18n import resolve_translation_language
 
 
@@ -75,6 +76,14 @@ class SourceRuntimePort(Protocol):
     def set_display_sources(self, sources: Sequence[str]) -> None: ...
 
 
+class TrackOffsetSnapshotPort(Protocol):
+    """Read-only snapshot capability needed when Settings are applied."""
+
+    def snapshot(self) -> TrackOffsetSnapshot:
+        """Return the current structured track-offset state."""
+        ...
+
+
 class RuntimeConfigApplier:
     """Apply one validated config to all already-composed runtime collaborators."""
 
@@ -87,6 +96,7 @@ class RuntimeConfigApplier:
         mpris: MprisRuntimePort,
         cider: CiderRuntimePort,
         ownership: SourceRuntimePort,
+        track_offsets: TrackOffsetSnapshotPort,
     ) -> None:
         self._ui = ui
         self._display = display
@@ -95,10 +105,11 @@ class RuntimeConfigApplier:
         self._mpris = mpris
         self._cider = cider
         self._ownership = ownership
+        self._track_offsets = track_offsets
 
     def apply(self, previous: Config, current: Config) -> None:
         """Refresh runtime collaborators from the latest validated config."""
-        self._display.set_options(display_options(current))
+        self._display.set_options(display_options(current, self._track_offsets.snapshot()))
         self._overlay.apply_config(current)
         self._overlay.activate_layer_shell()
         self._tray.set_passthrough_checked(current.passthrough)
@@ -118,11 +129,11 @@ class RuntimeConfigApplier:
         current_language = resolve_translation_language(current.translation_language)
         if current_language != previous_language:
             self._cider.set_translation_language(current_language)
-def display_options(config: Config) -> DisplayOptions:
-    """Build the immutable display options consumed by the display coordinator."""
+def display_options(config: Config, track_offsets: TrackOffsetSnapshot) -> DisplayOptions:
+    """Build immutable display options from settings and runtime offset state."""
     return DisplayOptions(
         lead_ms=config.lead_ms,
-        track_offsets_ms=dict(config.track_offsets),
+        track_offsets_ms=track_offsets.as_mapping(),
         lyrics_script=DisplayScript(config.lyrics_script.value),
         interlude_style=InterludeMarkerStyle(config.interlude_style.value),
         interlude_countdown=InterludeCountdown(config.interlude_countdown.value),
@@ -136,6 +147,7 @@ __all__ = [
     "OverlayRuntimePort",
     "RuntimeConfigApplier",
     "SourceRuntimePort",
+    "TrackOffsetSnapshotPort",
     "TrayRuntimePort",
     "UiRuntimePort",
     "display_options",

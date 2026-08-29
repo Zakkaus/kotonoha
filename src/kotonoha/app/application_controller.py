@@ -30,6 +30,7 @@ from .components import (
     ReceiverPort,
     RestartLauncher,
     RuntimeConfigPort,
+    TrackOffsetPort,
     TrayPort,
 )
 from .intents import (
@@ -59,6 +60,7 @@ class AppController:
         self._quit_port: ApplicationQuitPort = quit_port
         self._restart_launcher: RestartLauncher = components.restart_launcher
         self._config_service: ConfigServicePort = components.config_service
+        self._track_offsets: TrackOffsetPort = components.track_offsets
         self._display: DisplayLifecyclePort = components.display
         self._overlay: OverlayPort = components.overlay
         self._receiver: ReceiverPort = components.receiver
@@ -169,6 +171,7 @@ class AppController:
         else:
             if not surface_result.succeeded:
                 logger.warning("Overlay surface shutdown was incomplete: %s", surface_result.reason)
+        cancellation_requested |= await self._stop_component("track offsets", self._track_offsets.close)
         cancellation_requested |= await self._stop_component("configuration service", self._config_service.close)
         self._settings_tasks.close()
         self._started = False
@@ -265,8 +268,8 @@ class AppController:
             self._restart()
             return
         if isinstance(intent, ChangeTrackOffset):
-            self._config = self._config_service.set_track_offset(intent.key, intent.offset_ms)
-            self._display.set_options(display_options(self._config))
+            self._track_offsets.set_offset(intent.key, intent.offset_ms)
+            self._display.set_options(display_options(self._config, self._track_offsets.snapshot()))
             return
         if isinstance(intent, ChangePosition):
             self._config = self._config_service.set_position(

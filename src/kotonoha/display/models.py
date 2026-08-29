@@ -10,6 +10,7 @@ from types import MappingProxyType
 
 from ..lyrics.models import LyricLine, LyricsCacheState, LyricsDocument, LyricsOrigin
 from ..playback.models import PlaybackObservation, TrackIdentity
+from .offsets import TrackOffsetKey
 
 
 class DisplayState(StrEnum):
@@ -86,7 +87,7 @@ class DisplayOptions:
     """Pure presentation options injected into the display projection."""
 
     lead_ms: int = 0
-    track_offsets_ms: Mapping[str, int] = field(default_factory=lambda: MappingProxyType({}))
+    track_offsets_ms: Mapping[TrackOffsetKey, int] = field(default_factory=lambda: MappingProxyType({}))
     lyrics_script: DisplayScript = DisplayScript.OFF
     interlude_style: InterludeMarkerStyle = InterludeMarkerStyle.DOTS
     interlude_countdown: InterludeCountdown = InterludeCountdown.OFF
@@ -96,8 +97,8 @@ class DisplayOptions:
         if type(self.lead_ms) is not int:
             raise TypeError("display lead must be an integer number of milliseconds")
         normalized = dict(self.track_offsets_ms)
-        if any(not isinstance(key, str) or type(value) is not int for key, value in normalized.items()):
-            raise TypeError("track offsets must map strings to integers")
+        if any(not isinstance(key, TrackOffsetKey) or type(value) is not int for key, value in normalized.items()):
+            raise TypeError("track offsets must map structured keys to integers")
         object.__setattr__(self, "track_offsets_ms", MappingProxyType(normalized))
         try:
             object.__setattr__(self, "lyrics_script", DisplayScript(self.lyrics_script))
@@ -207,6 +208,7 @@ class DisplayFrame:
     line_progress: LineProgress | None = None
     word_progress: WordProgress | None = None
     diagnostic: DisplayDiagnostic | None = None
+    track_offset_key: TrackOffsetKey | None = None
 
 EMPTY_FRAME = DisplayFrame(state=DisplayState.NO_TRACK)
 

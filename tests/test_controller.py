@@ -13,9 +13,11 @@ from kotonoha.app.cache_management import CacheManagementController
 from kotonoha.app.components import ApplicationComponents
 from kotonoha.app.config_service import ConfigService
 from kotonoha.app.intents import ChangeTrackOffset, SearchCache
+from kotonoha.app.track_offset_service import TrackOffsetService
 from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.config import Config
 from kotonoha.display.models import DisplayOptions, LyricsDisplayStatus
+from kotonoha.display.offsets import TrackOffsetEntry, TrackOffsetKey, TrackOffsetSnapshot
 from kotonoha.lyrics.artifact import LyricsArtifact
 from kotonoha.lyrics.cache import (
     CacheDeleteResult,
@@ -387,6 +389,14 @@ class _FakeConfigWriter:
         self.saved.append(config)
 
 
+class _FakeTrackOffsetWriter:
+    def __init__(self) -> None:
+        self.saved: list[TrackOffsetEntry] = []
+
+    def upsert(self, entry: TrackOffsetEntry) -> None:
+        self.saved.append(entry)
+
+
 class _FakeRestartLauncher:
     def __init__(self, started: bool = True) -> None:
         self.started = started
@@ -495,6 +505,12 @@ class _ControllerGraph:
             writer=self.writer,
             worker=BlockingCallRunner("test-config-service"),
         )
+        self.offset_writer = _FakeTrackOffsetWriter()
+        self.track_offsets = TrackOffsetService(
+            TrackOffsetSnapshot(),
+            writer=self.offset_writer,
+            worker=BlockingCallRunner("test-track-offset-service"),
+        )
         self.overlay = _FakeOverlay(self.events)
         self.display = display if display is not None else _FakeDisplay(self.events)
         self.receiver = receiver if receiver is not None else _FakeReceiver(events=self.events)
@@ -513,6 +529,7 @@ class _ControllerGraph:
             qapp,
             ApplicationComponents(
                 config_service=self.config_service,
+                track_offsets=self.track_offsets,
                 restart_launcher=restart_launcher if restart_launcher is not None else _FakeRestartLauncher(),
                 display=self.display,
                 overlay=self.overlay,
@@ -798,11 +815,15 @@ async def test_cache_management_cancels_closed_dialog_search_before_reopening():
 
 async def test_controller_persists_track_offset(qapp):
     graph = _ControllerGraph(qapp)
-    graph.overlay.track_offset_changed.emit(ChangeTrackOffset("track", 50))
+    key = TrackOffsetKey("track", "artist", "album", 180, "test", "song", "a" * 64)
+    graph.overlay.track_offset_changed.emit(ChangeTrackOffset(key, 50))
     await graph.close()
 
-    assert graph.config_service.config.track_offsets == {"track": 50}
-    assert graph.writer.saved[-1].track_offsets == {"track": 50}
+    assert graph.track_offsets.offset_for(key) == 50
+    assert graph.offset_writer.saved[-1] == TrackOffsetEntry(key, 50)
+    assert graph.display.options is not None
+    assert graph.display.options.track_offsets_ms[key] == 50
+    assert graph.writer.saved == []
     qapp.processEvents()
 
 
@@ -847,10 +868,18 @@ def test_composition_closes_workers_when_graph_construction_fails(qapp, monkeypa
         Config(),
         config_writer=_FakeConfigWriter(),
         config_worker=_RecordingWorker("configuration"),
+        track_offsets=TrackOffsetSnapshot(),
+        track_offset_writer=_FakeTrackOffsetWriter(),
+        track_offset_worker=_RecordingWorker("track offsets"),
         restart_launcher=_FakeRestartLauncher(),
     )
 
     with pytest.raises(error_type, match="overlay construction failed"):
         composition.build()
 
-    assert sorted(closed) == ["configuration", "kotonoha-local-lyrics", "kotonoha-lyrics-cache"]
+    assert sorted(closed) == [
+        "configuration",
+        "kotonoha-local-lyrics",
+        "kotonoha-lyrics-cache",
+        "track offsets",
+    ]
