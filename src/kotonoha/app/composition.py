@@ -37,13 +37,14 @@ from ..tray import KotonohaTray, load_icon
 from ..ui.overlay import LyricsOverlay
 from ..ui.overlay.publisher import QtDisplayPublisher
 from ..ui.overlay.state import LyricsState
+from ..ui.settings.cache_dialog import LyricsCacheDialog
 from ..ui.settings.dialog import SettingsDialog
 from .application_controller import AppController
 from .components import ApplicationComponents, RestartLauncher
 from .config_service import ConfigService, ConfigWriter
 from .display_coordinator import DisplayCoordinator
 from .services import RuntimeConfigApplier, display_options
-from .settings_port import SettingsDialogFactory
+from .settings_port import CacheManagementDialogFactory, SettingsDialogFactory
 from .source_gate import SourceOwnershipCoordinator
 
 logger = logging.getLogger(__name__)
@@ -89,6 +90,17 @@ class _QtSettingsDialogFactory:
             platform_factory=self._regular_window_factory,
             translator=self._translator,
         )
+
+
+class _QtCacheManagementDialogFactory:
+    """Adapt the Qt cache manager to the application-facing factory contract."""
+
+    def __init__(self, translator: Translator) -> None:
+        self._translator = translator
+
+    def create(self, config: Config) -> LyricsCacheDialog:
+        """Create one standalone cache manager using the shared UI translator."""
+        return LyricsCacheDialog(config, translator=self._translator)
 
 
 class ApplicationComposition:
@@ -227,9 +239,10 @@ class ApplicationComposition:
             live_source=LiveLyricsSource(ownership),
             local_source=local_source,
         )
+        cache = LyricsCache(worker=cache_worker)
         resolver = LyricsResolver(
             catalog=catalog,
-            cache=LyricsCache(worker=cache_worker),
+            cache=cache,
             cache_enabled=config.cache_enabled,
         )
         receiver = AdapterReceiver(display, port=config.port, ownership=ownership)
@@ -266,6 +279,7 @@ class ApplicationComposition:
             platform_factory.for_regular_window,
             translator,
         )
+        cache_management_factory: CacheManagementDialogFactory = _QtCacheManagementDialogFactory(translator)
         runtime_config = RuntimeConfigApplier(
             ui_runtime,
             display,
@@ -281,6 +295,8 @@ class ApplicationComposition:
             display=display,
             overlay=overlay,
             settings_factory=settings_factory,
+            cache_management_factory=cache_management_factory,
+            lyrics_cache=cache,
             receiver=receiver,
             cider=cider,
             mpris=mpris,

@@ -76,3 +76,9 @@ def test_load_icon_renders_generated_styles(qapp):
     assert not leaf.leaf_qicon(leaf.ACCENT, "#FF00FF").isNull()
     assert not load_icon(leaf.MONO, accent="#00FFAA").isNull()
     assert not load_icon(leaf.TILE, accent="#123456").isNull()
+
+
+def test_generated_icon_provides_title_bar_sizes(qapp):
+    icon = leaf.leaf_qicon(leaf.ACCENT, "#FF4FA3")
+    sizes = {(size.width(), size.height()) for size in icon.availableSizes()}
+    assert {(16, 16), (24, 24), (32, 32), (48, 48), (64, 64), (128, 128), (256, 256)} <= sizes

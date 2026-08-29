@@ -32,8 +32,10 @@ _LEAF_SHADES = ("#60a65a", "#a4d382", "#def1d3")  # dark, mid, light
 _WHITE = "#fcfcfc"
 # Tight bounds of the leaf inside logo.svg's 1254x1254 viewBox (the leaf sits high
 # and doesn't fill the box, so rendering the whole viewBox looks tilted upward).
+# Keep this around the complete SVG silhouette: an undersized bound scales and
+# centres from an incomplete shape, which is especially visible at 16px.
 _VIEWBOX = 1254.0
-_LEAF_BBOX = (242.0, 134.0, 770.0, 711.0)  # x, y, w, h
+_LEAF_BBOX = (242.0, 130.0, 777.0, 724.0)  # x, y, w, h
 
 ACCENT = "@leaf-accent"   # leaf recoloured to the accent
 MONO = "@leaf-mono"       # black/white leaf, adapts to the system theme
@@ -63,6 +65,11 @@ _MONO_RAMPS = {
     WHITE: ("#C0C5CD", "#F4F5F6", "#A7ADB7", "#979DA5"),
     BLACK: ("#4A4B51", "#232327", "#5C5D64", "#8A9098"),
 }
+
+# Window-manager and taskbar surfaces request different icon sizes. Supplying
+# matching raster sizes avoids repeatedly downsampling one 128px image, which
+# makes the small title-bar icon visibly soft on HiDPI desktops.
+_ICON_SIZES = (16, 24, 32, 48, 64, 128, 256)
 
 
 def is_generated(key: str) -> bool:
@@ -192,4 +199,8 @@ def render_leaf(style: str, accent: str = "#FF4FA3", *, dark_panel: bool = True,
 
 
 def leaf_qicon(style: str, accent: str = "#FF4FA3", *, dark_panel: bool = True) -> QIcon:
-    return QIcon(render_leaf(style, accent, dark_panel=dark_panel, size=128))
+    """Return a multi-resolution icon for tray, taskbar, and title-bar surfaces."""
+    icon = QIcon()
+    for size in _ICON_SIZES:
+        icon.addPixmap(render_leaf(style, accent, dark_panel=dark_panel, size=size))
+    return icon

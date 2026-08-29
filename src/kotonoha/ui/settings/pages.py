@@ -45,6 +45,7 @@ class SettingsPageBuilder:
         widgets: SettingsWidgets,
         *,
         on_clear_cache: Callable[[], None],
+        on_manage_cache: Callable[[], None],
         translator: Translator,
     ) -> None:
         self._dialog = dialog
@@ -54,6 +55,7 @@ class SettingsPageBuilder:
             dialog,
             widgets,
             on_clear_cache=on_clear_cache,
+            on_manage_cache=on_manage_cache,
             translator=translator,
         )
         self._icons = SettingsIconPageBuilder(dialog, widgets, translator=translator)

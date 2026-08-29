@@ -10,6 +10,15 @@ from dataclasses import dataclass, replace
 from ..app.source_contracts import SourceClockPort
 from ..async_task import create_owned_task, wait_for_owned
 from ..config import DEFAULT_LYRICS_SOURCES
+from ..lyrics.artifact import LyricsArtifact
+from ..lyrics.cache import (
+    CacheDeleteResult,
+    CacheWriteResult,
+    LyricsCacheEntry,
+    LyricsCacheKey,
+    LyricsCacheMode,
+    LyricsCacheQuery,
+)
 from ..lyrics.hint import from_player
 from ..lyrics.http import LyricsSession
 from ..lyrics.workflow import (
@@ -150,6 +159,41 @@ class MprisResolutionSession:
     async def clear_cache(self) -> None:
         """Clear persistent resolver cache data."""
         await self._resolver.clear_cache()
+
+    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        """Search persisted cache metadata for the management workflow."""
+        return await self._resolver.search_cache(query)
+
+    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
+        """Read one persisted cache entry by provider-scoped identity."""
+        return await self._resolver.get_cache(key)
+
+    async def upsert_cache(
+        self,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Persist a validated result chosen by a future manual-selection workflow."""
+        return await self._resolver.upsert_cache(artifact, mode=mode)
+
+    async def update_cache(
+        self,
+        key: LyricsCacheKey,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Update an existing cache record and record its selection mode."""
+        return await self._resolver.update_cache(key, artifact, mode=mode)
+
+    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
+        """Delete one persisted cache record."""
+        return await self._resolver.delete_cache(key)
+
+    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
+        """Delete several persisted cache records in one cache-owned operation."""
+        return await self._resolver.delete_cache_many(keys)
 
     async def resolve(
         self,

@@ -7,7 +7,8 @@ active language for one composed UI graph; it is deliberately not process-global
 
 from __future__ import annotations
 
-from .i18n import normalize_to_apple_tag, system_translation_language
+from ..i18n import normalize_to_apple_tag, system_translation_language
+from .cache import CACHE_STRINGS
 
 # (value, display label) for the settings picker.
 UI_LANGUAGES: tuple[tuple[str, str], ...] = (
@@ -360,9 +361,12 @@ STRINGS: dict[str, dict[str, str]] = {
                     "zh-Hant": "立即重啟", "ja": "今すぐ再起動"},
     "btn.ok": {"en": "OK", "zh-Hans": "确定", "zh-Hant": "確定", "ja": "OK"},
     "btn.cancel": {"en": "Cancel", "zh-Hans": "取消", "zh-Hant": "取消", "ja": "キャンセル"},
+    "btn.close": {"en": "Close", "zh-Hans": "关闭", "zh-Hant": "關閉", "ja": "閉じる"},
     "btn.apply": {"en": "Apply", "zh-Hans": "应用", "zh-Hant": "套用", "ja": "適用"},
     "btn.reset_tab": {"en": "Reset tab", "zh-Hans": "重置本页", "zh-Hant": "重設本頁", "ja": "タブを既定に"},
 }
+
+STRINGS.update(CACHE_STRINGS)
 
 
 def resolve_ui_language(value: str | None) -> str:

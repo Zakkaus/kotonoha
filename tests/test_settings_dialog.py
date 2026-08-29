@@ -7,7 +7,7 @@ import pytest
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import QApplication, QLineEdit, QListWidgetItem, QPushButton
 
-from kotonoha.app.intents import ApplyConfig, ClearCache, RequestRestart
+from kotonoha.app.intents import ApplyConfig, ClearCache, OpenCacheManagement, RequestRestart
 from kotonoha.config import (
     SETTINGS_PAGE_FIELDS,
     Config,
@@ -40,6 +40,17 @@ def test_cache_controls_roundtrip_and_clear_signal(qapp):
     assert dialog.current_config().cache_enabled is True
     dialog.form_widgets.clear_cache.click()
     assert intents == [ClearCache()]
+    dialog.close()
+
+
+def test_cache_management_button_requests_the_separate_window(qapp):
+    dialog = SettingsDialog(Config())
+    intents = []
+    dialog.intent_requested.connect(intents.append)
+
+    dialog.form_widgets.manage_cache.click()
+
+    assert intents == [OpenCacheManagement()]
     dialog.close()
 
 
@@ -185,6 +196,45 @@ def test_checked_indicator_actually_renders_a_checkmark(qapp):
     qss = _skin(Config().accent_start)
     # A checked box draws a white tick the unchecked one lacks.
     assert _indicator_white_pixels(qss, checked=True) > _indicator_white_pixels(qss, checked=False)
+
+
+def test_cache_dialog_aligns_headers_with_rows_and_localizes_close_button(qapp):
+    from PyQt6.QtCore import Qt
+    from PyQt6.QtWidgets import QHeaderView, QPushButton, QTableView
+
+    from kotonoha.lyrics.cache import LyricsCacheEntry, LyricsCacheKey, LyricsCacheMode
+    from kotonoha.strings import Translator
+    from kotonoha.ui.settings.cache_dialog import LyricsCacheDialog, LyricsCacheTableModel
+
+    dialog = LyricsCacheDialog(Config(ui_language=UiLanguage.ZH_HANS))
+    table = dialog.findChild(QTableView)
+    assert table is not None
+    header = table.horizontalHeader()
+    if header is None:
+        raise AssertionError("cache table header is unavailable")
+    assert header.defaultAlignment() == Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter
+    assert header.sectionResizeMode(4) == QHeaderView.ResizeMode.ResizeToContents
+    assert any(button.text() == "关闭" for button in dialog.findChildren(QPushButton))
+
+    model = LyricsCacheTableModel(Translator("zh-Hans"))
+    model.set_entries(
+        (
+            LyricsCacheEntry(
+                key=LyricsCacheKey("netease", "manual"),
+                title="Song",
+                artist="Artist",
+                album="Album",
+                duration_s=180.0,
+                fetched_at=1.0,
+                last_accessed=2.0,
+                mode=LyricsCacheMode.MANUAL,
+            ),
+        )
+    )
+    assert model.columnCount() == 7
+    assert model.headerData(6, Qt.Orientation.Horizontal) == "模式"
+    assert model.data(model.index(0, 6)) == "手动"
+    dialog.close()
 
 
 def test_apply_reskins_dialog_with_new_accent(qapp):

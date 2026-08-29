@@ -7,6 +7,7 @@ from typing import TypeAlias
 
 from ..config import Config
 from ..config.schema import SETTINGS_CONFIG_FIELDS
+from ..lyrics.cache import LyricsCacheKey, LyricsCacheQuery
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,6 +26,25 @@ class ApplyConfig:
 @dataclass(frozen=True, slots=True)
 class ClearCache:
     """Remove persisted lyrics cache entries."""
+
+
+@dataclass(frozen=True, slots=True)
+class OpenCacheManagement:
+    """Open the separate local lyrics cache management window."""
+
+
+@dataclass(frozen=True, slots=True)
+class SearchCache:
+    """Search cache metadata using the query entered by the user."""
+
+    query: LyricsCacheQuery
+
+
+@dataclass(frozen=True, slots=True)
+class DeleteCacheEntries:
+    """Delete the exact cache rows selected in the management window."""
+
+    keys: tuple[LyricsCacheKey, ...]
 
 
 @dataclass(frozen=True, slots=True)
@@ -51,13 +71,25 @@ class ChangePosition:
     screen_height: int
 
 
-SettingsIntent: TypeAlias = ApplyConfig | ClearCache | RequestRestart | ChangeTrackOffset | ChangePosition
+SettingsIntent: TypeAlias = (
+    ApplyConfig
+    | ClearCache
+    | OpenCacheManagement
+    | SearchCache
+    | DeleteCacheEntries
+    | RequestRestart
+    | ChangeTrackOffset
+    | ChangePosition
+)
 
 __all__ = [
     "ApplyConfig",
     "ChangePosition",
     "ChangeTrackOffset",
     "ClearCache",
+    "DeleteCacheEntries",
+    "OpenCacheManagement",
     "RequestRestart",
+    "SearchCache",
     "SettingsIntent",
 ]

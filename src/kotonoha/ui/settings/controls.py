@@ -106,6 +106,7 @@ class SettingsWidgets:
         self.prefer_best = QCheckBox()
         self.fuzzy_match = QCheckBox()
         self.cache_enabled = QCheckBox()
+        self.manage_cache = QPushButton()
         self.cider_token = QLineEdit()
         self.clear_cache = QPushButton()
 

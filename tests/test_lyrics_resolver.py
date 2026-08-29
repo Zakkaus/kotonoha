@@ -11,7 +11,17 @@ from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.async_worker import BlockingCallRunner
 from kotonoha.lyrics import netease, qqmusic
 from kotonoha.lyrics.artifact import LyricsArtifact
-from kotonoha.lyrics.cache import LyricsCacheError
+from kotonoha.lyrics.cache import (
+    CacheDeleteResult,
+    CacheDeleteStatus,
+    CacheWriteResult,
+    CacheWriteStatus,
+    LyricsCacheEntry,
+    LyricsCacheError,
+    LyricsCacheKey,
+    LyricsCacheMode,
+    LyricsCacheQuery,
+)
 from kotonoha.lyrics.catalog import LyricsSourceCatalog
 from kotonoha.lyrics.hint import LyricsHint
 from kotonoha.lyrics.http import LyricsSession
@@ -72,8 +82,48 @@ class FakeCache:
             raise self.lookup_error
         return self.hits.get(provider)
 
-    async def store(self, value):
+    async def store(self, value: LyricsArtifact) -> CacheWriteResult:
         self.calls.append(f"store:{value.provider}")
+        return CacheWriteResult(
+            LyricsCacheKey(value.provider, value.provider_song_id),
+            CacheWriteStatus.CREATED,
+        )
+
+    async def search(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        del query
+        return ()
+
+    async def get(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
+        del key
+        return None
+
+    async def upsert(
+        self,
+        value: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        del mode
+        return CacheWriteResult(
+            LyricsCacheKey(value.provider, value.provider_song_id),
+            CacheWriteStatus.CREATED,
+        )
+
+    async def update(
+        self,
+        key: LyricsCacheKey,
+        value: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        del value, mode
+        return CacheWriteResult(key, CacheWriteStatus.UPDATED)
+
+    async def delete(self, key: LyricsCacheKey) -> CacheDeleteResult:
+        return CacheDeleteResult(key, CacheDeleteStatus.DELETED)
+
+    async def delete_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
+        return tuple(CacheDeleteResult(key, CacheDeleteStatus.DELETED) for key in keys)
 
     async def clear(self):
         self.calls.append("clear")

@@ -8,9 +8,19 @@ from typing import Protocol
 
 from ..config import Config
 from ..display.models import DisplayOptions
+from ..lyrics.artifact import LyricsArtifact
+from ..lyrics.cache import (
+    CacheDeleteResult,
+    CacheWriteResult,
+    LyricsCacheEntry,
+    LyricsCacheKey,
+    LyricsCacheMode,
+    LyricsCacheQuery,
+)
 from ..platform.overlay_contracts import SurfaceResult
 from ..players import PlayerInfo
-from .settings_port import SettingsDialogFactory
+from .cache_management import LyricsCacheManagementPort
+from .settings_port import CacheManagementDialogFactory, SettingsDialogFactory
 
 
 class ApplicationQuitPort(Protocol):
@@ -180,6 +190,41 @@ class MprisPort(Protocol):
         """Clear cached lyrics through the MPRIS workflow owner."""
         ...
 
+    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        """Search persisted cache metadata through the MPRIS workflow owner."""
+        ...
+
+    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
+        """Read one persisted cache entry through the MPRIS workflow owner."""
+        ...
+
+    async def upsert_cache(
+        self,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Persist a validated result selected by an explicit lyric workflow."""
+        ...
+
+    async def update_cache(
+        self,
+        key: LyricsCacheKey,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Update one existing cache entry and record its selection mode."""
+        ...
+
+    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
+        """Delete one persisted cache entry and report the actual outcome."""
+        ...
+
+    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
+        """Delete several persisted cache entries."""
+        ...
+
 
 class TrayPort(Protocol):
     """Tray operations owned by the application controller."""
@@ -214,6 +259,8 @@ class ApplicationComponents:
     display: DisplayLifecyclePort
     overlay: OverlayPort
     settings_factory: SettingsDialogFactory
+    cache_management_factory: CacheManagementDialogFactory
+    lyrics_cache: LyricsCacheManagementPort
     receiver: ReceiverPort
     cider: CiderPort
     mpris: MprisPort
@@ -227,6 +274,7 @@ __all__ = [
     "CiderPort",
     "ConfigServicePort",
     "DisplayLifecyclePort",
+    "LyricsCacheManagementPort",
     "MprisPort",
     "OverlayPort",
     "ReceiverPort",

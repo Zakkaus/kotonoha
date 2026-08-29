@@ -167,7 +167,8 @@ src/kotonoha/lyrics/artist_grammar.py  艺术家 token、主表演者和变体
 src/kotonoha/lyrics/title_queries.py   provider 查询变体
 src/kotonoha/lyrics/player_title_grammar.py 播放器标题装饰清理
 src/kotonoha/lyrics/artifact.py        provider-neutral artifact
-src/kotonoha/lyrics/cache.py           provider-scoped SQLite 缓存
+src/kotonoha/lyrics/cache/models.py    cache key、entry、AUTO/MANUAL mode 和结果类型
+src/kotonoha/lyrics/cache/__init__.py  provider-scoped SQLite 缓存与旧库迁移
 src/kotonoha/lyrics/sources.py         local/exact/network source contracts
 src/kotonoha/lyrics/resolver.py        source policy、缓存与 in-flight 去重
 src/kotonoha/lyrics/netease.py         网易云搜索与 YRC/LRC 解析
@@ -178,3 +179,6 @@ src/kotonoha/ui/overlay/publisher.py    DisplayFrame 到 Qt state 的唯一 publ
 ```
 
 所有网络与磁盘 I/O 保持异步边界；SQLite 和文件操作通过显式注入的工作线程执行。Qt widget 与 layer-shell 操作仍只在 UI 线程发生。
+
+缓存记录的 `mode` 为 `auto` 或 `manual`：自动解析通过 `store()` 写入 `auto`，显式的 provider
+选择通过 `upsert()`/`update()` 默认写入 `manual`。没有该字段的旧 SQLite 缓存会迁移并按 `auto` 处理。

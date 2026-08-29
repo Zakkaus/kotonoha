@@ -110,7 +110,9 @@ src/kotonoha/
     live_source.py             # live external source adapter
     resolver.py                # source policy、缓存与 in-flight 去重
     workflow.py                # generation-owned SourcePlan 执行和结果发布
-    cache.py                   # bounded SQLite/file cache boundary
+    cache/                      # bounded SQLite/file cache boundary
+      models.py                 # typed cache keys, entries, modes, and results
+      __init__.py               # SQLite persistence and cache lifecycle
     protocol.py                # generic adapter v1 boundary decoder
     payload.py                 # bounded network payload readers
     translation.py             # timestamp/positional translation transforms
@@ -145,7 +147,7 @@ src/kotonoha/
     settings/                  # dialog、form state 和 settings pages
   clock.py                    # smooth local media clock
   icons.py / leaf_icon.py     # Qt resource/rendering helpers
-  i18n.py / strings.py         # presentation text and language binding
+  i18n.py / strings/           # presentation text and language binding
   players.py                  # player descriptor and browser title facts
   tray.py                     # tray menu、icon selection 和 commands
 

@@ -6,6 +6,7 @@ from collections.abc import Callable
 from typing import Protocol
 
 from ..config import Config
+from ..lyrics.cache import CacheDeleteResult, LyricsCacheEntry, LyricsCacheQuery
 from ..players import PlayerInfo
 
 
@@ -55,4 +56,68 @@ class SettingsDialogFactory(Protocol):
         ...
 
 
-__all__ = ["SettingsDialogFactory", "SettingsDialogPort", "SignalPort"]
+class CacheManagementDialogPort(Protocol):
+    """Presentation boundary for the independently opened cache manager."""
+
+    @property
+    def intent_requested(self) -> SignalPort:
+        """Return typed cache-management intents emitted by the dialog."""
+        ...
+
+    @property
+    def finished(self) -> SignalPort:
+        """Return the signal emitted when the cache manager closes."""
+        ...
+
+    def show(self) -> None:
+        """Show the cache manager window."""
+        ...
+
+    def close(self) -> object:
+        """Close the cache manager window."""
+        ...
+
+    def raise_(self) -> object:
+        """Raise an already-open cache manager window."""
+        ...
+
+    def activateWindow(self) -> object:
+        """Request keyboard focus for the cache manager window."""
+        ...
+
+    def set_entries(self, query: LyricsCacheQuery, entries: tuple[LyricsCacheEntry, ...]) -> None:
+        """Replace visible rows with the result for ``query``."""
+        ...
+
+    def set_busy(self, busy: bool) -> None:
+        """Enable or disable controls while a cache operation is running."""
+        ...
+
+    def show_error(self, message: str) -> None:
+        """Show an operation failure in the manager's status area."""
+        ...
+
+    def show_delete_result(self, results: tuple[CacheDeleteResult, ...]) -> None:
+        """Show which requested cache entries were actually deleted."""
+        ...
+
+    def show_clear_result(self) -> None:
+        """Show that the complete cache was cleared successfully."""
+        ...
+
+
+class CacheManagementDialogFactory(Protocol):
+    """Create one independently owned cache-management window."""
+
+    def create(self, config: Config) -> CacheManagementDialogPort:
+        """Create a manager styled for the current application configuration."""
+        ...
+
+
+__all__ = [
+    "CacheManagementDialogFactory",
+    "CacheManagementDialogPort",
+    "SettingsDialogFactory",
+    "SettingsDialogPort",
+    "SignalPort",
+]

@@ -49,7 +49,7 @@ from PyQt6.QtWidgets import (
 )
 
 from ... import leaf_icon
-from ...app.intents import ApplyConfig, ClearCache, RequestRestart
+from ...app.intents import ApplyConfig, ClearCache, OpenCacheManagement, RequestRestart
 from ...config import Config
 from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
 from ...players import PlayerInfo
@@ -158,6 +158,7 @@ class SettingsDialog(QDialog):
             self,
             self._widgets,
             on_clear_cache=self._request_clear_cache,
+            on_manage_cache=self._request_manage_cache,
             translator=self._translator,
         )
         self._page_builders = (
@@ -457,6 +458,10 @@ class SettingsDialog(QDialog):
     def _request_clear_cache(self) -> None:
         """Submit the typed cache action owned by the application controller."""
         self.intent_requested.emit(ClearCache())
+
+    def _request_manage_cache(self) -> None:
+        """Submit the request to open the independent cache-management window."""
+        self.intent_requested.emit(OpenCacheManagement())
 
     def current_config(self) -> Config:
         w = self._widgets

@@ -8,6 +8,17 @@ from kotonoha.app.source_gate import SourceOwnershipCoordinator
 from kotonoha.display.models import DisplayState
 from kotonoha.display.presentation import DisplayEngine
 from kotonoha.display.timeline import TimelineEngine
+from kotonoha.lyrics.artifact import LyricsArtifact
+from kotonoha.lyrics.cache import (
+    CacheDeleteResult,
+    CacheDeleteStatus,
+    CacheWriteResult,
+    CacheWriteStatus,
+    LyricsCacheEntry,
+    LyricsCacheKey,
+    LyricsCacheMode,
+    LyricsCacheQuery,
+)
 from kotonoha.lyrics.models import LyricLine, LyricsDocument, TimingKind
 from kotonoha.lyrics.sources import LyricsSourceResult
 from kotonoha.lyrics.workflow import ResolverLookup, ResolverPort
@@ -151,6 +162,42 @@ class RecordingResolver:
 
     async def clear_cache(self) -> None:
         return None
+
+    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        del query
+        return ()
+
+    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
+        del key
+        return None
+
+    async def upsert_cache(
+        self,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        del mode
+        return CacheWriteResult(
+            LyricsCacheKey(artifact.provider, artifact.provider_song_id),
+            CacheWriteStatus.CREATED,
+        )
+
+    async def update_cache(
+        self,
+        key: LyricsCacheKey,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        del artifact, mode
+        return CacheWriteResult(key, CacheWriteStatus.UPDATED)
+
+    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
+        return CacheDeleteResult(key, CacheDeleteStatus.DELETED)
+
+    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
+        return tuple(CacheDeleteResult(key, CacheDeleteStatus.DELETED) for key in keys)
 
     async def cancel_inflight(self) -> None:
         return None

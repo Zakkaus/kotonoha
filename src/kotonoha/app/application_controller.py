@@ -16,6 +16,7 @@ from ..async_task import create_owned_task, wait_for_owned
 from ..config import Config
 from ..lyrics.cache import LyricsCacheError
 from ..providers.mpris_session import MprisSessionError
+from .cache_management import CacheManagementController
 from .components import (
     ApplicationComponents,
     ApplicationQuitPort,
@@ -34,7 +35,10 @@ from .intents import (
     ChangePosition,
     ChangeTrackOffset,
     ClearCache,
+    DeleteCacheEntries,
+    OpenCacheManagement,
     RequestRestart,
+    SearchCache,
     SettingsIntent,
 )
 from .lifecycle import TaskSupervisor
@@ -60,9 +64,11 @@ class AppController:
         self._tray: TrayPort = components.tray
         self._runtime_config: RuntimeConfigPort = components.runtime_config
         self._settings_factory: SettingsDialogFactory = components.settings_factory
+        self._cache_management: CacheManagementController = CacheManagementController(
+            components.lyrics_cache,
+            components.cache_management_factory,
+        )
         self._settings_tasks: TaskSupervisor = TaskSupervisor("settings")
-        self._cache_tasks: TaskSupervisor = TaskSupervisor("lyrics-cache")
-        self._clear_cache_task: asyncio.Task[None] | None = None
         self._config: Config = self._config_service.config
         self._settings_dialog: SettingsDialogPort | None = None
         self._settings_open_task: asyncio.Task[None] | None = None
@@ -133,6 +139,7 @@ class AppController:
                 logger.warning("Could not close settings: %s", exc)
             finally:
                 self._settings_dialog = None
+        cancellation_requested |= await self._stop_component("lyrics cache manager", self._cache_management.stop)
         # Producers may publish their final empty frame during shutdown. Keep
         # the Qt surface alive until every publisher and the display clock have
         # stopped, then release the surface-owned platform resources.
@@ -147,10 +154,8 @@ class AppController:
         else:
             if not surface_result.succeeded:
                 logger.warning("Overlay surface shutdown was incomplete: %s", surface_result.reason)
-        cancellation_requested |= await self._stop_component("lyrics cache tasks", self._finish_clear_cache)
         cancellation_requested |= await self._stop_component("configuration service", self._config_service.close)
         self._settings_tasks.close()
-        self._cache_tasks.close()
         self._started = False
         self._stopped = True
         if cancellation_requested:
@@ -183,15 +188,6 @@ class AppController:
             await task
         await self._settings_tasks.wait()
 
-    async def _finish_clear_cache(self) -> None:
-        task = self._clear_cache_task
-        if task is None:
-            await self._cache_tasks.wait()
-            return
-        await self._cache_tasks.wait()
-        if self._clear_cache_task is task:
-            self._clear_cache_task = None
-
     # --- passthrough / lock ---
 
     def open_settings(self) -> None:
@@ -218,7 +214,16 @@ class AppController:
             self._apply_config(intent.config, intent.changed_fields)
             return
         if isinstance(intent, ClearCache):
-            self._clear_lyrics_cache()
+            self._cache_management.clear()
+            return
+        if isinstance(intent, OpenCacheManagement):
+            self._cache_management.open(self._config)
+            return
+        if isinstance(intent, SearchCache):
+            self._cache_management.search(intent.query)
+            return
+        if isinstance(intent, DeleteCacheEntries):
+            self._cache_management.delete(intent.keys)
             return
         if isinstance(intent, RequestRestart):
             self._restart()
@@ -302,27 +307,6 @@ class AppController:
         previous = self._config
         self._config = self._config_service.apply_settings(config, changed_fields)
         self._runtime_config.apply(previous, self._config)
-
-    def _clear_lyrics_cache(self) -> None:
-        if self._clear_cache_task is not None and not self._clear_cache_task.done():
-            return
-        task = self._cache_tasks.create(
-            self._mpris.clear_cache(),
-            name="kotonoha-clear-lyrics-cache",
-        )
-        self._clear_cache_task = task
-        task.add_done_callback(self._clear_lyrics_cache_finished)
-
-    def _clear_lyrics_cache_finished(self, task: asyncio.Task[None]) -> None:
-        self._cache_tasks.discard(task)
-        if self._clear_cache_task is task:
-            self._clear_cache_task = None
-        try:
-            task.result()
-        except asyncio.CancelledError:
-            return
-        except LyricsCacheError as exc:
-            logger.warning("Could not clear lyrics cache: %s", exc)
 
     # --- accessors for tests ---
 

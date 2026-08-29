@@ -35,11 +35,13 @@ class SettingsSourcesPageBuilder:
         widgets: SettingsWidgets,
         *,
         on_clear_cache: Callable[[], None],
+        on_manage_cache: Callable[[], None],
         translator: Translator,
     ) -> None:
         self._dialog = dialog
         self._widgets = widgets
         self._on_clear_cache = on_clear_cache
+        self._on_manage_cache = on_manage_cache
         self._translator = translator
         self._connect_signals()
 
@@ -47,6 +49,7 @@ class SettingsSourcesPageBuilder:
         """Connect source controls once; rebuilding a page must not duplicate commands."""
         self._widgets.sources_list.itemChanged.connect(self.keep_one_source_checked)
         self._widgets.display_sources_list.itemChanged.connect(self.keep_one_display_source_checked)
+        self._widgets.manage_cache.clicked.connect(self.emit_manage_cache)
         self._widgets.clear_cache.clicked.connect(self.emit_clear_cache)
 
     @property
@@ -133,6 +136,8 @@ class SettingsSourcesPageBuilder:
         w.cache_enabled.setText(t("set.cache_enabled"))
         w.cache_enabled.setChecked(self._config.cache_enabled)
         layout.addWidget(w.cache_enabled)
+        w.manage_cache.setText(t("btn.manage_cache"))
+        layout.addWidget(w.manage_cache)
 
         w.cider_token.setEchoMode(QLineEdit.EchoMode.Password)
         w.cider_token.setClearButtonEnabled(True)
@@ -148,6 +153,11 @@ class SettingsSourcesPageBuilder:
         """Submit the source page's clear-cache command to its owner."""
         del _checked
         self._on_clear_cache()
+
+    def emit_manage_cache(self, _checked: bool = False) -> None:
+        """Open the independent cache-management window through the owner."""
+        del _checked
+        self._on_manage_cache()
 
     def keep_one_source_checked(self, _item: QListWidgetItem | None = None) -> None:
         """Ensure the staged configuration always has one enabled source."""

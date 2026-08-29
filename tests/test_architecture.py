@@ -131,6 +131,7 @@ def test_settings_presentation_lives_in_the_settings_package():
     settings_root = SOURCE_ROOT / "ui" / "settings"
     for name in (
         "dialog.py",
+        "cache_dialog.py",
         "icons.py",
         "pages.py",
         "sources.py",
@@ -298,6 +299,20 @@ def test_application_workflow_is_toolkit_free_outside_the_composition_root():
     assert not violations, "application workflow imports toolkit/process adapters: " + ", ".join(violations)
 
 
+def test_cache_management_uses_a_narrow_cache_port():
+    """Cache management must not acquire cache operations through the MPRIS bundle."""
+    path = SOURCE_ROOT / "app" / "cache_management.py"
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    names = {
+        node.id
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Name)
+    }
+
+    assert "MprisPort" not in names
+    assert "kotonoha.app.components" not in _absolute_imports(path)
+
+
 def test_lyrics_feature_does_not_depend_on_application_or_presentation_layers():
     """Lyrics contracts and workflows remain usable without application wiring or Qt."""
     forbidden = ("kotonoha.app", "PyQt6", "aiohttp.web", "kotonoha.ui")
@@ -399,7 +414,7 @@ def test_component_boundary_dependencies_are_required():
         "providers/mpris_playback.py": ("session", "playback_adapter"),
         "app/display_coordinator.py": ("presenter", "timeline"),
         "lyrics/catalog.py": ("live_source", "local_source"),
-        "lyrics/cache.py": ("worker",),
+        "lyrics/cache/__init__.py": ("worker",),
         "lyrics/sources.py": ("worker",),
         "lyrics/resolver.py": ("cache",),
     }
@@ -506,6 +521,7 @@ def test_large_ui_modules_are_explicitly_scoped():
     allowed: dict[str, str] = {
         "ui/overlay/window.py": "cohesive Qt window lifecycle and signal boundary",
         "ui/settings/dialog.py": "cohesive Qt dialog composition and signal boundary",
+        "lyrics/resolver.py": "cohesive source arbitration and cache policy boundary",
     }
     offenders: list[str] = []
     for path in SOURCE_ROOT.rglob("*.py"):

@@ -29,7 +29,7 @@ VALID_DISPLAY_SOURCES = ("mpris", "cider", "adapter")
 DEFAULT_DISPLAY_SOURCES = ["mpris", "cider", "adapter"]
 
 # Accent presets: (key, start, end, sweep). The key is translated in the UI
-# (see strings.py "accent.*"); the first entry is the default pink.
+# (see strings/__init__.py "accent.*"); the first entry is the default pink.
 # A few representative examples; anything else is picked via the custom colour
 # picker in Settings (keeps the dropdown short).
 ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (

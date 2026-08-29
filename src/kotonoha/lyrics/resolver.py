@@ -11,7 +11,15 @@ from typing import Protocol, TypeAlias
 from ..async_task import create_owned_task, wait_for_owned
 from .artifact import LyricsArtifact
 from .artist_grammar import artist_tokens
-from .cache import LyricsCacheError
+from .cache import (
+    CacheDeleteResult,
+    CacheWriteResult,
+    LyricsCacheEntry,
+    LyricsCacheError,
+    LyricsCacheKey,
+    LyricsCacheMode,
+    LyricsCacheQuery,
+)
 from .catalog import LyricsSourceCatalog
 from .hint import LyricsHint
 from .http import LyricsSession
@@ -44,7 +52,32 @@ class CacheLike(Protocol):
         /,
     ) -> LyricsArtifact | None: ...
 
-    async def store(self, artifact: LyricsArtifact, /) -> None: ...
+    async def store(self, artifact: LyricsArtifact, /) -> CacheWriteResult | None: ...
+
+    async def search(self, query: LyricsCacheQuery, /) -> tuple[LyricsCacheEntry, ...]: ...
+
+    async def get(self, key: LyricsCacheKey, /) -> LyricsCacheEntry | None: ...
+
+    async def upsert(
+        self,
+        artifact: LyricsArtifact,
+        /,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult: ...
+
+    async def update(
+        self,
+        key: LyricsCacheKey,
+        artifact: LyricsArtifact,
+        /,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult: ...
+
+    async def delete(self, key: LyricsCacheKey, /) -> CacheDeleteResult: ...
+
+    async def delete_many(self, keys: tuple[LyricsCacheKey, ...], /) -> tuple[CacheDeleteResult, ...]: ...
 
     async def clear(self) -> None: ...
 
@@ -419,6 +452,45 @@ class LyricsResolver:
             await self._cache.clear()
         finally:
             self.reset_memory()
+
+    async def search_cache(self, query: LyricsCacheQuery) -> tuple[LyricsCacheEntry, ...]:
+        """Search persisted cache metadata for the cache-management workflow."""
+        return await self._cache.search(query)
+
+    async def get_cache(self, key: LyricsCacheKey) -> LyricsCacheEntry | None:
+        """Read one persisted cache entry by its stable key."""
+        return await self._cache.get(key)
+
+    async def upsert_cache(
+        self,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Persist a validated result selected by an explicit application workflow."""
+        return await self._cache.upsert(artifact, mode=mode)
+
+    async def update_cache(
+        self,
+        key: LyricsCacheKey,
+        artifact: LyricsArtifact,
+        *,
+        mode: LyricsCacheMode = LyricsCacheMode.MANUAL,
+    ) -> CacheWriteResult:
+        """Update an existing cache entry and record its selection mode."""
+        return await self._cache.update(key, artifact, mode=mode)
+
+    async def delete_cache(self, key: LyricsCacheKey) -> CacheDeleteResult:
+        """Delete one persisted cache entry and report the actual outcome."""
+        result = await self._cache.delete(key)
+        self.reset_memory()
+        return result
+
+    async def delete_cache_many(self, keys: tuple[LyricsCacheKey, ...]) -> tuple[CacheDeleteResult, ...]:
+        """Delete several persisted cache entries and reset resolver miss memory."""
+        results = await self._cache.delete_many(keys)
+        self.reset_memory()
+        return results
 
 
 def _log_candidate(stage: str, source_slot: str, result: LyricsSourceResult) -> None:
