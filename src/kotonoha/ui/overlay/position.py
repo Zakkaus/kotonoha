@@ -157,7 +157,7 @@ class OverlayPositionController:
         global_position: QPoint,
         panel: QRect,
     ) -> SurfaceResult:
-        """Apply one unrestricted drag step and retain the platform position."""
+        """Apply one platform-specific drag step and retain its actual position."""
         updated_position, result = self._drag.update(
             self._layer_pos,
             local,

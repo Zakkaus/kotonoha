@@ -25,11 +25,9 @@ logger = logging.getLogger(__name__)
 class _LayerShellDragStrategy:
     """Commit a dragged Layer Shell surface through the bridge's anchor.
 
-    The two strategies below differ in one thing: which pointer reading they measure
-    the displacement from, and whether that reading is re-anchored after each commit.
-    Everything else — the window handle, the anchor call, its two failure modes and
-    the committed position — was written out twice, so a fix to either copy had to be
-    remembered for the other.
+    The concrete strategies choose the pointer coordinate model and may apply a
+    compositor-specific constraint to the visible panel. The shared implementation
+    owns surface geometry tracking, bridge calls, and the actual committed position.
     """
 
     #: Whether the origin moves to the latest reading after each committed step.
@@ -51,6 +49,13 @@ class _LayerShellDragStrategy:
 
     def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         raise NotImplementedError
+
+    def _constrain_panel_position(
+        self, position: WindowPoint, geometry: DragGeometry
+    ) -> WindowPoint:
+        """Return the panel position this compositor can apply for this step."""
+        del geometry
+        return position
 
     def set_position(self, position: WindowPoint) -> None:
         self._position = position
@@ -87,7 +92,8 @@ class _LayerShellDragStrategy:
             panel_position.x + reading.x - origin.x,
             panel_position.y + reading.y - origin.y,
         )
-        position = geometry.surface_for_panel(attempted_panel)
+        applied_panel = self._constrain_panel_position(attempted_panel, geometry)
+        position = geometry.surface_for_panel(applied_panel)
         pointer = self._host.native_window_pointer()
         if pointer is None:
             return DragUpdateResult(
@@ -103,7 +109,10 @@ class _LayerShellDragStrategy:
                     self._position,
                 )
         self._position = position
-        self._panel_position = attempted_panel
+        # Keep the constrained position as the next increment's base. If the
+        # pointer is held against an output edge, storing the unconstrained target
+        # would create a dead zone when the pointer reverses direction.
+        self._panel_position = applied_panel
         if self._reanchors:
             self._origin = reading
         return DragUpdateResult(SurfaceResult.applied(), position)
@@ -128,7 +137,13 @@ class LayerShellAnchorDragStrategy(_LayerShellDragStrategy):
 
 
 class NiriLayerShellDragStrategy(_LayerShellDragStrategy):
-    """Move a Layer Shell surface using global pointer deltas."""
+    """Move a Niri Layer Shell surface inside its bound output.
+
+    Niri keeps a mapped Layer Shell surface in the output selected at creation
+    time. Its margins are output-local, so global pointer deltas are still used
+    for smooth input, but the visible panel must remain inside that output until
+    the gesture ends.
+    """
 
     # niri configures asynchronously, so the surface has not moved under the pointer
     # by the next event and the local reading does not re-settle. The global reading
@@ -136,9 +151,57 @@ class NiriLayerShellDragStrategy(_LayerShellDragStrategy):
     _reanchors = True
     _label = "Niri Layer Shell"
 
+    def __init__(self, host: WindowHost, controller: LayerShellBridge) -> None:
+        super().__init__(host, controller)
+        # Captured once per gesture because the surface must not be rebound while
+        # the Wayland pointer grab is active.
+        self._output_geometry: WindowRectangle | None = None
+
+    def begin_drag(
+        self,
+        local_position: WindowPoint,
+        global_position: WindowPoint,
+        geometry: DragGeometry,
+    ) -> DragStartResult:
+        """Start a bounded drag using the currently bound output geometry."""
+        try:
+            output_geometry = self._host.screen_geometry()
+        except RuntimeError:
+            output_geometry = None
+        if output_geometry is None or output_geometry.width <= 0 or output_geometry.height <= 0:
+            return DragStartResult(
+                DragMode.UNAVAILABLE,
+                "Niri output geometry is unavailable; dragging is disabled.",
+            )
+        self._output_geometry = output_geometry
+        return super().begin_drag(local_position, global_position, geometry)
+
+    def _constrain_panel_position(
+        self, position: WindowPoint, geometry: DragGeometry
+    ) -> WindowPoint:
+        """Keep the visible panel fully inside the output's logical rectangle."""
+        output_geometry = self._output_geometry
+        if output_geometry is None:
+            return position
+
+        # Layer Shell margins are relative to the selected output. The global
+        # output origin is intentionally ignored; only its logical size bounds
+        # the output-local panel coordinates.
+        max_x = max(0, output_geometry.width - geometry.panel.width)
+        max_y = max(0, output_geometry.height - geometry.panel.height)
+        return WindowPoint(
+            max(0, min(position.x, max_x)),
+            max(0, min(position.y, max_y)),
+        )
+
     def _reading(self, local_position: WindowPoint, global_position: WindowPoint) -> WindowPoint:
         del local_position
         return global_position
+
+    def end_drag(self) -> None:
+        """Release the output geometry captured for the completed gesture."""
+        super().end_drag()
+        self._output_geometry = None
 
 
 class LayerShellPlatform:

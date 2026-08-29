@@ -192,8 +192,8 @@ class DragGeometry:
     """Describe the surface and visible panel in one coordinate space.
 
     ``panel`` is relative to the transparent surface. The panel is deliberately
-    not bounded here: a grabbed surface may cross output boundaries while the
-    platform-specific coordinate strategy keeps the pointer movement continuous.
+    not bounded here: each platform strategy owns any compositor-specific output
+    constraint while the shared drag controller keeps the geometry toolkit-free.
     """
 
     surface_position: WindowPoint

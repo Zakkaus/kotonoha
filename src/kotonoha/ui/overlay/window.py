@@ -502,7 +502,8 @@ class LyricsOverlay(QWidget):
             local = a0.position().toPoint()
             # Keep the surface alive for the entire pointer grab. Recreating it
             # at an output boundary destroys the Wayland pointer grab and makes
-            # the next mouse event disappear.
+            # the next mouse event disappear; the selected platform strategy
+            # decides whether the panel is bounded or can continue across outputs.
             global_position = a0.globalPosition().toPoint()
             moved = self._surface.update_drag(local, global_position)
             if not moved.succeeded:
@@ -548,10 +549,10 @@ class LyricsOverlay(QWidget):
     def _commit_drag_position(self, cursor_local: QPoint | None = None) -> None:
         """Persist the output and edge placement after a drag.
 
-        The overlay surface can cross output boundaries while it is grabbed. Only
-        after release do we select the output under the cursor and remap the
-        surface, when necessary, so the next drag starts with that output as its
-        local coordinate system.
+        The selected drag strategy may keep a surface inside its bound output while
+        it is grabbed. For strategies that allow crossing, only after release do we
+        select the output under the cursor and remap the surface, when necessary,
+        so the next drag starts with that output as its local coordinate system.
         """
         result = self._surface.commit_drag_position(
             cursor_local,

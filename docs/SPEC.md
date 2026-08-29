@@ -68,7 +68,7 @@ session、worker 或 cache；platform 不决定歌词来源策略。
 - 歌词 provider 和 adapter 只传递完整 `LyricsDocument`，不传递当前行或上下文等展示派生字段。
 - cache 管理使用 `LyricsCacheManagementPort`，手动应用使用 `LyricsCacheWritePort`；两者都指向组合根创建的同一个 `LyricsCache`，cache CRUD 不经过 MPRIS port。
 - 平台能力用带原因的 capability/result 返回；UI 不直接读取 compositor 名称或 native bridge。
-- overlay 拖动只使用平台策略进行坐标换算和位置同步，不把实时移动限制在当前 output；抓住面板后可以连续跨屏。释放时才根据最终指针位置选择 output，并在平台支持时重新绑定。
+- overlay 拖动只使用平台策略进行坐标换算和位置同步。普通窗口和支持该行为的 Layer Shell 桌面保持连续跨屏；Niri 的 Layer Shell surface 绑定单一 output，因此拖动期间把可见面板限制在当前 output 的逻辑矩形内，避免向未绑定 output 提交无效边距。可跨屏重绑的路径仍只在释放时根据最终指针位置处理。
 
 ## 生命周期
 

@@ -107,6 +107,11 @@ class _MovingHost(_FakeHost):
         self.moves.append(position)
 
 
+class _NoScreenGeometryHost(_FakeHost):
+    def screen_geometry(self) -> WindowRectangle | None:
+        return None
+
+
 class _RetryPolicyHost(_FakeHost):
     """Fail one native setup call so the lifecycle retry path is observable."""
 
@@ -385,19 +390,62 @@ def test_niri_drag_tracks_the_visible_panel_when_the_surface_shrinks() -> None:
     assert controller.calls[-1] == ("set_anchor_position", (1, 230, 100))
 
 
-def test_niri_drag_continues_across_output_edges() -> None:
+def test_niri_drag_stays_inside_the_bound_output() -> None:
     host = _MovingHost()
     controller = _FakeController(available=True)
     strategy = NiriLayerShellDragStrategy(host, controller)
     initial = DragGeometry(
-        WindowPoint(1900, 100),
+        WindowPoint(1900, 1030),
         WindowRectangle(0, 0, 100, 50),
     )
 
-    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(1910, 110), initial)
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(1910, 1040), initial)
     result = strategy.update_drag(
-        WindowPoint(20, 10), WindowPoint(2060, 110), initial
+        WindowPoint(20, 10), WindowPoint(2060, 1140), initial
     )
+
+    assert result.position == WindowPoint(1820, 1030)
+    assert controller.calls[-1] == ("set_anchor_position", (1, 1820, 1030))
+
+
+def test_niri_drag_requires_current_output_geometry() -> None:
+    host = _NoScreenGeometryHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+
+    result = strategy.begin_drag(
+        WindowPoint(10, 10),
+        WindowPoint(110, 110),
+        _drag_geometry(WindowPoint(100, 100)),
+    )
+
+    assert result.mode is DragMode.UNAVAILABLE
+    assert result.reason == "Niri output geometry is unavailable; dragging is disabled."
+    assert controller.calls == []
+
+
+def test_niri_drag_reverses_immediately_after_hitting_an_output_edge() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = NiriLayerShellDragStrategy(host, controller)
+    geometry = DragGeometry(WindowPoint(1900, 100), WindowRectangle(0, 0, 100, 50))
+
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(1910, 110), geometry)
+    strategy.update_drag(WindowPoint(20, 10), WindowPoint(2060, 110), geometry)
+    result = strategy.update_drag(WindowPoint(30, 10), WindowPoint(2050, 110), geometry)
+
+    assert result.position == WindowPoint(1810, 100)
+    assert controller.calls[-1] == ("set_anchor_position", (1, 1810, 100))
+
+
+def test_default_layer_shell_drag_remains_unrestricted_at_an_output_edge() -> None:
+    host = _MovingHost()
+    controller = _FakeController(available=True)
+    strategy = LayerShellAnchorDragStrategy(host, controller)
+    geometry = DragGeometry(WindowPoint(1900, 100), WindowRectangle(0, 0, 100, 50))
+
+    strategy.begin_drag(WindowPoint(10, 10), WindowPoint(1910, 110), geometry)
+    result = strategy.update_drag(WindowPoint(160, 10), WindowPoint(2060, 110), geometry)
 
     assert result.position == WindowPoint(2050, 100)
     assert controller.calls[-1] == ("set_anchor_position", (1, 2050, 100))
