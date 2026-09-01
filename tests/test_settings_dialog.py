@@ -1110,3 +1110,15 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
     assert shown, "the panel offered a state that cannot be stored"
     assert shown == dialog.current_config().lyrics_sources
     dialog.close()
+
+
+def test_every_skin_styles_the_internal_scrollbar_container():
+    from kotonoha.ui.settings.theme import _popup_skin, _skin
+
+    for qss in (_skin(Config().accent_start), _popup_skin(Config().accent_start)):
+        rule = next(
+            (line for line in qss.splitlines() if "qt_scrollarea_vcontainer" in line),
+            None,
+        )
+        assert rule is not None
+        assert "background: transparent" in rule
