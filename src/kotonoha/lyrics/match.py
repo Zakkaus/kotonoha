@@ -42,7 +42,6 @@ from enum import StrEnum
 from .artist_grammar import artist_tokens, artist_variants, primary_artist
 from .hanzi_fold import fold_to_simplified
 from .title_grammar import (
-    LYRIC_NEUTRAL_TAGS,
     base_title,
     cjk_runs,
     is_bracket_only_title,
@@ -50,6 +49,7 @@ from .title_grammar import (
     split_title,
 )
 from .title_queries import noisy_title_queries
+from .version_grammar import LYRIC_NEUTRAL_TAGS
 
 
 class MatchConfidence(StrEnum):

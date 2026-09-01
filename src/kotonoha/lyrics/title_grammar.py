@@ -13,6 +13,10 @@ import re
 from unicodedata import normalize as unicode_normalize
 
 from .hanzi_fold import fold_to_simplified
+from .version_grammar import (
+    VERSION_SUFFIX_PATTERNS,
+    extract_version_tags,
+)
 
 _PARENS = re.compile(r"[\(（\[【『](.*?)[\)）\]】』]")
 _DASH_SUFFIX = re.compile(r"\s+[-–—]\s+(.+)$")
@@ -22,54 +26,6 @@ _UPLOADER_ARTIST = re.compile(
     r"(?i)(?:channel|頻道|频道|label(?:s)?|records?|music(?:channel)?|vevo|animation|studio|工作室)"
 )
 _KEEP = re.compile(r"[^\w一-鿿]+")
-_VERSION_TAGS = {
-    # "acounstic" is not a typo here: it is how the upload spells it, and the
-    # misspelling is what the title actually carries.
-    "acoustic": ("acoustic", "acounstic", "unplugged", "原声版", "原聲版"),
-    # 歌ってみた is the Japanese "I tried singing it" — a user cover, so the words
-    # are the same but the performance and its timings are not.
-    "cover": ("cover", "翻唱", "歌ってみた"),
-    # An alternate vocalist for the same song (Vocaloid uploads name the singer).
-    # A re-sung 女声版/男声版 keeps the words and changes every timing, which is what
-    # let 不谓侠(女声版) stand in for 不谓侠 when no artist was reported.
-    "alt_vocal": ("バーチャル・シンガーver", "バーチャルシンガーver", "女声版", "女聲版", "男声版", "男聲版"),
-    "demo": ("demo",),
-    "edit": ("edit",),
-    "extended": ("extended",),
-    # 钢琴版 and 纯音乐 carry no words at all, so accepting one hands the overlay a
-    # lyric sheet for a recording that never sings it.
-    "instrumental": (
-        "instrumental", "instrumental version", "off vocal", "off-vocal", "伴奏",
-        "钢琴版", "鋼琴版", "纯音乐版", "純音樂版", "纯音乐", "純音樂",
-    ),
-    "karaoke": ("karaoke", "卡拉ok"),
-    "live": ("live", "live版", "现场", "現場"),
-    "remaster": ("remaster", "remastered"),
-    "remix": ("remix", "dj版"),
-    "guitar": ("吉他版",),
-    "strum": ("弹唱版", "彈唱版"),
-    "opera": ("戏腔版", "戲腔版"),
-    "cantonese": ("粤语版", "粵語版"),
-    # The slowed/sped/reverb family is what a re-upload channel actually publishes,
-    # and the timing differs from the studio take, so the lyrics do not line up.
-    "sped_up": ("sped up", "sped-up", "spedup", "加速版"),
-    "slowed": ("slowed", "slowed down", "slowed + reverb", "slowed and reverb", "慢速版", "降速版"),
-    "reverb": ("reverb", "reverbed"),
-    "nightcore": ("nightcore",),
-    "rhythm": ("律动版", "律動版"),
-    "rnb": ("r&b版", "r&b心碎版"),
-    "smoky": ("烟嗓版", "煙嗓版"),
-    "full": ("full version",),
-    "opening": ("opening title version",),
-    "choreography": ("choreography ver", "choreography version"),
-}
-# Tags that change the recording but NOT the lyrics: a remaster has the same
-# words as the studio take, so it must not force a version conflict that rejects
-# the only correct candidate. (live/acoustic/instrumental/remix/etc. can differ.)
-# A remaster and a choreography video are the same performance: the words and
-# their timings are the studio take's, so neither may reject the only
-# candidate that has lyrics at all.
-LYRIC_NEUTRAL_TAGS = frozenset({"remaster", "choreography"})
 
 _TITLE_BARS = re.compile(r"[|｜丨]")
 # A closing ’ is never followed by a letter; a contraction's apostrophe always is.
@@ -95,19 +51,6 @@ _TITLE_TAIL_NOISE = re.compile(
 # matching while Latin markers use ASCII-letter boundaries to avoid substring hits.
 
 
-def _version_pattern(marker: str) -> re.Pattern[str]:
-    escaped = re.escape(marker)
-    if any(char.isascii() and char.isalpha() for char in marker):
-        return re.compile(r"(?<![A-Za-z])" + escaped + r"(?![A-Za-z])", re.IGNORECASE)
-    return re.compile(escaped)
-
-_VERSION_TAG_PATTERNS = {
-    tag: tuple(_version_pattern(marker) for marker in markers)
-    for tag, markers in _VERSION_TAGS.items()
-}
-_VERSION_SUFFIX_PATTERNS = tuple(
-    _version_pattern(marker) for markers in _VERSION_TAGS.values() for marker in markers
-)
 
 NORMALIZER_VERSION = 2
 
@@ -167,7 +110,7 @@ def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
     value = _clean_platform_title(title, artist)
     tags: set[str] = set()
     for group in _PARENS.findall(value):
-        tags.update(_extract_version_tags(group))
+        tags.update(extract_version_tags(group))
     def remove_parenthetical(match: re.Match[str]) -> str:
         # Parentheses can be part of a token, as in the artist name (G)I-DLE.
         if match.end() < len(value) and value[match.end()].isalnum() and len(match.group(1)) <= 3:
@@ -181,7 +124,7 @@ def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
         base = _BRACKET_EDGES.sub(" ", value).strip()
     suffix = _DASH_SUFFIX.search(base)
     if suffix is not None:
-        suffix_tags = _extract_version_tags(suffix.group(1))
+        suffix_tags = extract_version_tags(suffix.group(1))
         if suffix_tags:
             tags.update(suffix_tags)
             base = base[: suffix.start()].strip()
@@ -190,23 +133,47 @@ def split_title(title: str, artist: str = "") -> tuple[str, frozenset[str]]:
     # "Live and Learn (Live)", and the live recording outranked the studio one the
     # user was playing. A trailing "Song Live版" is still a qualifier and still
     # conflicts with a plain candidate, which is what this loop already located.
-    for pattern in _VERSION_SUFFIX_PATTERNS:
+    for pattern in VERSION_SUFFIX_PATTERNS:
         suffix_match = pattern.search(base)
         if suffix_match is not None and not base[suffix_match.end() :].strip():
             prefix = base[: suffix_match.start()].rstrip()
             if prefix:
-                tags.update(_extract_version_tags(base[suffix_match.start() :]))
+                tags.update(extract_version_tags(base[suffix_match.start() :]))
                 base = prefix
                 break
     return base, frozenset(tags)
 
 
-def _extract_version_tags(value: str) -> set[str]:
-    return {
-        tag
-        for tag, patterns in _VERSION_TAG_PATTERNS.items()
-        if any(pattern.search(value) for pattern in patterns)
-    }
+
+
+def version_labels(title: str, artist: str = "") -> tuple[str, ...]:
+    """Return a title's version qualifiers as the publisher wrote them.
+
+    split_title() reports normalized tags, which name the kind of version. A
+    reader choosing between two rows needs the words the title actually carried,
+    since those are what tell the rows apart. Only bracketed qualifiers are
+    reported: a trailing marker with no bracket is part of the running title and
+    cannot be lifted out without changing what the title says.
+    """
+    value = _clean_platform_title(title, artist)
+    labels = (group.strip() for group in _PARENS.findall(value) if extract_version_tags(group))
+    return tuple(dict.fromkeys(label for label in labels if label))
+
+
+def title_without_version_labels(title: str, artist: str = "") -> str:
+    """Return the title with only its version qualifiers removed.
+
+    base_title() drops every bracketed group, which is right for matching and
+    wrong for display: a production credit is not a version, so lifting one
+    "(TV Size)" out beside a row must not silently take "(Prod. by ...)" with it.
+    """
+    value = _clean_platform_title(title, artist)
+
+    def drop_version_group(match: re.Match[str]) -> str:
+        return "" if extract_version_tags(match.group(1)) else match.group(0)
+
+    stripped = " ".join(_PARENS.sub(drop_version_group, value).split())
+    return stripped or title
 
 
 def base_title(title: str) -> str:

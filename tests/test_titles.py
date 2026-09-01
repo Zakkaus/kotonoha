@@ -191,3 +191,29 @@ def test_the_studio_pressing_is_not_a_version_conflict():
 
     assert base == "大鱼"
     assert not tags
+
+
+def test_a_broadcast_edit_is_a_different_recording():
+    from kotonoha.lyrics.title_grammar import split_title, version_labels
+
+    # A TV edit runs about ninety seconds against a full-length take, so its words
+    # are a subset and every timing after the cut is wrong: the two must not agree.
+    base, tags = split_title("Realize (TV Size)")
+    assert base == "Realize"
+    assert "tv_size" in tags
+    assert split_title("Realize")[1] == frozenset()
+    # The bracketed qualifier comes back as written, for a reader telling rows apart.
+    assert version_labels("Realize (TV Size)") == ("TV Size",)
+    assert version_labels("Realize") == ()
+    # Only brackets that mark a version qualify. A production credit or a content
+    # rating changes nothing about which recording it is, so it is not a label.
+    assert version_labels("Realize (Prod. by X) (TV Size)") == ("TV Size",)
+    assert version_labels("Song (Explicit)") == ()
+
+
+def test_a_title_that_merely_contains_tv_is_not_a_broadcast_edit():
+    from kotonoha.lyrics.title_grammar import split_title
+
+    # ASCII markers carry letter boundaries, so an ordinary name keeps its meaning.
+    assert split_title("TV Show")[1] == frozenset()
+    assert split_title("Television")[1] == frozenset()
