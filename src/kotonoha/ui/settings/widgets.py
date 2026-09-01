@@ -150,6 +150,12 @@ def resolve_font_family(
         return desktop
     if supported:
         return min(supported)
+    if desktop in installed:
+        return desktop
+    if installed:
+        return min(installed)
+    if desktop:
+        return desktop
     return next((name for name in requested if name), "")
 
 def available_font_styles(family: str) -> list[str]:

@@ -876,10 +876,26 @@ def test_font_picker_follows_a_deterministic_fallback_order():
         (
             "no-target-font",
             "Missing Family, Still Missing",
+            {"Desktop Family", "Other Family"},
+            set(),
+            "Desktop Family",
+            "Desktop Family",
+        ),
+        (
+            "no-installed-font",
+            "Missing Family, Still Missing",
             set(),
             set(),
             "",
             "Missing Family",
+        ),
+        (
+            "desktop-without-font-inventory",
+            "Missing Family, Still Missing",
+            set(),
+            set(),
+            "Desktop Family",
+            "Desktop Family",
         ),
     )
 
