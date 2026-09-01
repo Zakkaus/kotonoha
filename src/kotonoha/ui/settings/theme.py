@@ -37,6 +37,7 @@ QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: %ACCENT_SOFT%
 QWidget#contentCard { background: %CARD_BG%; border: 1px solid %CARD_BORDER%; border-radius: 12px; }
 QScrollArea#settingsPageScroll { background: transparent; border: none; }
 QScrollArea#settingsPageScroll > QWidget#qt_scrollarea_viewport { background: transparent; border: none; }
+QWidget#qt_scrollarea_vcontainer, QWidget#qt_scrollarea_hcontainer { background: transparent; }
 QScrollBar:vertical {
     background: transparent;
     width: 9px;
@@ -274,6 +275,7 @@ QAbstractItemView::item {{ padding: 5px 8px; border-radius: 5px; }}
 QAbstractItemView::item:hover {{ background: {palette["ITEM_SEL"]}; color: {palette["TEXT_STRONG"]}; }}
 QAbstractItemView::item:selected {{ background: {accent}; color: #FFFFFF; }}
 QFrame#settingsComboPopupFrame {{ background: {popup_background}; border: none; }}
+QWidget#qt_scrollarea_vcontainer, QWidget#qt_scrollarea_hcontainer {{ background: transparent; }}
 QScrollBar:vertical {{ background: transparent; width: 9px; margin: 4px 2px; }}
 QScrollBar::handle:vertical {{ background: {palette["FIELD_BORDER"]}; min-height: 30px; border-radius: 4px; }}
 QScrollBar::handle:vertical:hover {{ background: {palette["FIELD_BORDER_HOVER"]}; }}

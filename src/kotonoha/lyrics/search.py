@@ -16,7 +16,7 @@ from .search_policy import MANUAL_SEARCH_RESULTS_TOTAL
 
 logger = logging.getLogger(__name__)
 
-_UNCONFIGURED_SOURCE_REASON = "search source is not configured"
+_UNCONFIGURED_SOURCE_REASON_KEY = "search.unavailable.unconfigured"
 
 
 class LyricsSearchError(RuntimeError):
@@ -34,12 +34,14 @@ class LyricsSearchProvider:
     """Declare whether a configured source supports metadata-based search."""
 
     search: SearchArtifacts | None
-    unavailable_reason: str = ""
+    # A `strings` catalogue key, not a sentence: the dialog resolves it in the
+    # user's language, so a provider must not phrase its own explanation.
+    unavailable_reason_key: str = ""
 
     def __post_init__(self) -> None:
-        """Require an explanation when a source has no manual-search capability."""
-        if self.search is None and not self.unavailable_reason.strip():
-            raise ValueError("an unsupported lyric search provider requires a reason")
+        """Require a translated explanation when a source has no manual-search capability."""
+        if self.search is None and not self.unavailable_reason_key.strip():
+            raise ValueError("an unsupported lyric search provider requires a reason key")
 
 
 @dataclass(frozen=True, slots=True)
@@ -114,14 +116,15 @@ class LyricsSearchUnavailable:
     """Explain why one requested source could not answer a manual search."""
 
     source: str
-    reason: str
+    # A `strings` catalogue key; see LyricsSearchProvider.unavailable_reason_key.
+    reason_key: str
 
     def __post_init__(self) -> None:
         """Reject unavailable-source details that the UI cannot meaningfully show."""
         if not self.source.strip():
             raise ValueError("unavailable lyric search source must not be empty")
-        if not self.reason.strip():
-            raise ValueError("unavailable lyric search reason must not be empty")
+        if not self.reason_key.strip():
+            raise ValueError("unavailable lyric search reason key must not be empty")
 
 
 @dataclass(frozen=True, slots=True)
@@ -200,7 +203,7 @@ class LyricsSearchService:
         if not selected:
             return LyricsSearchResponse(
                 (),
-                tuple(LyricsSearchUnavailable(source, _UNCONFIGURED_SOURCE_REASON) for source in requested),
+                tuple(LyricsSearchUnavailable(source, _UNCONFIGURED_SOURCE_REASON_KEY) for source in requested),
             )
         responses = await asyncio.gather(
             *(self._search_source(source, self._providers[source], session, track) for source in selected)
@@ -220,7 +223,7 @@ class LyricsSearchService:
         unavailable = tuple(
             unavailable_by_source[source]
             if source in unavailable_by_source
-            else LyricsSearchUnavailable(source, _UNCONFIGURED_SOURCE_REASON)
+            else LyricsSearchUnavailable(source, _UNCONFIGURED_SOURCE_REASON_KEY)
             for source in requested
             if source not in self._providers or source in unavailable_by_source
         )
@@ -236,19 +239,19 @@ class LyricsSearchService:
         """Isolate one provider failure so other configured sources still answer."""
         search = provider.search
         if search is None:
-            logger.info("Manual lyric search is unavailable for %s: %s", source, provider.unavailable_reason)
-            return source, (), LyricsSearchUnavailable(source, provider.unavailable_reason)
+            logger.info("Manual lyric search is unavailable for %s: %s", source, provider.unavailable_reason_key)
+            return source, (), LyricsSearchUnavailable(source, provider.unavailable_reason_key)
         try:
             artifacts = await search(session, track)
         except TimeoutError as exc:
             logger.warning("Manual lyric search failed for %s: %s", source, exc)
-            return source, (), LyricsSearchUnavailable(source, "provider request timed out")
+            return source, (), LyricsSearchUnavailable(source, "search.unavailable.timeout")
         except (LyricsHttpError, OSError) as exc:
             logger.warning("Manual lyric search failed for %s: %s", source, exc)
-            return source, (), LyricsSearchUnavailable(source, "provider request failed")
+            return source, (), LyricsSearchUnavailable(source, "search.unavailable.failed")
         except ValueError as exc:
             logger.warning("Manual lyric search failed for %s: %s", source, exc)
-            return source, (), LyricsSearchUnavailable(source, "provider returned invalid lyric data")
+            return source, (), LyricsSearchUnavailable(source, "search.unavailable.invalid")
         return source, tuple(LyricsSearchResult.from_artifact(artifact) for artifact in artifacts), None
 
 

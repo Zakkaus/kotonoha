@@ -3,13 +3,16 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import QModelIndex, Qt
-from PyQt6.QtGui import QFont, QFontDatabase, QIcon, QPixmap, QResizeEvent
+from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QIcon, QPixmap, QResizeEvent
 from PyQt6.QtWidgets import (
     QComboBox,
     QFontComboBox,
+    QLabel,
     QListWidget,
+    QSizePolicy,
     QStyledItemDelegate,
     QStyleOptionViewItem,
+    QWidget,
 )
 
 FONT_FALLBACKS = (
@@ -113,8 +116,47 @@ def no_tint_icon(pixmap: QPixmap) -> QIcon:
     return icon
 
 
+class ElidingLabel(QLabel):
+    """Show one line that shrinks with its container instead of widening it.
+
+    A plain QLabel makes a layout at least as wide as its whole string, so a long
+    status message either forces the dialog wider than the screen or is clipped
+    with no sign that text is missing.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        # The unelided string; self.text() only ever holds what currently fits.
+        self._full_text = ""
+        # Ignored makes the layout disregard both size hints, so this line neither
+        # widens its container nor sets a width the container cannot shrink below.
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, a0: str | None) -> None:
+        """Store the full text and display as much of it as currently fits."""
+        self._full_text = a0 or ""
+        self._elide()
+
+    def full_text(self) -> str:
+        """Return the text as set, which the displayed line may have shortened."""
+        return self._full_text
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        """Re-elide against the new width so the ellipsis tracks the layout."""
+        super().resizeEvent(a0)
+        self._elide()
+
+    def _elide(self) -> None:
+        """Display the widest prefix of the full text that fits, plus an ellipsis."""
+        metrics = QFontMetrics(self.font())
+        super().setText(
+            metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, self.contentsRect().width())
+        )
+
+
 __all__ = [
     "FONT_FALLBACKS",
+    "ElidingLabel",
     "FontNameDelegate",
     "IconStrip",
     "SettingsComboBox",

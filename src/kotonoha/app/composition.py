@@ -306,11 +306,11 @@ class ApplicationComposition:
                 "kugou": LyricsSearchProvider(kugou.search_artifacts),
                 "qqmusic": LyricsSearchProvider(
                     None,
-                    "QQ Music metadata search is unavailable; use an exact song id",
+                    "search.unavailable.qqmusic",
                 ),
                 "cider": LyricsSearchProvider(
                     None,
-                    "Cider manual search is unavailable; it only exposes the active player track",
+                    "search.unavailable.cider",
                 ),
             },
             new_lyrics_session,

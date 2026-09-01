@@ -148,6 +148,42 @@ SEARCH_STRINGS: Final[dict[str, dict[str, str]]] = {
         "zh-Hant": "{count} 個結果（無法使用的來源：{sources}）",
         "ja": "{count} 件（利用不可: {sources}）",
     },
+    "search.unavailable.unconfigured": {
+        "en": "source is not configured",
+        "zh-Hans": "来源未配置",
+        "zh-Hant": "來源未設定",
+        "ja": "ソース未設定",
+    },
+    "search.unavailable.timeout": {
+        "en": "request timed out",
+        "zh-Hans": "请求超时",
+        "zh-Hant": "請求逾時",
+        "ja": "リクエストがタイムアウト",
+    },
+    "search.unavailable.failed": {
+        "en": "request failed",
+        "zh-Hans": "请求失败",
+        "zh-Hant": "請求失敗",
+        "ja": "リクエスト失敗",
+    },
+    "search.unavailable.invalid": {
+        "en": "invalid lyric data",
+        "zh-Hans": "歌词数据无效",
+        "zh-Hant": "歌詞資料無效",
+        "ja": "歌詞データが不正",
+    },
+    "search.unavailable.qqmusic": {
+        "en": "metadata search unavailable; needs an exact song id",
+        "zh-Hans": "不支持按元数据搜索，需精确歌曲 ID",
+        "zh-Hant": "不支援依中繼資料搜尋，需精確歌曲 ID",
+        "ja": "メタデータ検索は非対応、正確な曲 ID が必要",
+    },
+    "search.unavailable.cider": {
+        "en": "only exposes the active player track",
+        "zh-Hans": "仅提供当前播放的曲目",
+        "zh-Hant": "僅提供目前播放的曲目",
+        "ja": "再生中の曲のみ取得可能",
+    },
     "search.unavailable_source": {
         "en": "{source}: {reason}",
         "zh-Hans": "{source}：{reason}",

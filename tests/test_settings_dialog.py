@@ -1110,3 +1110,45 @@ def test_the_source_list_shows_what_will_be_saved(qapp) -> None:
     assert shown, "the panel offered a state that cannot be stored"
     assert shown == dialog.current_config().lyrics_sources
     dialog.close()
+
+
+def test_every_skin_styles_the_internal_scrollbar_container():
+    from kotonoha.ui.settings.theme import _popup_skin, _skin
+
+    for qss in (_skin(Config().accent_start), _popup_skin(Config().accent_start)):
+        rule = next(
+            (line for line in qss.splitlines() if "qt_scrollarea_vcontainer" in line),
+            None,
+        )
+        assert rule is not None
+        assert "background: transparent" in rule
+
+
+def test_eliding_label_shrinks_instead_of_widening_its_parent(qapp):
+    from PyQt6.QtWidgets import QHBoxLayout, QLabel, QWidget
+
+    from kotonoha.ui.settings.widgets import ElidingLabel
+
+    text = "40 個結果（無法使用的來源：QQ 音樂, Cider 自帶）"
+
+    # A plain QLabel makes its container at least as wide as the whole string, which
+    # is what forced the search dialog wider than the screen. This one does not.
+    boxed = ElidingLabel()
+    boxed.setText(text)
+    elided_box, plain_box = QWidget(), QWidget()
+    QHBoxLayout(elided_box).addWidget(boxed)
+    QHBoxLayout(plain_box).addWidget(QLabel(text))
+    assert elided_box.minimumSizeHint().width() < plain_box.minimumSizeHint().width()
+
+    # Given less width than the text needs, it truncates visibly rather than clipping.
+    label = ElidingLabel()
+    label.setText(text)
+    # Qt only delivers the resize to a widget that is on screen, and elision is a
+    # property of the painted line, so the label has to be shown to observe it.
+    label.show()
+    label.resize(60, 20)
+    qapp.processEvents()
+    assert label.text() != text
+    assert label.text().endswith("…")
+    # The untruncated string stays available, which is what the tooltip shows.
+    assert label.full_text() == text
