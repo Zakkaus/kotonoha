@@ -46,6 +46,19 @@ sudo emaint sync
 sudo emerge --ask media-plugins/kotonoha::gentoo-zh
 ```
 
+NixOS 用户可以在 flake 配置中添加：
+
+```nix
+inputs.kotonoha = {
+  url = "github:locez/kotonoha";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+environment.systemPackages = [
+  inputs.kotonoha.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
 启动已安装的程序：
 
 ```bash

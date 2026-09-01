@@ -46,6 +46,19 @@ sudo emaint sync
 sudo emerge --ask media-plugins/kotonoha::gentoo-zh
 ```
 
+NixOS users can add the package to a flake configuration:
+
+```nix
+inputs.kotonoha = {
+  url = "github:locez/kotonoha";
+  inputs.nixpkgs.follows = "nixpkgs";
+};
+
+environment.systemPackages = [
+  inputs.kotonoha.packages.${pkgs.stdenv.hostPlatform.system}.default
+];
+```
+
 Start the installed application with:
 
 ```bash
