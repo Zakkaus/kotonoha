@@ -193,13 +193,21 @@ def test_manual_lyrics_replace_the_active_document_and_survive_late_provider_res
     ) is True
     assert state.frame.document is not None
     assert state.frame.document.song_id == "manual"
-    assert coordinator.current_lyrics_status() == LyricsDisplayStatus(
+    status = coordinator.current_lyrics_status()
+    assert status == LyricsDisplayStatus(
         playback_source="test",
         lyrics_source_id="netease",
         lyrics_source_name="netease",
         origin=LyricsOrigin.MANUAL,
         cache_state=LyricsCacheState.MANUAL,
+        lyrics_song_id=status.lyrics_song_id,
+        lyrics_title=status.lyrics_title,
+        lyrics_artist=status.lyrics_artist,
+        lyrics_album=status.lyrics_album,
     )
+    # The status also carries what the document says the track is, which a player
+    # reporting only a page title does not know.
+    assert status.lyrics_title == "Song (selected)"
 
     # A provider response that was already in flight must not overwrite the
     # user's choice while the same track remains active.

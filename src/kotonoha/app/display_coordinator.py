@@ -170,6 +170,10 @@ class DisplayCoordinator:
             lyrics_source_name=document.source_name if document is not None else None,
             origin=document.origin if document is not None else None,
             cache_state=document.cache_state if document is not None else LyricsCacheState.NONE,
+            lyrics_song_id=document.song_id if document is not None else None,
+            lyrics_title=document.title if document is not None else None,
+            lyrics_artist=document.artist if document is not None else None,
+            lyrics_album=document.album if document is not None else None,
         )
 
     def publish_frame(self, frame: DisplayFrame) -> bool:

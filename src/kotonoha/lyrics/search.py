@@ -21,7 +21,15 @@ _UNCONFIGURED_SOURCE_REASON_KEY = "search.unavailable.unconfigured"
 
 
 class LyricsSearchError(RuntimeError):
-    """A manual search cannot run because its owned search service is unavailable."""
+    """A manual search cannot run because its owned search service is unavailable.
+
+    The message is a `strings` catalogue key, not a sentence: the dialog reporting
+    it is localized and a phrase written here would arrive in the wrong language.
+    """
+
+    def __init__(self, reason_key: str) -> None:
+        super().__init__(reason_key)
+        self.reason_key = reason_key
 
 
 SearchArtifacts = Callable[
@@ -225,7 +233,7 @@ class LyricsSearchService:
             raise LyricsSearchError("search.error.not_started")
         track = query.track_metadata()
         if not track.title and not track.artist:
-            raise LyricsSearchError("lyrics search requires a title or artist")
+            raise LyricsSearchError("search.error.no_query")
 
         requested = tuple(dict.fromkeys(source for source in sources if source))
         selected = tuple(source for source in requested if source in self._providers)
