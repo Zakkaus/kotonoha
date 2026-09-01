@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from PyQt6.QtCore import Qt
-from PyQt6.QtWidgets import QFrame, QGridLayout, QLabel, QWidget
+from PyQt6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QWidget
 
 from ...display.models import LyricsDisplayStatus
 from ...lyrics.models import LyricsCacheState, LyricsOrigin
@@ -39,28 +39,34 @@ class LyricsStatusBand(QFrame):
         self._cache_value.setText(_format_cache_state(status.cache_state, self._translator))
 
     def _build_layout(self) -> None:
-        """Build the compact four-column status layout once."""
+        """Build the paired status grid once.
+
+        Two rows of two pairs rather than one row of four: the band shares a card
+        with the track identity now, and four columns beside it left every value
+        too narrow to read.
+        """
         grid = QGridLayout(self)
-        grid.setContentsMargins(12, 10, 12, 10)
+        grid.setContentsMargins(16, 2, 4, 2)
         grid.setHorizontalSpacing(16)
-        grid.setVerticalSpacing(6)
-        heading = QLabel(self._translator.text("search.current_lyrics"))
-        heading.setObjectName("sectionTitle")
-        grid.addWidget(heading, 0, 0, 1, 4)
+        grid.setVerticalSpacing(4)
         values = (
             ("search.status.source", self._source_value),
             ("search.status.origin", self._origin_value),
             ("search.status.player", self._playback_value),
             ("search.status.cache", self._cache_value),
         )
-        for column, (key, content) in enumerate(values):
+        for position, (key, content) in enumerate(values):
+            row, column = divmod(position, 2)
             label = QLabel(self._translator.text(key))
             label.setObjectName("metaLabel")
             content.setObjectName("metaValue")
             content.setWordWrap(True)
             content.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            grid.addWidget(label, 1, column)
-            grid.addWidget(content, 2, column)
+            pair = QHBoxLayout()
+            pair.setSpacing(6)
+            pair.addWidget(label)
+            pair.addWidget(content, 1)
+            grid.addLayout(pair, row, column)
             grid.setColumnStretch(column, 1)
 
 

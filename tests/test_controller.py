@@ -145,8 +145,13 @@ class _FakeLyricsSearch:
 
 class _FakeLyricsSearchDialog:
     def __init__(self) -> None:
+        self.themes: list[str] = []
         self.intent_requested = _Signal()
         self.finished = _Signal()
+
+    def retheme(self, config: Config) -> None:
+        """Accept a theme change the way the real window does."""
+        self.themes.append(config.theme)
 
     def show(self) -> None:
         return None
@@ -177,6 +182,9 @@ class _FakeLyricsSearchDialog:
 
 
 class _FakeLyricsSearchDialogFactory:
+    def __init__(self) -> None:
+        self.created: list[_FakeLyricsSearchDialog] = []
+
     def create(
         self,
         config: Config,
@@ -184,7 +192,9 @@ class _FakeLyricsSearchDialogFactory:
         status: LyricsDisplayStatus,
     ) -> _FakeLyricsSearchDialog:
         del config, query, status
-        return _FakeLyricsSearchDialog()
+        dialog = _FakeLyricsSearchDialog()
+        self.created.append(dialog)
+        return dialog
 
 
 class _FakeReceiver:
@@ -420,7 +430,12 @@ class _SettingsFactory:
 
 
 class _FakeCacheDialog:
+    def retheme(self, config: Config) -> None:
+        """Accept a theme change the way the real window does."""
+        self.themes.append(config.theme)
+
     def __init__(self) -> None:
+        self.themes: list[str] = []
         self.intent_requested = _Signal()
         self.finished = _Signal()
         self.visible = False
@@ -883,3 +898,30 @@ def test_composition_closes_workers_when_graph_construction_fails(qapp, monkeypa
         "kotonoha-lyrics-cache",
         "track offsets",
     ]
+
+
+async def test_applying_settings_reaches_the_windows_that_are_already_open(qapp):
+    from kotonoha.app.intents import ApplyConfig
+    from kotonoha.config import ThemeMode
+
+    cache_factory = _CacheManagementFactory()
+    graph = _ControllerGraph(qapp, cache_management_factory=cache_factory)
+    try:
+        graph.controller.open_settings()
+        await asyncio.wait_for(graph.settings_factory.created_event.wait(), timeout=1.0)
+        settings = graph.settings_factory.created[-1]
+        settings.form_widgets.manage_cache.click()
+        graph.overlay.lyrics_search_requested.emit(TrackMetadata("Song", "Artist", "Album", 180.0))
+
+        settings.intent_requested.emit(
+            ApplyConfig(Config(theme=ThemeMode.LIGHT), frozenset({"theme"}))
+        )
+        await asyncio.sleep(0)
+
+        # A window already open has no other way to learn the theme changed: the
+        # settings window is the only one that restyles itself when it applies.
+        assert cache_factory.created[-1].themes == [ThemeMode.LIGHT]
+        assert graph.lyrics_search_factory.created[-1].themes == [ThemeMode.LIGHT]
+    finally:
+        await graph.close()
+        qapp.processEvents()

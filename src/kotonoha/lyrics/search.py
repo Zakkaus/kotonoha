@@ -7,6 +7,7 @@ import logging
 import math
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
+from enum import Enum
 from typing import Protocol
 
 from .artifact import LyricsArtifact
@@ -20,7 +21,15 @@ _UNCONFIGURED_SOURCE_REASON_KEY = "search.unavailable.unconfigured"
 
 
 class LyricsSearchError(RuntimeError):
-    """A manual search cannot run because its owned search service is unavailable."""
+    """A manual search cannot run because its owned search service is unavailable.
+
+    The message is a `strings` catalogue key, not a sentence: the dialog reporting
+    it is localized and a phrase written here would arrive in the wrong language.
+    """
+
+    def __init__(self, reason_key: str) -> None:
+        super().__init__(reason_key)
+        self.reason_key = reason_key
 
 
 SearchArtifacts = Callable[
@@ -75,6 +84,21 @@ class LyricsSearchQuery:
         )
 
 
+# The encodings this module produces, grouped by how finely each times its text.
+# The vocabulary belongs beside the adapters that write it: a reader elsewhere
+# spelling one of these out again cannot be told when a new format arrives.
+_WORD_TIMED = frozenset({"yrc", "krc"})
+_LINE_TIMED = frozenset({"lrc"})
+
+
+class LyricsTiming(Enum):
+    """How finely one lyric encoding times its text."""
+
+    WORD = "word"
+    LINE = "line"
+    NONE = "none"
+
+
 @dataclass(frozen=True, slots=True)
 class LyricsVersion:
     """Describe the lyric encoding and optional translation tracks of one result."""
@@ -86,6 +110,19 @@ class LyricsVersion:
         """Reject empty display metadata from an external provider adapter."""
         if not self.format_id:
             raise ValueError("lyrics version requires a format id")
+
+    @property
+    def timing(self) -> LyricsTiming:
+        """Say how finely this encoding times its text.
+
+        The difference a listener feels is word, line, or neither; which encoding
+        carries it is this module's business, not a reader's.
+        """
+        if self.format_id in _WORD_TIMED:
+            return LyricsTiming.WORD
+        if self.format_id in _LINE_TIMED:
+            return LyricsTiming.LINE
+        return LyricsTiming.NONE
 
 
 @dataclass(frozen=True, slots=True)
@@ -193,10 +230,10 @@ class LyricsSearchService:
         """Query each known source concurrently while preserving source order."""
         session = self._session
         if session is None:
-            raise LyricsSearchError("lyrics search service has not been started")
+            raise LyricsSearchError("search.error.not_started")
         track = query.track_metadata()
         if not track.title and not track.artist:
-            raise LyricsSearchError("lyrics search requires a title or artist")
+            raise LyricsSearchError("search.error.no_query")
 
         requested = tuple(dict.fromkeys(source for source in sources if source))
         selected = tuple(source for source in requested if source in self._providers)
@@ -270,6 +307,7 @@ def _version_for(artifact: LyricsArtifact) -> LyricsVersion:
 
 __all__ = [
     "LyricsSearchError",
+    "LyricsTiming",
     "LyricsSearchPort",
     "LyricsSearchProvider",
     "LyricsSearchQuery",

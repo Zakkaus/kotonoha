@@ -1,12 +1,11 @@
 import asyncio
 from collections.abc import Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager
+from pathlib import Path
+from typing import Any, cast
 
-from PyQt6.QtCore import QEvent, Qt
-from PyQt6.QtGui import QKeyEvent
-from PyQt6.QtWidgets import QApplication, QLabel, QPushButton
+from PyQt6.QtWidgets import QPushButton
 
-from kotonoha.app.intents import SearchLyrics
 from kotonoha.app.lyrics_search import LyricsSearchController
 from kotonoha.config import Config
 from kotonoha.display.models import LyricsDisplayStatus
@@ -30,9 +29,7 @@ from kotonoha.lyrics.search_policy import (
 from kotonoha.platform import OverlayPlatformFactory
 from kotonoha.platform.overlay_contracts import OverlayPlatformAdapters
 from kotonoha.platform.qt_window import QtWindowPlatform
-from kotonoha.strings import Translator
 from kotonoha.ui.settings.lyrics_search_dialog import LyricsSearchDialog
-from kotonoha.ui.settings.lyrics_status import LyricsStatusBand
 
 
 class _Session:
@@ -65,7 +62,6 @@ class _Session:
         del url, json, params, headers, timeout
         raise AssertionError("search providers must not use the fake session directly")
 
-
 def _artifact(provider: str, song_id: str, text: str) -> LyricsArtifact:
     return LyricsArtifact(
         provider=provider,
@@ -78,7 +74,6 @@ def _artifact(provider: str, song_id: str, text: str) -> LyricsArtifact:
         lines=(LyricLine(0, song_id, 0.0, 5.0, text, ""),),
         confidence=MatchConfidence.HIGH,
     )
-
 
 async def test_search_service_returns_multiple_results_and_isolates_failed_sources() -> None:
     session = _Session()
@@ -102,7 +97,6 @@ async def test_search_service_returns_multiple_results_and_isolates_failed_sourc
     await service.stop()
     assert session.closed is True
 
-
 async def test_search_service_applies_the_total_result_budget() -> None:
     session = _Session()
 
@@ -124,7 +118,6 @@ async def test_search_service_applies_the_total_result_budget() -> None:
     assert len(response.results) == MANUAL_SEARCH_RESULTS_TOTAL
     await service.stop()
 
-
 async def test_search_service_reports_a_declared_unavailable_provider() -> None:
     session = _Session()
     service = LyricsSearchService(
@@ -143,40 +136,6 @@ async def test_search_service_reports_a_declared_unavailable_provider() -> None:
     )
     await service.stop()
 
-
-def test_status_line_lists_only_source_names() -> None:
-    # The reasons are sentences; joining them into the one-line footer is what
-    # pushed the dialog wider than the screen and clipped the result count.
-    from kotonoha.ui.settings.lyrics_search_model import format_unavailable_sources
-
-    formatted = format_unavailable_sources(
-        (
-            LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
-            LyricsSearchUnavailable("cider", "search.unavailable.cider"),
-        ),
-        Translator("zh-Hans"),
-    )
-
-    assert formatted == "QQ 音乐, Cider 自带"
-
-
-def test_status_tooltip_translates_every_reason() -> None:
-    # Reasons used to be English sentences pasted into a localized dialog.
-    from kotonoha.ui.settings.lyrics_search_model import format_unavailable_details
-
-    detail = format_unavailable_details(
-        (
-            LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
-            LyricsSearchUnavailable("cider", "search.unavailable.cider"),
-        ),
-        Translator("zh-Hans"),
-    )
-
-    assert detail == "QQ 音乐：不支持按元数据搜索，需精确歌曲 ID\nCider 自带：仅提供当前播放的曲目"
-    # An untranslated key renders as itself, which is how the raw string would leak.
-    assert "search.unavailable." not in detail
-
-
 class _Signal:
     def __init__(self) -> None:
         self._slots: list[Callable[..., object]] = []
@@ -188,9 +147,14 @@ class _Signal:
         for slot in tuple(self._slots):
             slot(*args)
 
-
 class _Dialog:
+
+    def retheme(self, config: Config) -> None:
+        """Accept a theme change the way the real window does."""
+        self.themes.append(str(config.theme))
+
     def __init__(self) -> None:
+        self.themes: list[str] = []
         self.intent_requested = _Signal()
         self.finished = _Signal()
         self.status = LyricsDisplayStatus()
@@ -230,7 +194,6 @@ class _Dialog:
     def set_current_status(self, status: LyricsDisplayStatus) -> None:
         self.status = status
 
-
 class _Factory:
     def __init__(self) -> None:
         self.dialog = _Dialog()
@@ -241,7 +204,6 @@ class _Factory:
         self.status = status
         return self.dialog
 
-
 class _ReopeningFactory:
     def __init__(self) -> None:
         self.dialogs: list[_Dialog] = []
@@ -251,7 +213,6 @@ class _ReopeningFactory:
         dialog = _Dialog()
         self.dialogs.append(dialog)
         return dialog
-
 
 class _QtFactory:
     def __init__(self, platform_factory: OverlayPlatformFactory | None = None) -> None:
@@ -273,7 +234,6 @@ class _QtFactory:
         self.dialogs.append(dialog)
         return dialog
 
-
 def _ordinary_window_factory(host):
     platform = QtWindowPlatform(host)
     return OverlayPlatformAdapters(
@@ -284,7 +244,6 @@ def _ordinary_window_factory(host):
         output_binding=None,
         drag=platform,
     )
-
 
 class _Cache:
     def __init__(self) -> None:
@@ -300,7 +259,6 @@ class _Cache:
         status = CacheWriteStatus.CREATED if len(self.writes) == 1 else CacheWriteStatus.UPDATED
         return CacheWriteResult(LyricsCacheKey(artifact.provider, artifact.provider_song_id), status)
 
-
 class _Searcher:
     def __init__(self, response: LyricsSearchResponse) -> None:
         self.response = response
@@ -314,7 +272,6 @@ class _Searcher:
     async def search(self, query: LyricsSearchQuery, sources: Sequence[str]) -> LyricsSearchResponse:
         del query, sources
         return self.response
-
 
 class _BlockingSearcher(_Searcher):
     def __init__(self, response: LyricsSearchResponse) -> None:
@@ -332,7 +289,6 @@ class _BlockingSearcher(_Searcher):
             self.cancelled.set()
             raise
         return self.response
-
 
 async def test_search_controller_reapplies_candidates_and_refreshes_manual_status() -> None:
     first = LyricsSearchResult.from_artifact(_artifact("netease", "1", "first"))
@@ -390,28 +346,6 @@ async def test_search_controller_reapplies_candidates_and_refreshes_manual_statu
 
     await controller.stop()
 
-
-def test_search_dialog_enter_search_stays_open(qapp) -> None:
-    dialog = LyricsSearchDialog(Config(), LyricsSearchQuery("Song", "Artist"))
-    intents: list[object] = []
-    dialog.intent_requested.connect(intents.append)
-    dialog.show()
-    qapp.processEvents()
-
-    key_event = QKeyEvent(
-        QEvent.Type.KeyPress,
-        Qt.Key.Key_Return,
-        Qt.KeyboardModifier.NoModifier,
-    )
-    QApplication.sendEvent(dialog._title_edit, key_event)
-    qapp.processEvents()
-
-    assert dialog.isVisible()
-    assert len(intents) == 1
-    assert isinstance(intents[0], SearchLyrics)
-    dialog.close()
-
-
 async def test_search_controller_reopens_after_real_dialog_closes(qapp) -> None:
     factory = _QtFactory(_ordinary_window_factory)
     status = LyricsDisplayStatus()
@@ -443,7 +377,6 @@ async def test_search_controller_reopens_after_real_dialog_closes(qapp) -> None:
     await controller.stop()
     qapp.processEvents()
 
-
 async def test_search_controller_cancels_closed_dialog_work_before_reopening() -> None:
     result = LyricsSearchResult.from_artifact(_artifact("netease", "1", "result"))
     searcher = _BlockingSearcher(LyricsSearchResponse((result,)))
@@ -473,33 +406,89 @@ async def test_search_controller_cancels_closed_dialog_work_before_reopening() -
     assert second.results == (result,)
     await controller.stop()
 
+def test_a_failed_selection_reports_in_the_readers_language(qapp):
+    from kotonoha.strings.search import SEARCH_STRINGS
 
-def test_search_dialog_meta_surface_uses_frosted_theme_background(qapp) -> None:
-    from kotonoha.config import ThemeMode
+    # show_error() takes a strings key, and an unknown key resolves to itself. Two
+    # call sites passed English sentences, so those two failures stayed English in
+    # every locale while every other one translated.
+    keys = {"search.error.result_gone", "search.error.track_gone"}
+    assert keys <= set(SEARCH_STRINGS)
+    for key in keys:
+        assert set(SEARCH_STRINGS[key]) >= {"en", "zh-Hans", "zh-Hant", "ja"}
 
-    dialog = LyricsSearchDialog(
-        Config(theme=ThemeMode.LIGHT),
-        LyricsSearchQuery("Song", "Artist"),
+    import ast
+
+    module = Path(__file__).parent.parent / "src" / "kotonoha" / "app" / "lyrics_search.py"
+    tree = ast.parse(module.read_text(encoding="utf-8"))
+    spoken = [
+        node.args[0].value
+        for node in ast.walk(tree)
+        if isinstance(node, ast.Call)
+        and isinstance(node.func, ast.Attribute)
+        and node.func.attr == "show_error"
+        and node.args
+        and isinstance(node.args[0], ast.Constant)
+        and isinstance(node.args[0].value, str)
+    ]
+    assert spoken, "no show_error call was found to check"
+    assert all(key.startswith("search.") for key in spoken), spoken
+
+def test_the_timing_label_follows_the_module_that_names_the_encodings(qapp):
+    from kotonoha.lyrics.search import LyricsTiming, LyricsVersion
+
+    # The encodings are written in lyrics/search.py; a reader spelling one of them
+    # out again cannot be told when a new one arrives, and a new line-timed format
+    # would silently fall through to the label meaning "no timing at all".
+    assert LyricsVersion("lrc").timing is LyricsTiming.LINE
+    assert LyricsVersion("yrc").timing is LyricsTiming.WORD
+    assert LyricsVersion("krc").timing is LyricsTiming.WORD
+    assert LyricsVersion("lyrics").timing is LyricsTiming.NONE
+
+def test_lifting_a_version_label_leaves_the_rest_of_the_title(qapp):
+    from kotonoha.lyrics.title_grammar import title_without_version_labels
+
+    # base_title() drops every bracketed group, which is right for matching and
+    # wrong for display: a production credit is not a version, and the row showed
+    # only "Realize" while marking nothing but the broadcast edit.
+    assert title_without_version_labels("Realize (Prod. by X) (TV Size)") == "Realize (Prod. by X)"
+    assert title_without_version_labels("Realize (TV Size)") == "Realize"
+    # A title that is nothing but a version group still has to say something.
+    assert title_without_version_labels("(TV Size)") == "(TV Size)"
+
+def test_a_search_before_the_service_started_reports_a_key(qapp):
+    import pytest
+
+    from kotonoha.lyrics.search import LyricsSearchError, LyricsSearchService
+
+    service = LyricsSearchService({}, lambda: cast("Any", None))
+    with pytest.raises(LyricsSearchError) as raised:
+        asyncio.run(service.search(LyricsSearchQuery("Song", "Artist"), ("netease",)))
+
+    # The dialog reporting this is localized and resolves an unknown key to
+    # itself, so a sentence written here arrives in English in every locale.
+    assert raised.value.reason_key.startswith("search.")
+
+def test_applying_settings_rethemes_the_window_that_is_open(qapp):
+    from kotonoha.app.lyrics_search import LyricsSearchController
+    from kotonoha.config import Config, ThemeMode
+
+    factory = _Factory()
+    themes = factory.dialog.themes
+    controller = LyricsSearchController(
+        _Searcher(LyricsSearchResponse(())),
+        _Cache(),
+        factory,
+        on_applied=lambda result, track: True,
+        status_provider=LyricsDisplayStatus,
     )
-    dialog._frosted = True
-    dialog._apply_surface_style()
 
-    assert "background: rgba(255, 255, 255, 120);" in dialog.styleSheet()
-    dialog.close()
+    # No window open: nothing to retheme, and nothing to fail on either.
+    controller.retheme(Config(theme=ThemeMode.LIGHT))
+    assert themes == []
 
+    controller.open(Config(), LyricsSearchQuery("Song", "Artist"), LyricsDisplayStatus())
+    controller.retheme(Config(theme=ThemeMode.LIGHT))
 
-def test_status_band_exposes_localized_source_and_acquisition_facts() -> None:
-    band = LyricsStatusBand(
-        LyricsDisplayStatus(
-            playback_source="mpris",
-            lyrics_source_id="netease",
-            lyrics_source_name="netease",
-            origin=LyricsOrigin.NETWORK,
-            cache_state=LyricsCacheState.FROM_CACHE,
-        ),
-        Translator("zh-Hans"),
-    )
-
-    values = [label.text() for label in band.findChildren(QLabel) if label.objectName() == "metaValue"]
-
-    assert values == ["网易云", "网络查询", "MPRIS", "来自缓存"]
+    # The controller owns the open window; nothing else can reach it.
+    assert themes == [str(ThemeMode.LIGHT)]

@@ -2,16 +2,26 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex, Qt
-from PyQt6.QtGui import QFont, QFontDatabase, QFontMetrics, QIcon, QPixmap, QResizeEvent
+from PyQt6.QtCore import QRectF, Qt, QTimer
+from PyQt6.QtGui import (
+    QFontDatabase,
+    QFontMetrics,
+    QIcon,
+    QPainter,
+    QPainterPath,
+    QPaintEvent,
+    QPixmap,
+    QRegion,
+    QResizeEvent,
+)
 from PyQt6.QtWidgets import (
     QComboBox,
     QFontComboBox,
     QLabel,
+    QLineEdit,
     QListWidget,
     QSizePolicy,
-    QStyledItemDelegate,
-    QStyleOptionViewItem,
+    QTableView,
     QWidget,
 )
 
@@ -19,25 +29,38 @@ FONT_FALLBACKS = (
     "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Source Han Sans SC",
     "Microsoft YaHei", "PingFang SC", "Noto Sans", "DejaVu Sans",
 )
+
 PLAYER_ROW_MAX_CHARS = 60
 
+# Slow enough to read while it moves; the hold is long enough to read an end.
+_SCROLL_INTERVAL_MS = 33
+
+_SCROLL_STEP_PX = 1
+
+_SCROLL_HOLD_TICKS = 45
 
 def elide_player_row(text: str) -> str:
     """Keep a player summary compact enough for the settings combo box."""
     return text if len(text) <= PLAYER_ROW_MAX_CHARS else text[: PLAYER_ROW_MAX_CHARS - 1] + "..."
 
+class RoundedTableView(QTableView):
+    """A table whose corners are actually round.
 
-class FontNameDelegate(QStyledItemDelegate):
-    """Preview each font family in its own face in the combo popup."""
+    A stylesheet radius reaches the frame but not the viewport, and the rows are
+    painted into the viewport, so the corners came back square wherever the table
+    had a surface of its own to show. A mask cuts the widget itself.
+    """
 
-    def initStyleOption(self, option: QStyleOptionViewItem | None, index: QModelIndex) -> None:
-        super().initStyleOption(option, index)
-        if option is None:
-            return
-        family = index.data()
-        if isinstance(family, str) and family:
-            option.font = QFont(family)
+    def __init__(self, radius: int, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._radius = radius
 
+    def resizeEvent(self, e: QResizeEvent | None) -> None:
+        """Recut the rounded mask whenever the table changes size."""
+        super().resizeEvent(e)
+        path = QPainterPath()
+        path.addRoundedRect(QRectF(self.rect()), self._radius, self._radius)
+        self.setMask(QRegion(path.toFillPolygon().toPolygon()))
 
 def _constrain_combo_popup(combo: QComboBox) -> None:
     """Keep a content-sized Qt popup within its owning combo-box width."""
@@ -52,7 +75,6 @@ def _constrain_combo_popup(combo: QComboBox) -> None:
     if popup is not None and popup is not view:
         popup.setFixedWidth(width)
 
-
 class SettingsComboBox(QComboBox):
     """Combo box whose popup follows the stable width of its field."""
 
@@ -61,7 +83,6 @@ class SettingsComboBox(QComboBox):
         super().showPopup()
         _constrain_combo_popup(self)
 
-
 class SettingsFontComboBox(QFontComboBox):
     """Font picker with the same bounded popup policy as other settings combos."""
 
@@ -69,7 +90,6 @@ class SettingsFontComboBox(QFontComboBox):
         """Open the font list, then constrain its content-sized frame."""
         super().showPopup()
         _constrain_combo_popup(self)
-
 
 class IconStrip(QListWidget):
     """Icon grid whose height follows the rows produced by Qt's layout."""
@@ -86,7 +106,6 @@ class IconStrip(QListWidget):
         if self.height() != wanted:
             self.setFixedHeight(wanted)
 
-
 def resolve_font_family(font_family: str) -> str:
     """Choose the first installed family from a configured fallback chain."""
     installed = set(QFontDatabase.families())
@@ -99,14 +118,12 @@ def resolve_font_family(font_family: str) -> str:
             return fallback
     return next((name for name in requested if name), "")
 
-
 def available_font_styles(family: str) -> list[str]:
     """Return the real styles advertised by one installed family."""
     styles = QFontDatabase.styles(family)
     if not styles:
         return ["Regular"]
     return sorted(styles, key=lambda style: (0 if style in ("Regular", "Book", "Normal") else 1, style))
-
 
 def no_tint_icon(pixmap: QPixmap) -> QIcon:
     """Reuse the normal pixmap for selected states so Qt adds no blue tint."""
@@ -115,6 +132,83 @@ def no_tint_icon(pixmap: QPixmap) -> QIcon:
         icon.addPixmap(pixmap, mode)
     return icon
 
+class ScrollingLabel(QLabel):
+    """Show a line too long for its box by moving it, and hold still otherwise.
+
+    Motion is expensive attention, so it is spent only where the text cannot be
+    read any other way: a title that fits does not move at all, and one that does
+    not fit pauses at each end so both can actually be read.
+    """
+
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._full_text = ""
+        self._offset = 0
+        self._hold = _SCROLL_HOLD_TICKS
+        self._back = False
+        self._timer = QTimer(self)
+        self._timer.setInterval(_SCROLL_INTERVAL_MS)
+        self._timer.timeout.connect(self._step)
+        self.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
+
+    def setText(self, a0: str | None) -> None:
+        """Replace the line and restart from its beginning."""
+        self._full_text = a0 or ""
+        self._offset = 0
+        self._back = False
+        self._hold = _SCROLL_HOLD_TICKS
+        super().setText(self._full_text)
+        self._retime()
+
+    def full_text(self) -> str:
+        """Return the whole line, whatever part of it is currently visible."""
+        return self._full_text
+
+    def resizeEvent(self, a0: QResizeEvent | None) -> None:
+        """Start or stop the motion when the space for the line changes."""
+        super().resizeEvent(a0)
+        self._retime()
+
+    def _overflow(self) -> int:
+        """Return how much of the line does not fit, or zero when it all does."""
+        metrics = QFontMetrics(self.font())
+        return max(0, metrics.horizontalAdvance(self._full_text) - self.contentsRect().width())
+
+    def _retime(self) -> None:
+        """Run the timer only while there is something off the end to reach."""
+        if self._overflow() > 0:
+            if not self._timer.isActive():
+                self._timer.start()
+            return
+        self._timer.stop()
+        self._offset = 0
+        self.update()
+
+    def _step(self) -> None:
+        """Advance one step, holding at each end before turning back."""
+        overflow = self._overflow()
+        if overflow <= 0:
+            self._retime()
+            return
+        if self._hold > 0:
+            self._hold -= 1
+            return
+        self._offset += -_SCROLL_STEP_PX if self._back else _SCROLL_STEP_PX
+        if self._offset >= overflow or self._offset <= 0:
+            self._offset = max(0, min(overflow, self._offset))
+            self._back = not self._back
+            self._hold = _SCROLL_HOLD_TICKS
+        self.update()
+
+    def paintEvent(self, a0: QPaintEvent | None) -> None:
+        """Draw the line shifted by however far it has travelled."""
+        del a0
+        painter = QPainter(self)
+        painter.setPen(self.palette().color(self.foregroundRole()))
+        painter.setFont(self.font())
+        box = self.contentsRect().adjusted(-self._offset, 0, 0, 0)
+        painter.drawText(box, int(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter), self._full_text)
+        painter.end()
 
 class ElidingLabel(QLabel):
     """Show one line that shrinks with its container instead of widening it.
@@ -153,12 +247,40 @@ class ElidingLabel(QLabel):
             metrics.elidedText(self._full_text, Qt.TextElideMode.ElideRight, self.contentsRect().width())
         )
 
+class ClearableLineEdit(QLineEdit):
+    """A text field owning a themed clear action that appears only when needed.
+
+    Qt's built-in clear button keeps one colour, which disappears on a light
+    field. The action belongs to the field so its visibility follows a bound
+    method here: PyQt holds a lambda strongly and would keep firing it into a
+    deleted C++ object.
+    """
+
+    def __init__(self, text: str, glyph: QIcon, parent: QWidget | None = None) -> None:
+        super().__init__(text, parent)
+        action = self.addAction(glyph, QLineEdit.ActionPosition.TrailingPosition)
+        if action is None:
+            raise RuntimeError("a query field could not take a clear action")
+        self._clear_action = action
+        self._clear_action.setVisible(bool(text))
+        self._clear_action.triggered.connect(self.clear)
+        self.textChanged.connect(self._follow_text)
+
+    def set_clear_glyph(self, glyph: QIcon) -> None:
+        """Redraw the clear mark after a theme change."""
+        self._clear_action.setIcon(glyph)
+
+    def _follow_text(self, text: str) -> None:
+        """Offer the clear action only while there is something to clear."""
+        self._clear_action.setVisible(bool(text))
 
 __all__ = [
+    "ClearableLineEdit",
     "FONT_FALLBACKS",
     "ElidingLabel",
-    "FontNameDelegate",
     "IconStrip",
+    "RoundedTableView",
+    "ScrollingLabel",
     "SettingsComboBox",
     "SettingsFontComboBox",
     "available_font_styles",

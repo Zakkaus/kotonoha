@@ -57,6 +57,12 @@ class LyricsDisplayStatus:
     lyrics_source_name: str | None = None
     origin: LyricsOrigin | None = None
     cache_state: LyricsCacheState = LyricsCacheState.NONE
+    # What the lyric document says the track is. A player that reports only a page
+    # title knows less about the song than the lyrics already chosen for it.
+    lyrics_song_id: str | None = None
+    lyrics_title: str | None = None
+    lyrics_artist: str | None = None
+    lyrics_album: str | None = None
 
 
 class DisplayScript(StrEnum):

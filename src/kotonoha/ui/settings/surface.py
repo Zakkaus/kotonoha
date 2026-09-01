@@ -17,8 +17,9 @@ from PyQt6.QtGui import (
     QResizeEvent,
     QShowEvent,
 )
-from PyQt6.QtWidgets import QDialog, QWidget
+from PyQt6.QtWidgets import QDialog, QLabel, QWidget
 
+from ... import leaf_icon
 from ...config import Config
 from ...platform import OverlayPlatform, OverlayPlatformFactory, QtWindowHost, SurfaceResult, WindowRectangle
 from . import theme
@@ -69,6 +70,46 @@ class ThemedSettingsDialog(QDialog):
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+    def retheme(self, config: Config) -> None:
+        """Adopt a newly applied theme without being closed and reopened.
+
+        Only the settings window used to restyle itself, so a search or cache
+        window left open kept the palette it was born with while the dialog that
+        changed it repainted — two windows of one application disagreeing about
+        which theme is in effect.
+        """
+        self._theme = theme._resolve_theme(config.theme)
+        self._accent = config.accent_start
+        self._win_opacity = config.settings_opacity
+        was_frosted = self._frosted
+        self._frosted = self._blur_capable and config.frost_window
+        if self._frosted != was_frosted:
+            # The blur region is compositor state, not a stylesheet rule: turning
+            # frost on or off has to reach it or the window keeps the old backdrop.
+            self._apply_blur() if self._frosted else self._clear_blur()
+        if self._surface_style_ready:
+            self._apply_surface_style()
+            self._refresh_themed_icons()
+        self.update()
+
+    def _refresh_themed_icons(self) -> None:
+        """Redraw any icon whose colour came from the palette.
+
+        A stylesheet reapplies itself; an icon does not. One rendered with the
+        old palette survives a theme change looking inverted against the text
+        beside it, which is the one part of the window that did not follow.
+        """
+
+    def _paint_leaf_badge(self, badge: QLabel) -> None:
+        """Tint the title-bar leaf with the accent now in effect.
+
+        The badge is a pixmap rendered once, so a window left open through an
+        accent change kept the old hue beside controls styled with the new one.
+        """
+        pixmap = leaf_icon.render_leaf(leaf_icon.ACCENT, self._accent, size=44)
+        pixmap.setDevicePixelRatio(2.0)
+        badge.setPixmap(pixmap)
+
     def _apply_surface_style(self) -> None:
         """Apply the current content stylesheet supplied by a concrete dialog."""
         raise NotImplementedError
@@ -82,16 +123,23 @@ class ThemedSettingsDialog(QDialog):
         palette = theme._PALETTES[self._theme]
         rgba = cast("dict[str, tuple[int, int, int, int]]", palette)
         bg = rgba["window_bg"]
-        if self._frosted:
-            bg = (bg[0], bg[1], bg[2], 165)
-        else:
-            bg = (bg[0], bg[1], bg[2], max(0, min(255, round(255 * self._win_opacity))))
+        # The setting applies in both modes, at face value. Frosted glass used to
+        # paint one hardcoded alpha instead, so the control did nothing at any value
+        # in the mode most people leave on; scaling it down would have been the same
+        # mistake in a smaller way, since 100% means opaque and nothing else.
+        bg = (bg[0], bg[1], bg[2], max(0, min(255, round(255 * self._win_opacity))))
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
         painter.setBrush(QColor(*bg))
         painter.setPen(QPen(QColor(*rgba["window_border"])))
         rect = self.rect().adjusted(0, 0, -1, -1)
         painter.drawRoundedRect(rect, float(_RADIUS), float(_RADIUS))
+
+    def _clear_blur(self) -> None:
+        """Drop the compositor blur region when frost is switched off."""
+        blur = self._platform.blur if self._platform is not None else None
+        if blur is not None:
+            blur.set_blur_region(None, _RADIUS)
 
     def _apply_blur(self) -> None:
         """Apply the compositor blur region and fall back to an opaque surface."""

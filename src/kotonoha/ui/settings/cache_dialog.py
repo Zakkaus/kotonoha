@@ -21,7 +21,6 @@ from PyQt6.QtWidgets import (
     QWidget,
 )
 
-from ... import leaf_icon
 from ...app.intents import ClearCache, DeleteCacheEntries, SearchCache
 from ...config import Config
 from ...lyrics.cache import (
@@ -224,6 +223,10 @@ class LyricsCacheDialog(ThemedSettingsDialog):
         """Apply the shared settings skin plus the cache table rules."""
         self.setStyleSheet(self._style_sheet())
 
+    def _refresh_themed_icons(self) -> None:
+        """Re-tint the one mark this window draws from the palette."""
+        self._paint_leaf_badge(self._logo_badge)
+
     def _title_bar(self) -> QWidget:
         """Build the same draggable title bar used by the main Settings dialog."""
         title_bar = SettingsTitleBar()
@@ -232,9 +235,8 @@ class LyricsCacheDialog(ThemedSettingsDialog):
         bar.setSpacing(9)
         logo_badge = QLabel()
         logo_badge.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        pixmap = leaf_icon.render_leaf(leaf_icon.ACCENT, self._accent, size=44)
-        pixmap.setDevicePixelRatio(2.0)
-        logo_badge.setPixmap(pixmap)
+        self._logo_badge = logo_badge
+        self._paint_leaf_badge(logo_badge)
         bar.addWidget(logo_badge)
         title = QLabel(self._translator.text("cache.title"))
         title.setObjectName("dialogTitle")

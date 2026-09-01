@@ -825,11 +825,14 @@ def test_settings_opacity_100_is_fully_opaque_and_range_is_full(qapp):
     dialog.resize(200, 200)
     assert dialog.form_widgets.settings_opacity.minimum() == 0
     assert dialog.form_widgets.settings_opacity.maximum() == 100
-    opaque = dialog.grab().toImage().pixelColor(100, 100).alpha()
+    # Sampled inside the window's own fill, clear of the panels and their text:
+    # the centre of a small dialog lands on a label, whose pixels are opaque
+    # whatever the window is set to.
+    opaque = dialog.grab().toImage().pixelColor(20, 20).alpha()
     assert opaque == 255  # fully solid at 100%
     dialog.form_widgets.settings_opacity.setValue(50)
     dialog._emit()  # applied on Apply, not live
-    assert dialog.grab().toImage().pixelColor(100, 100).alpha() < 200  # clearly see-through
+    assert dialog.grab().toImage().pixelColor(20, 20).alpha() < 200  # clearly see-through
     dialog.close()
 
 
@@ -1152,3 +1155,149 @@ def test_eliding_label_shrinks_instead_of_widening_its_parent(qapp):
     assert label.text().endswith("…")
     # The untruncated string stays available, which is what the tooltip shows.
     assert label.full_text() == text
+
+
+def test_a_theme_change_redraws_the_sidebar_glyphs(qapp):
+    from kotonoha.ui.settings.dialog import SettingsDialog
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.DARK))
+
+    def _glyph_colour() -> str:
+        item = dialog._nav.item(0)
+        assert item is not None
+        image = item.icon().pixmap(16, 16).toImage()
+        drawn = [
+            image.pixelColor(x, y)
+            for x in range(16)
+            for y in range(16)
+            if image.pixelColor(x, y).alpha() > 128
+        ]
+        assert drawn, "the sidebar glyph drew nothing"
+        return drawn[len(drawn) // 2].name()
+
+    before = _glyph_colour()
+    dialog.retheme(Config(theme=ThemeMode.LIGHT))
+
+    # A stylesheet reapplies itself; an icon does not. One left at the old palette
+    # reads as inverted against the label beside it, which did follow.
+    assert _glyph_colour() != before
+
+
+def test_changing_the_theme_inside_settings_redraws_its_own_glyphs(qapp):
+    from kotonoha.ui.settings.dialog import SettingsDialog
+
+    dialog = SettingsDialog(Config(theme=ThemeMode.DARK))
+
+    def _glyph_colour() -> str:
+        item = dialog._nav.item(0)
+        assert item is not None
+        image = item.icon().pixmap(16, 16).toImage()
+        drawn = [
+            image.pixelColor(x, y)
+            for x in range(16)
+            for y in range(16)
+            if image.pixelColor(x, y).alpha() > 200
+        ]
+        assert drawn, "the sidebar glyph drew nothing"
+        return drawn[len(drawn) // 2].name()
+
+    before = _glyph_colour()
+    combo = dialog.form_widgets.theme_combo
+    combo.setCurrentIndex(combo.findData(ThemeMode.LIGHT.value))
+    dialog._emit()
+
+    # This window restyles itself on apply instead of going through retheme(), and
+    # that path forgot the icons: the sidebar kept white glyphs on a white surface.
+    assert _glyph_colour() != before
+
+
+def test_the_cache_window_leaf_follows_an_applied_accent(qapp):
+    from kotonoha.ui.settings.cache_dialog import LyricsCacheDialog
+
+    dialog = LyricsCacheDialog(Config(accent_start="#FF5EB5"))
+
+    def _ink() -> str:
+        image = dialog._logo_badge.pixmap().toImage()
+        drawn = [
+            image.pixelColor(x, y)
+            for x in range(image.width())
+            for y in range(image.height())
+            if image.pixelColor(x, y).alpha() > 128
+        ]
+        assert drawn, "the badge drew nothing"
+        return drawn[len(drawn) // 2].name()
+
+    before = _ink()
+    dialog.retheme(Config(accent_start="#4FACFE"))
+
+    # The leaf is tinted at render time and this window redrew nothing on the
+    # retheme path, so it kept the previous accent beside restyled controls.
+    assert _ink() != before
+
+
+def test_an_applied_accent_reaches_the_row_that_marks_the_current_page(qapp):
+    from kotonoha.ui.settings.dialog import SettingsDialog
+
+    dialog = SettingsDialog(Config(accent_start="#3B82F6", theme=ThemeMode.DARK))
+
+    def _rail() -> str:
+        return dialog._nav_delegate._rail.name()
+
+    before = _rail()
+    accent = dialog.form_widgets.accent
+    cyan = next(
+        index for index in range(accent.count())
+        if accent.itemData(index) == ("#4FACFE", "#00F2FE", "#38E1FF")
+    )
+    accent.setCurrentIndex(cyan)
+    dialog._emit()
+
+    # The rail and the tint are the delegate's QColors, taken once. Reapplying the
+    # skin does not reach a delegate, so the current row kept the old accent while
+    # every control around it moved to the new one.
+    assert _rail() != before
+    assert _rail() == "#4facfe"
+
+
+def test_window_opacity_moves_the_frosted_window_too(qapp):
+    from PyQt6.QtGui import QImage, QPainter
+
+    from kotonoha.ui.settings.dialog import SettingsDialog
+
+    def _corner_alpha(opacity: float) -> int:
+        dialog = SettingsDialog(Config(settings_opacity=opacity, theme=ThemeMode.DARK))
+        dialog._frosted = True
+        dialog.resize(200, 120)
+        image = QImage(200, 120, QImage.Format.Format_ARGB32)
+        image.fill(0)
+        painter = QPainter(image)
+        dialog.render(painter)
+        painter.end()
+        return image.pixelColor(100, 60).alpha()
+
+    # Frost used to paint one hardcoded alpha, so the control did nothing at any
+    # value while still offering to be moved.
+    assert _corner_alpha(0.4) < _corner_alpha(1.0)
+
+
+def test_a_title_that_fits_does_not_move(qapp):
+    from kotonoha.ui.settings.widgets import ScrollingLabel
+
+    label = ScrollingLabel()
+    # Shown, because Qt delivers a resize only to a widget that is on screen, and
+    # the decision to move at all is made from the width it was given.
+    label.show()
+    label.resize(400, 24)
+    label.setText("Realize")
+    qapp.processEvents()
+
+    # Motion is expensive attention, so it is spent only where the text cannot be
+    # read any other way.
+    assert not label._timer.isActive()
+
+    label.setText("忘れじの言の葉 - Forgotten Words [Symphonic Ver.] (合作演出:Inui Toko)")
+    label.resize(120, 24)
+    qapp.processEvents()
+
+    assert label._timer.isActive()
+    assert label.full_text().startswith("忘れじの言の葉")

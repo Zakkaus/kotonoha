@@ -62,6 +62,11 @@ class LyricsSearchController:
         self._generation = 0
         self._closed = False
 
+    def retheme(self, config: Config) -> None:
+        """Pass a newly applied theme to the search window, when one is open."""
+        if self._dialog is not None:
+            self._dialog.retheme(config)
+
     def open(self, config: Config, query: LyricsSearchQuery, status: LyricsDisplayStatus) -> None:
         """Open or focus the one search window owned by this workflow."""
         if self._closed:
@@ -106,11 +111,11 @@ class LyricsSearchController:
         if dialog is None or self._operation_active(dialog):
             return
         if result not in self._results:
-            dialog.show_error("The selected lyric result is no longer available")
+            dialog.show_error("search.error.result_gone")
             return
         current_track = self._current_track
         if current_track is None:
-            dialog.show_error("The current track is no longer available")
+            dialog.show_error("search.error.track_gone")
             return
         previous = self._apply_task
         if previous is not None and not previous.done():
@@ -205,7 +210,9 @@ class LyricsSearchController:
         except (LyricsSearchError, RuntimeError, TimeoutError) as exc:
             if current and self._dialog is not None:
                 self._dialog.set_busy(False)
-                self._dialog.show_error(f"Search failed: {exc}")
+                self._dialog.show_error(
+                    exc.reason_key if isinstance(exc, LyricsSearchError) else "search.error.failed"
+                )
 
     async def _apply_async(
         self,
@@ -231,10 +238,10 @@ class LyricsSearchController:
             task.result()
         except asyncio.CancelledError:
             return
-        except (LyricsCacheError, RuntimeError, TimeoutError, TypeError, ValueError) as exc:
+        except (LyricsCacheError, RuntimeError, TimeoutError, TypeError, ValueError):
             if current and self._dialog is not None:
                 self._dialog.set_busy(False)
-                self._dialog.show_error(f"Apply failed: {exc}")
+                self._dialog.show_error("search.error.apply_failed")
 
 
 __all__ = ["LyricsCacheWritePort", "LyricsSearchController"]
