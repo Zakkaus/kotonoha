@@ -120,28 +120,38 @@ def format_confidence(value: MatchConfidence, translator: Translator) -> str:
     return text if text != key else translator.text("search.match.none")
 
 
+def _source_label(source: str, translator: Translator) -> str:
+    """Return the localized provider name, or the raw source when it has no entry."""
+    key = f"src.{source}"
+    label = translator.text(key)
+    return source if label == key else label
+
+
 def format_unavailable_sources(
     sources: tuple[LyricsSearchUnavailable, ...], translator: Translator
 ) -> str:
-    """Render localized provider names together with their unavailable reasons."""
-    labels: list[str] = []
-    for unavailable in sources:
-        key = f"src.{unavailable.source}"
-        label = translator.text(key)
-        source_label = unavailable.source if label == key else label
-        labels.append(
-            translator.text("search.unavailable_source").format(
-                source=source_label,
-                reason=unavailable.reason,
-            )
+    """Render only the localized provider names, short enough for the status line."""
+    return ", ".join(_source_label(unavailable.source, translator) for unavailable in sources)
+
+
+def format_unavailable_details(
+    sources: tuple[LyricsSearchUnavailable, ...], translator: Translator
+) -> str:
+    """Render one localized name and reason per line, for the status tooltip."""
+    return "\n".join(
+        translator.text("search.unavailable_source").format(
+            source=_source_label(unavailable.source, translator),
+            reason=translator.text(unavailable.reason_key),
         )
-    return ", ".join(labels)
+        for unavailable in sources
+    )
 
 
 __all__ = [
     "LyricsSearchTableModel",
     "format_confidence",
     "format_duration",
+    "format_unavailable_details",
     "format_unavailable_sources",
     "format_version",
 ]

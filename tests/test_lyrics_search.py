@@ -95,9 +95,9 @@ async def test_search_service_returns_multiple_results_and_isolates_failed_sourc
     response = await service.search(LyricsSearchQuery("Song", "Artist"), ["first", "failing", "cider"])
 
     assert [result.source_key for result in response.results] == ["first:1", "first:2"]
-    assert [(item.source, item.reason) for item in response.unavailable_sources] == [
-        ("failing", "provider request timed out"),
-        ("cider", "search source is not configured"),
+    assert [(item.source, item.reason_key) for item in response.unavailable_sources] == [
+        ("failing", "search.unavailable.timeout"),
+        ("cider", "search.unavailable.unconfigured"),
     ]
     await service.stop()
     assert session.closed is True
@@ -129,10 +129,7 @@ async def test_search_service_reports_a_declared_unavailable_provider() -> None:
     session = _Session()
     service = LyricsSearchService(
         {
-            "qqmusic": LyricsSearchProvider(
-                None,
-                "QQ Music metadata search is unavailable; use an exact song id",
-            )
+            "qqmusic": LyricsSearchProvider(None, "search.unavailable.qqmusic")
         },
         lambda: session,
     )
@@ -142,20 +139,42 @@ async def test_search_service_reports_a_declared_unavailable_provider() -> None:
 
     assert response.results == ()
     assert response.unavailable_sources == (
-        LyricsSearchUnavailable("qqmusic", "QQ Music metadata search is unavailable; use an exact song id"),
+        LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
     )
     await service.stop()
 
 
-def test_unavailable_source_formatter_preserves_reason() -> None:
+def test_status_line_lists_only_source_names() -> None:
+    # The reasons are sentences; joining them into the one-line footer is what
+    # pushed the dialog wider than the screen and clipped the result count.
     from kotonoha.ui.settings.lyrics_search_model import format_unavailable_sources
 
     formatted = format_unavailable_sources(
-        (LyricsSearchUnavailable("qqmusic", "仅支持精确歌曲 ID"),),
+        (
+            LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
+            LyricsSearchUnavailable("cider", "search.unavailable.cider"),
+        ),
         Translator("zh-Hans"),
     )
 
-    assert formatted == "QQ 音乐：仅支持精确歌曲 ID"
+    assert formatted == "QQ 音乐, Cider 自带"
+
+
+def test_status_tooltip_translates_every_reason() -> None:
+    # Reasons used to be English sentences pasted into a localized dialog.
+    from kotonoha.ui.settings.lyrics_search_model import format_unavailable_details
+
+    detail = format_unavailable_details(
+        (
+            LyricsSearchUnavailable("qqmusic", "search.unavailable.qqmusic"),
+            LyricsSearchUnavailable("cider", "search.unavailable.cider"),
+        ),
+        Translator("zh-Hans"),
+    )
+
+    assert detail == "QQ 音乐：不支持按元数据搜索，需精确歌曲 ID\nCider 自带：仅提供当前播放的曲目"
+    # An untranslated key renders as itself, which is how the raw string would leak.
+    assert "search.unavailable." not in detail
 
 
 class _Signal:

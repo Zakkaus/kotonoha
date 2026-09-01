@@ -32,10 +32,12 @@ from . import theme
 from .lyrics_search_model import (
     LyricsSearchTableModel,
     format_duration,
+    format_unavailable_details,
     format_unavailable_sources,
 )
 from .lyrics_status import LyricsStatusBand
 from .surface import SettingsTitleBar, ThemedSettingsDialog
+from .widgets import ElidingLabel
 
 
 class LyricsSearchDialog(ThemedSettingsDialog):
@@ -112,7 +114,7 @@ class LyricsSearchDialog(ThemedSettingsDialog):
             raise RuntimeError("lyrics search table selection model is unavailable")
         selection_model.selectionChanged.connect(self._update_action_state)
 
-        self._status = QLabel("")
+        self._status = ElidingLabel()
         self._status.setObjectName("searchStatus")
         self._apply_button = QPushButton(self._translator.text("btn.apply_lyrics"))
         self._apply_button.setObjectName("applyButton")
@@ -251,6 +253,7 @@ class LyricsSearchDialog(ThemedSettingsDialog):
         self._results = response.results
         self._model.set_results(response.results)
         unavailable = format_unavailable_sources(response.unavailable_sources, self._translator)
+        detail = format_unavailable_details(response.unavailable_sources, self._translator)
         if response.results and response.unavailable_sources:
             message = self._translator.text("search.partial_results").format(
                 count=len(response.results), sources=unavailable
@@ -263,7 +266,7 @@ class LyricsSearchDialog(ThemedSettingsDialog):
             )
         else:
             message = self._translator.text("search.no_results")
-        self._show_status(message)
+        self._show_status(message, detail)
         self._update_action_state()
 
     def set_current_status(self, status: LyricsDisplayStatus) -> None:
@@ -334,10 +337,12 @@ class LyricsSearchDialog(ThemedSettingsDialog):
         has_selection = selection_model is not None and bool(selection_model.selectedRows())
         self._apply_button.setEnabled(not self._busy and has_selection)
 
-    def _show_status(self, message: str) -> None:
-        """Render an ordinary status message and restore its non-error selector."""
+    def _show_status(self, message: str, detail: str = "") -> None:
+        """Render a status message, keeping any longer explanation in its tooltip."""
         self._status.setObjectName("searchStatus")
         self._status.setText(message)
+        # The line elides, so the per-source reasons have to stay reachable.
+        self._status.setToolTip(detail)
         self._refresh_status_style()
 
     def _refresh_status_style(self) -> None:
