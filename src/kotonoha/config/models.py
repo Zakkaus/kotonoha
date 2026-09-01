@@ -33,7 +33,7 @@ DEFAULT_DISPLAY_SOURCES = ["mpris", "cider", "adapter"]
 # A few representative examples; anything else is picked via the custom colour
 # picker in Settings (keeps the dropdown short).
 ACCENT_PRESETS: tuple[tuple[str, str, str, str], ...] = (
-    ("pink", "#FF4FA3", "#FF8FCB", "#FF6EC7"),
+    ("pink", "#FF5EB5", "#FFA3D8", "#FF7FC7"),
     ("orange", "#FF8A4F", "#FFC58F", "#FFA56E"),
     ("green", "#34E89E", "#A7F3D0", "#5BF0B0"),
     ("cyan", "#4FACFE", "#00F2FE", "#38E1FF"),
@@ -165,7 +165,7 @@ class Config:
     ui_language: UiLanguage = UiLanguage.AUTO
     theme: ThemeMode = ThemeMode.AUTO
     frost_window: bool = True        # frosted-glass settings window (needs a blur-capable compositor)
-    settings_opacity: float = 0.95   # settings-window opacity 0.0..1.0 (a touch see-through by default)
+    settings_opacity: float = 0.80   # settings-window opacity 0.0..1.0
     lyrics_script: LyricsScript = LyricsScript.OFF
     # An intro or an instrumental break has no line to show. What stands in for one:
     # "dots" fills three dots as the wait runs, "symbol" holds a still note.
@@ -173,9 +173,9 @@ class Config:
     # Whether the wait also counts itself down, and in what: "off" | "percent" | "seconds".
     interlude_countdown: InterludeCountdown = InterludeCountdown.OFF
     # Pink accent (sung text gradient + sweep highlight)
-    accent_start: str = "#FF4FA3"
-    accent_end: str = "#FF8FCB"
-    accent_sweep: str = "#FF6EC7"
+    accent_start: str = "#FF5EB5"
+    accent_end: str = "#FFA3D8"
+    accent_sweep: str = "#FF7FC7"
     # Visual effects (all user-toggleable). Default to a calm look: animations on,
     # the flashier glow / word-pop off.
     fx_animate: bool = True          # master switch: line-change + settings fade-in animations
@@ -232,7 +232,7 @@ class Config:
             ui_language=_enum_or_default(self.ui_language, UiLanguage, UiLanguage.AUTO),
             theme=_enum_or_default(self.theme, ThemeMode, ThemeMode.AUTO),
             frost_window=_clean_bool(self.frost_window, True),
-            settings_opacity=_clamp_float(self.settings_opacity, 0.0, 1.0, 0.95),
+            settings_opacity=_clamp_float(self.settings_opacity, 0.0, 1.0, 0.80),
             lyrics_script=_enum_or_default(self.lyrics_script, LyricsScript, LyricsScript.OFF),
             interlude_style=_enum_or_default(self.interlude_style, InterludeStyle, InterludeStyle.DOTS),
             interlude_countdown=_enum_or_default(

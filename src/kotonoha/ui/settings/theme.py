@@ -19,20 +19,39 @@ QPushButton#closeButton {
 QPushButton#closeButton:hover { color: %TEXT_STRONG%; background: %ITEM_SEL%; }
 /* Left sidebar navigation (a QListWidget#nav) + a stacked content area, instead
    of top tabs — a cleaner settings layout with no tab/box corner clashes. */
+/* The sidebar needs a surface of its own. Sitting straight on the frosted window
+   its contrast is whatever the wallpaper happens to be: measured at 2.9:1 for a
+   dark theme over a bright desktop, where 4.5 is the floor. */
 QListWidget#nav {
-    background: transparent;
-    border: none;
+    /* The same surface the content card uses, so the two sides of the window
+       read as one pair of panels rather than a panel beside bare glass. */
+    background: %CARD_BG%;
+    border: 1px solid %PANE_BORDER%;
+    border-radius: 10px;
     outline: none;
-    padding: 2px;
+    /* Symmetric: the rail lives inside the filled row now, so the row itself has
+       no reason to hug one edge, and an uneven inset reads as a crooked list. */
+    padding: 6px 4px;
 }
+/* The frame's background does not reach the viewport the rows are painted into,
+   which then fills with the palette's opaque base and cancels the window's
+   transparency wherever the sidebar sits. */
+QListWidget#nav > QWidget#qt_scrollarea_viewport { background: transparent; }
 QListWidget#nav::item {
-    color: %TEXT_DIM%;
-    padding: 9px 12px;
-    border-radius: 8px;
+    color: %TEXT%;
+    /* The left padding is the gutter the current-page bar stands in; the row keeps
+       its full width so the delegate may paint there. */
+    /* Taller than the design system's --sp-2: these rows carry a glyph beside the
+       label, and at that padding the filled row read as a flat strip. */
+    padding: 10px 12px 10px 18px;
     margin: 2px 0;
 }
 QListWidget#nav::item:hover { color: %TEXT_STRONG%; background: %NAV_HOVER%; }
-QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: %ACCENT_SOFT%; }
+QListWidget#nav::item:selected:hover { background: transparent; }
+/* The current row's tint is painted by the delegate, together with its bar. */
+/* No weight change: a bolder label is a wider one, and the row it sits in
+   resizes, which shifts every row after it. */
+QListWidget#nav::item:selected { color: %TEXT_STRONG%; background: transparent; }
 /* Raised content surface (a card) for depth over the base dialog + sidebar. */
 QWidget#contentCard { background: %CARD_BG%; border: 1px solid %CARD_BORDER%; border-radius: 12px; }
 QScrollArea#settingsPageScroll { background: transparent; border: none; }
@@ -158,35 +177,72 @@ _PALETTES: dict[str, dict[str, object]] = {
     "dark": {
         "TEXT": "#E6E6E8", "TEXT_STRONG": "#FFFFFF", "TEXT_DIM": "rgba(255,255,255,140)",
         "HINT": "rgba(255,255,255,120)",
-        "PANE_BG": "rgba(255,255,255,8)", "PANE_BORDER": "rgba(255,255,255,20)",
+        "PANE_BG": "rgba(255,255,255,8)",
+        # A version qualifier is a label, not a command. It must not share the
+        # accent with the one button that acts, so it gets a neutral chip.
+        "CHIP_BG": "#2A2D34",
+        "CHIP_TEXT": "#B9BEC7",
+        # A glyph drawn as SVG, so a hex value: Qt's rgba() form is not a colour
+        # an SVG stroke can parse, and a stroke that does not parse paints nothing.
+        "GLYPH_CLEAR": "#FFFFFF",
+        # What sits on an accent fill, which is the same hue in both themes.
+        "GLYPH_ON_ACCENT": "#FFFFFF",
+        "CHIP_BORDER": "#3A3E47", "PANE_BORDER": "rgba(255,255,255,20)",
         # Raised content surface (a card) over the base dialog + sidebar, for depth.
         "CARD_BG": "rgba(255,255,255,7)", "CARD_BORDER": "rgba(255,255,255,14)",
         "NAV_HOVER": "rgba(255,255,255,12)",
+        # Current navigation is a state, not a command. Filling it with the accent
+        # gave it the same weight as the one button that acts.
+        "NAV_SELECTED": "rgba(255,255,255,22)",
         "FIELD_BG": "rgba(255,255,255,18)", "FIELD_BORDER": "rgba(255,255,255,32)",
         "FIELD_BORDER_HOVER": "rgba(255,255,255,80)", "POPUP_BG": "#1e2027",
         "IND_BORDER": "rgba(255,255,255,60)", "IND_BG": "rgba(255,255,255,15)",
-        "LIST_BG": "rgba(255,255,255,10)", "LIST_BORDER": "rgba(255,255,255,18)",
+        "LIST_BG": "rgba(255,255,255,10)",
+        # Opaque surfaces for the places that hold content. Blur reads well
+        # behind chrome and badly behind text, and these are all text.
+        "LIST_BORDER": "rgba(255,255,255,18)",
         "ITEM_SEL": "rgba(255,255,255,26)",
         "BTN_BG": "rgba(255,255,255,20)", "BTN_HOVER": "rgba(255,255,255,40)",
         "BTN_PRESSED": "rgba(255,255,255,60)",
+        # Match confidence is a status, so it is a token and not a literal in the
+        # table: the same three greens read differently on the two surfaces.
+        "MATCH_HIGH": "#4FC08D",
+        "MATCH_MEDIUM": "#E0B057",
+        "MATCH_NONE": "#8A8F98",
+        "MATCH_MEDIUM_BG": "#3A3018",
+        "MATCH_NONE_BG": "#2A2D34",
         "window_bg": (20, 22, 28, 240), "window_border": (255, 255, 255, 30),
     },
     "light": {
         "TEXT": "#24272B", "TEXT_STRONG": "#0E1013", "TEXT_DIM": "rgba(0,0,0,135)",
         "HINT": "rgba(0,0,0,115)",
-        "PANE_BG": "rgba(0,0,0,4)", "PANE_BORDER": "rgba(0,0,0,14)",
+        "PANE_BG": "rgba(0,0,0,4)",
+        "CHIP_BG": "#ECEEF2",
+        "CHIP_TEXT": "#5A5F68",
+        "GLYPH_CLEAR": "#5A5F68",
+        "GLYPH_ON_ACCENT": "#FFFFFF",
+        "CHIP_BORDER": "#D3D7DE", "PANE_BORDER": "rgba(0,0,0,14)",
         # A white content card over the light-grey dialog + sidebar, for depth.
-        "CARD_BG": "#FFFFFF", "CARD_BORDER": "rgba(0,0,0,12)",
+        # Not pure white: over a frosted window a solid card cancels the blur it
+        # sits on, and the panel reads as paper stuck to glass.
+        "CARD_BG": "rgba(255,255,255,150)", "CARD_BORDER": "rgba(0,0,0,12)",
         "NAV_HOVER": "rgba(0,0,0,7)",
+        "NAV_SELECTED": "rgba(0,0,0,13)",
         "FIELD_BG": "rgba(0,0,0,6)", "FIELD_BORDER": "rgba(0,0,0,28)",
         # Keep popups close to the light window surface; a pure white native
         # popup reads as a disconnected rectangle over the frosted dialog.
         "FIELD_BORDER_HOVER": "rgba(0,0,0,65)", "POPUP_BG": "#E8EAED",
         "IND_BORDER": "rgba(0,0,0,50)", "IND_BG": "rgba(0,0,0,6)",
-        "LIST_BG": "rgba(0,0,0,4)", "LIST_BORDER": "rgba(0,0,0,14)",
+        "LIST_BG": "rgba(0,0,0,4)",
+        "LIST_BORDER": "rgba(0,0,0,14)",
         "ITEM_SEL": "rgba(0,0,0,12)",
         "BTN_BG": "rgba(0,0,0,7)", "BTN_HOVER": "rgba(0,0,0,14)",
         "BTN_PRESSED": "rgba(0,0,0,22)",
+        "MATCH_HIGH": "#2E9E6B",
+        "MATCH_MEDIUM": "#A8761B",
+        "MATCH_NONE": "#6B7079",
+        "MATCH_MEDIUM_BG": "#F7EDD8",
+        "MATCH_NONE_BG": "#ECEEF2",
         "window_bg": (245, 246, 249, 243), "window_border": (0, 0, 0, 32),
     },
 }
@@ -220,7 +276,9 @@ def _resolve_theme(value: str) -> str:
 def _card_background(theme: str, frosted: bool = False, opacity: float = 1.0) -> str:
     """Return the effective content-card background for a settings surface."""
     if frosted:
-        return "rgba(255, 255, 255, 120)" if theme == "light" else "rgba(255, 255, 255, 16)"
+        # Light under frost: the window already carries the reader's opacity, and a
+        # card opaque enough to read on its own cancelled the blur underneath it.
+        return "rgba(255, 255, 255, 69)" if theme == "light" else "rgba(255, 255, 255, 12)"
     if opacity < 0.999 and theme == "light":
         return f"rgba(255, 255, 255, {max(0, min(255, round(255 * opacity)))})"
     value = _PALETTES.get(theme, _PALETTES["dark"])["CARD_BG"]

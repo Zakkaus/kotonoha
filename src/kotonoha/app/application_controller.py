@@ -346,6 +346,10 @@ class AppController:
         previous = self._config
         self._config = self._config_service.apply_settings(config, changed_fields)
         self._runtime_config.apply(previous, self._config)
+        # A window that is already open has no other way to learn the theme
+        # changed; the settings window is the only one that restyles itself.
+        self._lyrics_search.retheme(self._config)
+        self._cache_management.retheme(self._config)
 
     # --- accessors for tests ---
 

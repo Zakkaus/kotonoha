@@ -71,6 +71,10 @@ class CacheManagementDialogPort(Protocol):
         """Return the signal emitted when the cache manager closes."""
         ...
 
+    def retheme(self, config: Config) -> None:
+        """Adopt a newly applied theme while the window stays open."""
+        ...
+
     def show(self) -> None:
         """Show the cache manager window."""
         ...
@@ -127,6 +131,10 @@ class LyricsSearchDialogPort(Protocol):
     @property
     def finished(self) -> SignalPort:
         """Return the signal emitted when the search window closes."""
+        ...
+
+    def retheme(self, config: Config) -> None:
+        """Adopt a newly applied theme while the window stays open."""
         ...
 
     def show(self) -> None:

@@ -2,8 +2,7 @@
 
 from __future__ import annotations
 
-from PyQt6.QtCore import QModelIndex, QObject, Qt, pyqtSignal
-from PyQt6.QtGui import QAction
+from PyQt6.QtCore import QModelIndex, Qt, pyqtSignal
 from PyQt6.QtWidgets import (
     QAbstractItemView,
     QCheckBox,
@@ -12,7 +11,6 @@ from PyQt6.QtWidgets import (
     QHBoxLayout,
     QHeaderView,
     QLabel,
-    QLineEdit,
     QPushButton,
     QSizePolicy,
     QVBoxLayout,
@@ -29,6 +27,7 @@ from ...lyrics.search import LyricsSearchQuery, LyricsSearchResponse, LyricsSear
 from ...platform import OverlayPlatformFactory
 from ...strings import Translator
 from . import theme
+from .delegates import SelectionBarDelegate
 from .lyrics_search_header import TrackHeader
 from .lyrics_search_model import (
     LyricsSearchSortModel,
@@ -39,7 +38,7 @@ from .lyrics_search_model import (
 from .lyrics_search_theme import search_window_skin
 from .lyrics_status import LyricsStatusBand
 from .surface import SettingsTitleBar, ThemedSettingsDialog
-from .widgets import ElidingLabel, RoundedTableView, SelectionBarDelegate
+from .widgets import ClearableLineEdit, ElidingLabel, RoundedTableView
 
 
 class LyricsSearchDialog(ThemedSettingsDialog):
@@ -73,10 +72,8 @@ class LyricsSearchDialog(ThemedSettingsDialog):
 
         self._model = LyricsSearchTableModel(
 self._translator, self._confidence_colours())
-        # Every field's clear action, so a theme change can redraw their glyphs.
-        self._clear_actions: list[QAction] = []
-        # Which action belongs to which field, so the shared handler can find it.
-        self._clear_toggles: dict[QObject, QAction] = {}
+        # Every query field, so a theme change can redraw their clear marks.
+        self._query_edits: list[ClearableLineEdit] = []
         # A player that reports only a page title knows less about the track than
         # the lyrics already chosen for it, so those fill what it left empty.
         self._title_edit = self._query_edit("search.placeholder.title", query.title)
@@ -205,8 +202,8 @@ self._translator, self._confidence_colours())
         them.
         """
         glyph = clear_icon(self._clear_glyph())
-        for action in self._clear_actions:
-            action.setIcon(glyph)
+        for editor in self._query_edits:
+            editor.set_clear_glyph(glyph)
         heading = self._heading_glyph()
         self._search_button.setIcon(search_icon(self._on_accent_glyph()))
         self._model.set_confidence_colours(self._confidence_colours())
@@ -298,32 +295,13 @@ self._translator, self._confidence_colours())
         grid.addWidget(self._search_button, 2, 6)
         return widget
 
-    def _query_edit(self, placeholder_key: str, value: str) -> QLineEdit:
+    def _query_edit(self, placeholder_key: str, value: str) -> ClearableLineEdit:
         """Create one bounded, editable search field."""
-        editor = QLineEdit(value)
+        editor = ClearableLineEdit(value, clear_icon(self._clear_glyph()))
         editor.setObjectName("queryField")
         editor.setPlaceholderText(self._translator.text(placeholder_key))
-        # Qt's own clear button keeps one colour, which disappears on a light
-        # field. This one is themed, and appears only when there is text to clear.
-        glyph = clear_icon(self._clear_glyph())
-        clear = editor.addAction(glyph, QLineEdit.ActionPosition.TrailingPosition)
-        if clear is None:
-            raise RuntimeError("lyric search field could not take a clear action")
-        self._clear_actions.append(clear)
-        clear.setVisible(bool(value))
-        clear.triggered.connect(editor.clear)
-        # A bound method, not a lambda holding the action: PyQt keeps a lambda
-        # alive with the connection, which then fires into a deleted C++ object.
-        self._clear_toggles[editor] = clear
-        editor.textChanged.connect(self._show_clear_when_typed)
+        self._query_edits.append(editor)
         return editor
-
-    def _show_clear_when_typed(self, text: str) -> None:
-        """Show a field's clear action only while that field has text."""
-        editor = self.sender()
-        clear = self._clear_toggles.get(editor) if editor is not None else None
-        if clear is not None:
-            clear.setVisible(bool(text))
 
     def show(self) -> None:
         """Show the window and run the search it was opened to make.

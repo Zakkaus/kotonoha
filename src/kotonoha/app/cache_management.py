@@ -58,6 +58,11 @@ class CacheManagementController:
         self._search_generation = 0
         self._closed = False
 
+    def retheme(self, config: Config) -> None:
+        """Pass a newly applied theme to the cache window, when one is open."""
+        if self._dialog is not None:
+            self._dialog.retheme(config)
+
     def open(self, config: Config) -> None:
         """Open or focus the one cache manager window owned by this workflow."""
         if self._closed:

@@ -20,13 +20,10 @@ from PyQt6.QtWidgets import (
 from ...config import ACCENT_PRESETS, LEAD_MS_LIMIT, Config
 from ...strings import UI_LANGUAGES, Translator
 from .controls import OpacityKey, PanelOpacityState, SettingsWidgets
+from .delegates import FontNameDelegate
 from .icons import SettingsIconPageBuilder
 from .sources import SettingsSourcesPageBuilder
-from .widgets import (
-    FontNameDelegate,
-    available_font_styles,
-    resolve_font_family,
-)
+from .widgets import available_font_styles, resolve_font_family
 
 if TYPE_CHECKING:
     from .dialog import SettingsDialog
@@ -413,7 +410,7 @@ class SettingsPageBuilder:
         outer.setSpacing(0)
         form = QFormLayout()
         form.setHorizontalSpacing(16)
-        form.setVerticalSpacing(12)
+        form.setVerticalSpacing(18)  # a settings page is read a row at a time
         form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         outer.addLayout(form)

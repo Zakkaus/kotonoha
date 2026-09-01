@@ -248,8 +248,8 @@ def test_version_chip_is_drawn_after_the_title_not_over_it(qapp):
     from PyQt6.QtWidgets import QStyleOptionViewItem
 
     from kotonoha.lyrics.match import MatchConfidence
+    from kotonoha.ui.settings.delegates import SelectionBarDelegate
     from kotonoha.ui.settings.lyrics_search_model import LyricsSearchTableModel
-    from kotonoha.ui.settings.widgets import SelectionBarDelegate
 
     model = LyricsSearchTableModel(Translator("en"), _COLOURS)
     model.set_results((_result("Realize (TV Size)", 90.0, MatchConfidence.MEDIUM),))

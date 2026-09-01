@@ -14,6 +14,7 @@ from PyQt6.QtCore import (
     QAbstractAnimation,
     QEasingCurve,
     QPropertyAnimation,
+    QSize,
     Qt,
     pyqtSignal,
 )
@@ -40,11 +41,13 @@ from PyQt6.QtWidgets import (
 from ... import leaf_icon
 from ...app.intents import ApplyConfig, ClearCache, OpenCacheManagement, RequestRestart
 from ...config import Config
+from ...icons import nav_icon
 from ...platform import OverlayPlatformFactory
 from ...players import PlayerInfo
 from ...strings import Translator
 from . import theme
 from .controls import SettingsWidgets
+from .delegates import NavIndicatorDelegate
 from .form_state import SettingsFormState
 from .icons import selected_icon_name
 from .pages import SettingsPageBuilder
@@ -95,6 +98,13 @@ class SettingsDialog(ThemedSettingsDialog):
         self._nav.setObjectName("nav")
         self._nav.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         self._nav.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Without this the list draws each glyph at the icon's own 64px and the row
+        # height clips it away, which reads as an icon that failed to load.
+        self._nav.setIconSize(QSize(16, 16))
+        # The rail carries the accent; the surface it sits inside stays neutral, so
+        # the colour marks one page rather than tinting a whole row.
+        self._nav_delegate = NavIndicatorDelegate(self._accent, self._nav_glyph(), self._nav)
+        self._nav.setItemDelegate(self._nav_delegate)
         # The page builder owns controls and page-local handlers; this dialog owns
         # their lifetime and the staged configuration they edit.
         self._page_builder = SettingsPageBuilder(
@@ -114,13 +124,20 @@ class SettingsDialog(ThemedSettingsDialog):
             self._page_builder.position_page,
             self._page_builder.sources_page,
         )
+        # A hex token, not TEXT_DIM: that one is Qt's rgba(r,g,b,0-255), which an
+        # SVG stroke does not parse, and an unparsed stroke paints nothing at all.
+        self._nav_keys = (
+            "tab.general", "tab.icon", "tab.text", "tab.panel", "tab.effects",
+            "tab.lyrics", "tab.position", "tab.sources",
+        )
         for key, builder in zip(
             ("tab.general", "tab.icon", "tab.text", "tab.panel", "tab.effects",
              "tab.lyrics", "tab.position", "tab.sources"),
             self._page_builders,
             strict=True,
         ):
-            self._nav.addItem(QListWidgetItem(self._translator.text(key)))
+            item = QListWidgetItem(nav_icon(key, self._nav_glyph()), self._translator.text(key))
+            self._nav.addItem(item)
             self._stack.addWidget(self._scroll_page(builder()))
         self._nav.setCurrentRow(0)
         self._stack.setCurrentIndex(0)
@@ -184,6 +201,29 @@ class SettingsDialog(ThemedSettingsDialog):
         self._set_default_size()
 
     # --- chrome ---
+
+    def _nav_glyph(self) -> str:
+        """Return this theme's colour for the sidebar glyphs.
+
+        A hex token, not TEXT_DIM: that one is Qt's rgba(r,g,b,0-255), which an
+        SVG stroke does not parse, and a stroke that does not parse paints
+        nothing while reporting no error.
+        """
+        return str(_PALETTES[self._theme]["TEXT_STRONG"])
+
+    def _refresh_themed_icons(self) -> None:
+        """Redraw the sidebar glyphs after a theme change."""
+        colour = self._nav_glyph()
+        for row, key in enumerate(self._nav_keys):
+            item = self._nav.item(row)
+            if item is not None:
+                item.setIcon(nav_icon(key, colour))
+        # The rail and the tint behind the current row are the delegate's, not the
+        # stylesheet's, so reapplying the skin does not reach them.
+        self._nav_delegate.set_colours(self.staged_config.accent_start, colour)
+        viewport = self._nav.viewport()
+        if viewport is not None:
+            viewport.update()
 
     def _apply_surface_style(self) -> None:
         """Apply the shared settings skin to the current staged surface state."""
@@ -466,6 +506,9 @@ class SettingsDialog(ThemedSettingsDialog):
         self._accent = self.staged_config.accent_start
         self._win_opacity = self.staged_config.settings_opacity  # commit the see-through level
         self._apply_surface_style()
+        # This window restyles itself here rather than through retheme(), so the
+        # icons it coloured from the palette have to be redrawn on this path too.
+        self._refresh_themed_icons()
         self._update_logo_badge()  # re-tint the leaf logo to the new accent
         self._page_builder.refresh_generated_icons()  # re-tint the accent/tile icon previews
         self.update()  # repaint the frameless background (theme / frost)
