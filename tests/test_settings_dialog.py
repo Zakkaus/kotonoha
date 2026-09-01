@@ -836,19 +836,60 @@ def test_settings_opacity_100_is_fully_opaque_and_range_is_full(qapp):
     dialog.close()
 
 
-def test_font_picker_resolves_an_absent_family_to_an_installed_one(qapp):
-    from PyQt6.QtGui import QFontDatabase
+def test_font_picker_follows_a_deterministic_fallback_order():
+    from kotonoha.ui.settings.widgets import FONT_FALLBACKS, resolve_font_family
 
-    from kotonoha.ui.settings.widgets import resolve_font_family
+    preferred = FONT_FALLBACKS[0]
+    cases = (
+        (
+            "configured",
+            "Configured Family, Other Family",
+            {"Configured Family", "Other Family"},
+            set(),
+            "Desktop Family",
+            "Configured Family",
+        ),
+        (
+            "preferred",
+            "Missing Family",
+            {preferred, "Desktop Family"},
+            {preferred, "Desktop Family"},
+            "Desktop Family",
+            preferred,
+        ),
+        (
+            "desktop",
+            "Missing Family",
+            {"Desktop Family", "Other CJK Family"},
+            {"Desktop Family", "Other CJK Family"},
+            "Desktop Family",
+            "Desktop Family",
+        ),
+        (
+            "sorted",
+            "Missing Family",
+            {"Zed CJK Family", "Able CJK Family"},
+            {"Zed CJK Family", "Able CJK Family"},
+            "Desktop Family",
+            "Able CJK Family",
+        ),
+        (
+            "no-target-font",
+            "Missing Family, Still Missing",
+            set(),
+            set(),
+            "",
+            "Missing Family",
+        ),
+    )
 
-    installed = QFontDatabase.families()
-    # A configured, installed family is kept verbatim.
-    assert resolve_font_family(installed[0]) == installed[0]
-    # A configured family that is NOT installed resolves to an installed fallback
-    # rather than being handed to fontconfig (which substitutes an arbitrary font).
-    resolved = resolve_font_family("__no_such_font__, still fake")
-    assert resolved != "__no_such_font__"
-    assert resolved == "" or resolved in set(installed)
+    for name, configured, installed, supported, desktop, expected in cases:
+        assert resolve_font_family(
+            configured,
+            installed_families=installed,
+            supported_families=supported,
+            desktop_family=desktop,
+        ) == expected, name
 
 
 def test_transition_style_roundtrips(qapp):

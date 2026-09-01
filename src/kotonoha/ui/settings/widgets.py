@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Collection
+
 from PyQt6.QtCore import QRectF, Qt, QTimer
 from PyQt6.QtGui import (
     QFontDatabase,
@@ -15,6 +17,7 @@ from PyQt6.QtGui import (
     QResizeEvent,
 )
 from PyQt6.QtWidgets import (
+    QApplication,
     QComboBox,
     QFontComboBox,
     QLabel,
@@ -29,6 +32,10 @@ FONT_FALLBACKS = (
     "Noto Sans CJK SC", "Noto Sans CJK TC", "Noto Sans CJK JP", "Source Han Sans SC",
     "Microsoft YaHei", "PingFang SC", "Noto Sans", "DejaVu Sans",
 )
+
+# Lyrics are primarily rendered for Chinese text, so use Qt's glyph coverage
+# query instead of assuming a fixed distribution-specific family list.
+_TARGET_WRITING_SYSTEM = QFontDatabase.WritingSystem.SimplifiedChinese
 
 PLAYER_ROW_MAX_CHARS = 60
 
@@ -106,16 +113,43 @@ class IconStrip(QListWidget):
         if self.height() != wanted:
             self.setFixedHeight(wanted)
 
-def resolve_font_family(font_family: str) -> str:
-    """Choose the first installed family from a configured fallback chain."""
-    installed = set(QFontDatabase.families())
+def resolve_font_family(
+    font_family: str,
+    installed_families: Collection[str] | None = None,
+    *,
+    supported_families: Collection[str] | None = None,
+    desktop_family: str | None = None,
+) -> str:
+    """Choose a usable family from a configured fallback chain.
+
+    Omitted inventories are read from Qt. Callers that supply an inventory can
+    resolve deterministically without consulting the host font installation;
+    when no separate writing-system set is supplied, every injected family is
+    treated as target-capable.
+    """
+    if installed_families is None:
+        installed = set(QFontDatabase.families())
+        supported = (
+            set(QFontDatabase.families(_TARGET_WRITING_SYSTEM))
+            if supported_families is None
+            else set(supported_families)
+        )
+    else:
+        installed = set(installed_families)
+        supported = set(installed if supported_families is None else supported_families)
+    supported.intersection_update(installed)
+    desktop = QApplication.font().family() if desktop_family is None else desktop_family
     requested = [name.strip().strip("'\"") for name in font_family.split(",")]
     for name in requested:
         if name and name in installed:
             return name
     for fallback in FONT_FALLBACKS:
-        if fallback in installed:
+        if fallback in supported:
             return fallback
+    if desktop in supported:
+        return desktop
+    if supported:
+        return min(supported)
     return next((name for name in requested if name), "")
 
 def available_font_styles(family: str) -> list[str]:
