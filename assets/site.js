@@ -111,6 +111,10 @@
       "search.results": "搜索结果",
       "search.onlyHigh": "仅看高匹配",
       "search.source": "来源",
+      "search.sourceA": "来源 A",
+      "search.sourceB": "来源 B",
+      "search.sourceC": "来源 C",
+      "search.sourceD": "来源 D",
       "search.duration": "时长",
       "search.version": "歌词版本",
       "search.match": "匹配度",
@@ -1180,12 +1184,12 @@
      "高" falls under "中" alphabetically and "4:03" under "10:00", so match
      sorts by rank and length by seconds. */
   var RESULTS = [
-    { src: "来源 A", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字", verKey: "search.verWord", conf: 2 },
-    { src: "来源 B", title: "何度でも立ち上がれ (TV Size)", artist: "结束乐队", album: "TV 主题曲集", len: 89, ver: "逐行", verKey: "search.verLine", conf: 1 },
-    { src: "来源 C", title: "何度でも立ち上がれ (Live)", artist: "结束乐队", album: "现场辑", len: 267, ver: "逐行", verKey: "search.verLine", conf: 0 },
-    { src: "来源 A", title: "何度でも立ち上がれ (Instrumental)", artist: "结束乐队", album: "结束バンド", len: 241, ver: "无时间", verKey: "search.verNone", conf: 0 },
-    { src: "来源 D", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字 · 带翻译", verKey: "search.verTranslation", conf: 2 },
-    { src: "来源 B", title: "立ち上がれ", artist: "另一位歌手", album: "单曲", len: 198, ver: "逐行", verKey: "search.verLine", conf: 1 }
+    { src: "A", srcKey: "search.sourceA", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字", verKey: "search.verWord", conf: 2 },
+    { src: "B", srcKey: "search.sourceB", title: "何度でも立ち上がれ (TV Size)", artist: "结束乐队", album: "TV 主题曲集", len: 89, ver: "逐行", verKey: "search.verLine", conf: 1 },
+    { src: "C", srcKey: "search.sourceC", title: "何度でも立ち上がれ (Live)", artist: "结束乐队", album: "现场辑", len: 267, ver: "逐行", verKey: "search.verLine", conf: 0 },
+    { src: "A", srcKey: "search.sourceA", title: "何度でも立ち上がれ (Instrumental)", artist: "结束乐队", album: "结束バンド", len: 241, ver: "无时间", verKey: "search.verNone", conf: 0 },
+    { src: "D", srcKey: "search.sourceD", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字 · 带翻译", verKey: "search.verTranslation", conf: 2 },
+    { src: "B", srcKey: "search.sourceB", title: "立ち上がれ", artist: "另一位歌手", album: "单曲", len: 198, ver: "逐行", verKey: "search.verLine", conf: 1 }
   ];
   var CONF = [
     { key: "none", labelKey: "search.confNone" },
@@ -1220,7 +1224,7 @@
         var tr = document.createElement("tr");
         tr.setAttribute("aria-selected", String(r.i === chosen));
         [
-          { text: r.src, cls: "src" },
+          { text: msg(r.srcKey), cls: "src" },
           r.title,
           r.artist,
           r.album,
