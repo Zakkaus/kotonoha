@@ -1,0 +1,1061 @@
+/* ==========================================================================
+   TOKEN BLOCK — the only place a colour is written on this page.
+   Values copied from the application: src/kotonoha/ui/settings/theme.py
+   (palettes) and src/kotonoha/config/models.py (accent presets).
+   ========================================================================== */
+:root {
+  color-scheme: light;
+  /* The four accent presets the program ships, from models.py. */
+  --preset-pink: #ff5eb5;
+  --preset-cyan: #4facfe;
+  --preset-green: #4fc08d;
+  --preset-gold: #e0b057;
+  --accent: var(--preset-pink);
+  /* Derived, never written twice: a fixed second pink is what kept the current
+     word pink after the accent had gone green. */
+  --accent-soft: color-mix(in srgb, var(--accent) 72%, #ffffff);
+  /* The leaf, recoloured the way leaf_icon.py does it: the vein is the accent
+     darkened, the body is the accent, the fold is the accent lightened, and the
+     lyrics motif stays white. Change the accent and the mark follows. */
+  --leaf-vein: color-mix(in srgb, var(--accent) 74%, #000000);
+  --leaf-body: var(--accent);
+  --leaf-fold: color-mix(in srgb, var(--accent) 63%, #ffffff);
+  --leaf-motif: #ffffff;
+  /* The page mark stays pink whatever the demo's accent is doing: it is the
+     product's mark, not a preview of a setting. */
+  --leaf-fixed-vein: color-mix(in srgb, var(--preset-pink) 74%, #000000);
+  --leaf-fixed-body: var(--preset-pink);
+  --leaf-fixed-fold: color-mix(in srgb, var(--preset-pink) 63%, #ffffff);
+  /* The window's own translucency, the setting the program calls
+     settings_opacity. It moves the surface, never the text on it. */
+  --win-alpha: 80%;
+  /* The overlay keeps a dark panel in both themes — it sits over a desktop,
+     not over this page, and that is what the program draws. */
+  --ovl-panel: #14161c;
+  --ovl-edge: rgba(255, 255, 255, 0.1);
+  --ovl-text: #ffffff;
+  --ovl-dim: rgba(255, 255, 255, 0.62);
+  --ovl-hover: rgba(255, 255, 255, 0.1);
+  --desk-base: #6f7ba8;
+  --accent-far: color-mix(in srgb, var(--accent) 48%, #ffffff);
+  --on-accent: #ffffff;
+
+  --window: #f5f6f9;
+  --card: rgba(255, 255, 255, 0.72);
+  --card-solid: #ffffff;
+  --card-edge: rgba(0, 0, 0, 0.06);
+  --field: rgba(0, 0, 0, 0.024);
+  --field-edge: rgba(0, 0, 0, 0.11);
+  --scroll-thumb: rgba(0, 0, 0, 0.22);
+  --scroll-thumb-hot: rgba(0, 0, 0, 0.38);
+
+  --text: #24272b;
+  --text-strong: #0e1013;
+  --text-dim: rgba(0, 0, 0, 0.53);
+
+  --chip: #eceef2;
+  --chip-edge: #d3d7de;
+  --chip-text: #5a5f68;
+
+  --affirm: #2e9e6b;
+  --warn: #a8761b;
+
+  /* A mask reads alpha, not hue; it lives here so the rule that every
+     colour value is declared in this block stays true without an exception. */
+  --mask-solid: #000;
+  --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.28);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.04), 0 10px 30px rgba(0, 0, 0, 0.07);
+  --shadow-lift: 0 2px 8px rgba(0, 0, 0, 0.06), 0 24px 60px rgba(0, 0, 0, 0.12);
+  /* The light source's offset, written from the pointer. A shadow that moves is
+     what the glow was standing in for, and it is what a real surface does. */
+  --cast: 0px;
+  --shade-near: rgba(0, 0, 0, 0.22);
+  --shade-far: rgba(0, 0, 0, 0.26);
+}
+
+:root[data-theme="dark"] {
+  color-scheme: dark;
+  --desk-base: #3a4468;
+  --accent: var(--preset-pink);
+  --accent-soft: color-mix(in srgb, var(--accent) 72%, #ffffff);
+  --accent-far: color-mix(in srgb, var(--accent) 48%, #ffffff);
+  --on-accent: #1a0d15;
+
+  --window: #14161c;
+  --card: rgba(255, 255, 255, 0.04);
+  --card-solid: #1b1e25;
+  --card-edge: rgba(255, 255, 255, 0.08);
+  --field: rgba(255, 255, 255, 0.05);
+  --field-edge: rgba(255, 255, 255, 0.13);
+  --scroll-thumb: rgba(255, 255, 255, 0.2);
+  --scroll-thumb-hot: rgba(255, 255, 255, 0.34);
+
+  --text: #e6e6e8;
+  --text-strong: #ffffff;
+  --text-dim: rgba(255, 255, 255, 0.55);
+
+  --chip: #2a2d34;
+  --chip-edge: #3a3e47;
+  --chip-text: #b9bec7;
+
+  --affirm: #4fc08d;
+  --warn: #e0b057;
+
+  --shadow-thumb: 0 1px 3px rgba(0, 0, 0, 0.5);
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.4), 0 10px 30px rgba(0, 0, 0, 0.36);
+  --shadow-lift: 0 2px 8px rgba(0, 0, 0, 0.5), 0 24px 60px rgba(0, 0, 0, 0.5);
+  --cast: 0px;
+  --shade-near: rgba(0, 0, 0, 0.4);
+  --shade-far: rgba(0, 0, 0, 0.46);
+}
+
+:root {
+  /* One radius seed, rungs derived. Same shape the reference site uses. */
+  --r: 0.625rem;
+  --r-sm: calc(var(--r) * 0.6);
+  --r-md: calc(var(--r) * 0.8);
+  --r-lg: var(--r);
+  --r-xl: calc(var(--r) * 1.4);
+  --r-2xl: calc(var(--r) * 1.8);
+  --r-pill: 999px;
+
+  /* One spacing seed, rungs derived. Padding rounds up. */
+  --s: 4px;
+  --s-1: var(--s);
+  --s-2: calc(var(--s) * 2);
+  --s-3: calc(var(--s) * 3);
+  --s-4: calc(var(--s) * 4);
+  --s-6: calc(var(--s) * 6);
+  --s-8: calc(var(--s) * 8);
+  --s-12: calc(var(--s) * 12);
+  --s-16: calc(var(--s) * 16);
+  --s-24: calc(var(--s) * 24);
+
+  --control-h: calc(var(--s) * 9);
+  --shell: 72rem;
+  --measure: 36rem;
+
+  --ease-enter: cubic-bezier(0.2, 0, 0, 1);
+  --ease-exit: cubic-bezier(0.4, 0, 1, 1);
+  --dur: 160ms;
+
+  --font-sans: "Inter", "Noto Sans", "Noto Sans CJK SC", "Source Han Sans SC", system-ui, sans-serif;
+  --font-mono: "JetBrains Mono", "Noto Sans Mono", ui-monospace, monospace;
+}
+
+*, *::before, *::after { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--window);
+  color: var(--text);
+  font-family: var(--font-sans);
+  font-size: 1rem;
+  line-height: 1.65;
+  overflow-wrap: break-word;
+}
+
+h1, h2, h3 { color: var(--text-strong); margin: 0; line-height: 1.2; font-weight: 650; letter-spacing: -0.02em; }
+h1 { font-size: clamp(2.2rem, 5vw, 3.25rem); }
+h2 { font-size: 1.5rem; }
+h3 { font-size: 1rem; }
+p { margin: 0; }
+a { color: var(--accent); }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--r-sm); }
+
+.shell { inline-size: 100%; max-inline-size: var(--shell); margin-inline: auto; padding-inline: var(--s-6); }
+
+.leaf { inline-size: calc(var(--s) * 7); block-size: calc(var(--s) * 7); display: block; }
+
+/* The fills live on the paths as var() references: a <use> clones into a
+   shadow tree, so a descendant selector never reaches them — but a custom
+   property inherits straight through. */
+.kwin__leaf { inline-size: calc(var(--s) * 5); block-size: calc(var(--s) * 5); }
+
+
+/* One control per axis, all options visible. A single cycling button hides the
+   choices behind a guess about what the icon means. */
+.seg {
+  display: inline-flex; gap: 2px; padding: 2px; flex: none;
+  background: var(--field); border: 1px solid var(--field-edge); border-radius: var(--r-pill);
+}
+.seg button {
+  appearance: none; border: 0; background: transparent; color: var(--text-dim);
+  font: inherit; font-size: 0.8125rem; padding-inline: var(--s-3);
+  min-block-size: calc(var(--s) * 7); border-radius: var(--r-pill); cursor: pointer;
+  white-space: nowrap;
+  transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+.seg button[aria-pressed="true"] { background: var(--card-solid); color: var(--text-strong); box-shadow: var(--shadow-card); }
+@media (hover: hover) { .seg button:hover { color: var(--text-strong); } }
+
+/* ---- chrome ------------------------------------------------------------ */
+.bar {
+  position: sticky; inset-block-start: 0; z-index: 10;
+  background: color-mix(in srgb, var(--window) 86%, transparent);
+  backdrop-filter: blur(14px);
+  border-block-end: 1px solid var(--card-edge);
+}
+.bar .shell { display: flex; align-items: center; gap: var(--s-4); min-block-size: calc(var(--s) * 15); }
+.mark { display: inline-flex; align-items: center; gap: var(--s-2); font-weight: 650; color: var(--text-strong); }
+.mark svg { inline-size: calc(var(--s) * 7); block-size: calc(var(--s) * 7); color: var(--accent); }
+.grow { flex: 1; }
+
+.switch { display: inline-flex; gap: 2px; padding: 2px; background: var(--field); border: 1px solid var(--field-edge); border-radius: var(--r-pill); }
+.switch button {
+  appearance: none; border: 0; background: transparent; color: var(--text-dim);
+  font: inherit; font-size: 0.8125rem; padding-inline: var(--s-3);
+  min-block-size: calc(var(--s) * 7); border-radius: var(--r-pill); cursor: pointer;
+  transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+.switch button[aria-pressed="true"] { background: var(--card-solid); color: var(--text-strong); box-shadow: var(--shadow-card); }
+@media (hover: hover) { .switch button:hover { color: var(--text-strong); } }
+
+
+/* ==========================================================================
+   Scene: the desktop, the settings window, and the overlay in front of it.
+   Rebuilt after a range delete took this block out; the values are the ones
+   the design document states, not new ones.
+   ========================================================================== */
+
+.grid-bg { position: relative; overflow: hidden; }
+
+.head__grid {
+  display: grid; gap: var(--s-16); align-items: center;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
+}
+@media (max-width: 62rem) { .head__grid { grid-template-columns: minmax(0, 1fr); gap: var(--s-12); } }
+
+.scene {
+  position: relative; perspective: calc(var(--s) * 400);
+  display: grid; gap: var(--s-6); padding: var(--s-8);
+}
+.scene > *:not(.desk) { position: relative; z-index: 1; }
+.scene > * {
+  transform:
+    rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg))
+    translate3d(var(--px, 0px), var(--py, 0px), var(--tz, 0px));
+  /* Back-face culling removes the hairline the tilt used to show at fractional
+     pixel positions. No will-change: promoting three blurred surfaces at once
+     made the compositor flicker between them on every pointer move. */
+  backface-visibility: hidden;
+}
+
+/* Frosted glass is only visible when something is behind it. These blobs come
+   from the accent presets, so the desktop is still the token layer. */
+.desk {
+  z-index: 0; position: absolute; inset: 0;
+  border-radius: var(--r-2xl); overflow: hidden;
+  background:
+    radial-gradient(38% 46% at 18% 22%, color-mix(in srgb, var(--preset-pink) 92%, transparent), transparent 70%),
+    radial-gradient(42% 40% at 82% 16%, color-mix(in srgb, var(--preset-cyan) 88%, transparent), transparent 72%),
+    radial-gradient(46% 48% at 72% 88%, color-mix(in srgb, var(--preset-gold) 85%, transparent), transparent 74%),
+    radial-gradient(40% 44% at 26% 84%, color-mix(in srgb, var(--preset-green) 85%, transparent), transparent 74%),
+    var(--desk-base);
+}
+
+/* The window, drawn the way the program draws it: 14px corner, translucent
+   surface, a nav rail on the left. The shadow is cast from the pointer. */
+.kwin {
+  background: color-mix(in srgb, var(--card-solid) var(--win-alpha), transparent);
+  backdrop-filter: blur(26px) saturate(1.4);
+  border: 1px solid var(--card-edge); border-radius: var(--r-2xl);
+  overflow: hidden;
+  box-shadow:
+    calc(var(--cast) * -1) calc(var(--s) * 3) calc(var(--s) * 10) var(--shade-near),
+    calc(var(--cast) * -2) calc(var(--s) * 8) calc(var(--s) * 24) var(--shade-far);
+}
+.kwin__bar { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-4) var(--s-4) var(--s-3); }
+.kwin__title { font-weight: 600; color: var(--text-strong); font-size: 0.9375rem; flex: 1; }
+.kwin__x { color: var(--text-dim); display: inline-grid; place-items: center; inline-size: calc(var(--s) * 6); block-size: calc(var(--s) * 6); }
+.kwin__x svg { inline-size: calc(var(--s) * 3); block-size: calc(var(--s) * 3); }
+.kwin__body { display: grid; grid-template-columns: calc(var(--s) * 28) 1fr; gap: var(--s-3); padding: 0 var(--s-4) var(--s-4); min-block-size: calc(var(--s) * 46); }
+
+/* The rail: a filled row with a short accent bar inside it, before the glyph.
+   This is the program's own signature, carried over unchanged. */
+.knav { display: grid; gap: 2px; align-content: start; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--r-xl); padding: var(--s-2) var(--s-1); }
+.knav button {
+  position: relative; appearance: none; border: 0; background: transparent; cursor: pointer;
+  font: inherit; font-size: 0.8125rem; color: var(--text-dim); text-align: start;
+  display: flex; align-items: center; gap: var(--s-2);
+  padding: var(--s-2) var(--s-3) var(--s-2) var(--s-6); border-radius: var(--r-md);
+  transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+.knav button svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); flex: none; }
+.knav button[aria-current] { background: var(--field); color: var(--text-strong); }
+.knav button[aria-current]::before {
+  content: ""; position: absolute; inset-inline-start: var(--s-2); inset-block-start: 50%;
+  translate: 0 -50%; inline-size: 3px; block-size: calc(var(--s) * 4);
+  background: var(--accent); border-radius: var(--r-pill);
+}
+@media (hover: hover) { .knav button:hover { color: var(--text-strong); } }
+
+.kcard { background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--r-xl); padding: var(--s-4); display: grid; gap: var(--s-3); align-content: start; min-inline-size: 0; }
+.kfield { display: flex; align-items: center; gap: var(--s-3); font-size: 0.8125rem; color: var(--text-dim); min-inline-size: 0; }
+.kfield > span { flex: none; inline-size: calc(var(--s) * 24); }
+.kfield b { font-weight: 600; color: var(--text); font-size: 0.75rem; min-inline-size: calc(var(--s) * 12); text-align: end; flex: none; }
+
+/* The native range renders differently in every engine and none of them read as
+   this window, so the track and the thumb are drawn here. */
+.kfield input[type="range"] {
+  flex: 1; min-inline-size: 0; appearance: none; background: transparent;
+  block-size: calc(var(--s) * 5); margin: 0; cursor: pointer;
+}
+.kfield input[type="range"]::-webkit-slider-runnable-track { block-size: calc(var(--s) * 1); border-radius: var(--r-pill); background: var(--field-edge); }
+.kfield input[type="range"]::-moz-range-track { block-size: calc(var(--s) * 1); border-radius: var(--r-pill); background: var(--field-edge); }
+.kfield input[type="range"]::-moz-range-progress { block-size: calc(var(--s) * 1); border-radius: var(--r-pill); background: var(--accent); }
+.kfield input[type="range"]::-webkit-slider-thumb {
+  appearance: none; inline-size: calc(var(--s) * 3.5); block-size: calc(var(--s) * 3.5);
+  border-radius: var(--r-pill); background: var(--accent); border: 0;
+  margin-block-start: calc(var(--s) * -1.25); box-shadow: var(--shadow-thumb);
+}
+.kfield input[type="range"]::-moz-range-thumb {
+  inline-size: calc(var(--s) * 3.5); block-size: calc(var(--s) * 3.5);
+  border-radius: var(--r-pill); background: var(--accent); border: 0; box-shadow: var(--shadow-thumb);
+}
+
+/* flex: none on both, or the row squeezes their width and a circle becomes an
+   ellipse — which is exactly what 18x20 looked like. */
+.ksw {
+  appearance: none; border: 0; cursor: pointer; padding: 0; flex: none;
+  inline-size: calc(var(--s) * 9); block-size: calc(var(--s) * 5);
+  border-radius: var(--r-pill); background: var(--field-edge); position: relative;
+  transition: background-color var(--dur) var(--ease-enter);
+}
+.ksw[aria-checked="true"] { background: var(--accent); }
+.ksw i { position: absolute; inset-block-start: 2px; inset-inline-start: 2px; inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); border-radius: var(--r-pill); background: var(--card-solid); transition: translate var(--dur) var(--ease-enter); }
+.ksw[aria-checked="true"] i { translate: calc(var(--s) * 4) 0; }
+.kdots { display: inline-flex; gap: var(--s-2); flex: none; }
+.kdots button {
+  appearance: none; border: 0; cursor: pointer; padding: 0; flex: none; aspect-ratio: 1;
+  inline-size: calc(var(--s) * 5); block-size: calc(var(--s) * 5); border-radius: var(--r-pill);
+  background: var(--dot, var(--accent));
+  box-shadow: 0 0 0 0 transparent;
+  transition: box-shadow var(--dur) var(--ease-enter);
+}
+.kdots button[aria-pressed="true"] { box-shadow: 0 0 0 2px var(--card-solid), 0 0 0 4px var(--dot, var(--accent)); }
+
+/* ---- listbox: the browser's own popup is painted by the platform, so no
+   stylesheet reaches it and a white system menu opened over a dark panel. ---- */
+.lb { position: relative; flex: 1; min-inline-size: 0; }
+.lb__btn {
+  inline-size: 100%; display: flex; align-items: center; gap: var(--s-2);
+  font: inherit; font-size: 0.8125rem; color: var(--text);
+  background: var(--field); border: 1px solid var(--field-edge);
+  border-radius: var(--r-md); min-block-size: calc(var(--s) * 8);
+  padding-inline: var(--s-3); cursor: pointer; text-align: start;
+  transition: border-color var(--dur) var(--ease-enter);
+}
+.lb__btn span { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.lb__btn svg { inline-size: calc(var(--s) * 3.5); block-size: calc(var(--s) * 3.5); flex: none; color: var(--text-dim); }
+.lb__btn[aria-expanded="true"] { border-color: var(--accent); }
+@media (hover: hover) { .lb__btn:hover { border-color: var(--text-dim); } }
+.lb__list {
+  position: absolute; inset-inline: 0; inset-block-start: calc(100% + var(--s-1));
+  z-index: 5; padding: var(--s-1);
+  background: var(--card-solid); border: 1px solid var(--field-edge);
+  border-radius: var(--r-md); box-shadow: var(--shadow-lift);
+}
+.lb__list [role="option"] { padding: var(--s-2) var(--s-3); border-radius: var(--r-sm); font-size: 0.8125rem; color: var(--text-dim); cursor: pointer; }
+.lb__list [role="option"][data-active="true"] { background: var(--field); color: var(--text-strong); }
+.lb__list [role="option"][aria-selected="true"] { color: var(--accent); }
+
+/* ---- the overlay: centred, four rows, its own dark panel in both themes --- */
+.scene .ovl {
+  --tz: calc(var(--s) * 14);
+  margin-inline: var(--ovl-shift, 0%) calc(var(--ovl-shift, 0%) * -1);
+  background: color-mix(in srgb, var(--ovl-panel) var(--win-alpha), transparent);
+  backdrop-filter: blur(26px) saturate(1.4);
+  border: 1px solid var(--ovl-edge); border-radius: var(--r-2xl);
+  box-shadow:
+    calc(var(--cast) * -1.6) calc(var(--s) * 4) calc(var(--s) * 12) var(--shade-near),
+    calc(var(--cast) * -3) calc(var(--s) * 12) calc(var(--s) * 30) var(--shade-far);
+}
+.ovl { display: block; padding: var(--s-6) var(--s-8) var(--s-4); text-align: center; position: relative; }
+.ovl__chrome { position: absolute; inset-block-start: var(--s-2); inset-inline-end: var(--s-3); display: flex; gap: var(--s-1); }
+.ovl__ic {
+  appearance: none; border: 0; background: transparent; cursor: pointer; padding: 0;
+  inline-size: calc(var(--s) * 6); block-size: calc(var(--s) * 6);
+  display: inline-grid; place-items: center; border-radius: var(--r-md); color: var(--ovl-dim);
+  transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+.ovl__ic svg { inline-size: calc(var(--s) * 3); block-size: calc(var(--s) * 3); grid-area: 1 / 1; }
+.ovl__ic[aria-pressed="true"] { color: var(--accent); }
+#ovlPlay[aria-pressed="true"] { color: var(--ovl-dim); }
+#ovlPlay[aria-pressed="true"] .i-play, #ovlPlay[aria-pressed="false"] .i-pause { display: none; }
+@media (hover: hover) { .ovl__ic:hover { color: var(--ovl-text); background: var(--ovl-hover); } }
+.ovl__side { margin: 0; color: var(--ovl-dim); font-size: 0.8125rem; min-block-size: 1.5em; }
+.ovl__line {
+  margin: var(--s-2) 0 var(--s-1); display: block;
+  font-size: var(--ovl-size, 1.5rem); font-weight: var(--ovl-weight, 650);
+  line-height: var(--ovl-leading, 1.4); color: var(--ovl-text); min-block-size: 1.4em;
+}
+/* The colour is pushed across each word over that word's own span of the clock,
+   not switched when the word's turn comes: word-timed lyrics are a sweep, and a
+   step per word is line-timed with more steps. Painted through the glyphs, so
+   the lit part of a character can be narrower than the character. */
+.ovl__line span {
+  --word-lit: var(--accent);
+  background-image: linear-gradient(
+    to right,
+    var(--word-lit) calc(var(--sung, 0) * 100%),
+    var(--ovl-text) calc(var(--sung, 0) * 100%)
+  );
+  background-clip: text; -webkit-background-clip: text;
+  color: transparent;
+  transition: text-shadow 180ms var(--ease-enter);
+}
+.ovl__sub { margin: 0; font-size: 0.875rem; font-style: italic; color: var(--ovl-dim); min-block-size: 1.5em; }
+/* The translation fills left to right with the line above it, painted through
+   the text rather than switched at the end of the line. */
+.ovl__sub span {
+  background-image: linear-gradient(
+    to right,
+    var(--accent) calc(var(--sung, 0) * 100%),
+    var(--ovl-dim) calc(var(--sung, 0) * 100%)
+  );
+  background-clip: text; -webkit-background-clip: text;
+  color: transparent;
+}
+.ovl[data-glow="true"] .ovl__line span[data-sung="now"] { text-shadow: 0 0 calc(var(--s) * 6) var(--accent); }
+.ovl[data-pop="true"] .ovl__line span[data-sung="now"] { --word-lit: var(--accent-soft); }
+.ovl[data-trans="false"] .ovl__sub { visibility: hidden; }
+.ovl[data-through="true"] { border-style: dashed; }
+
+
+
+.swin__lead { margin: 0 var(--s-6) var(--s-3); color: var(--text-dim); font-size: 0.8125rem; }
+.swin__query { padding: 0 var(--s-6) var(--s-3); }
+.swin__fields { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: flex-end; margin-block-start: var(--s-3); }
+.swin__fields label { flex: 1 1 calc(var(--s) * 34); min-inline-size: 0; display: grid; gap: var(--s-1); }
+.swin__fields label span { font-size: 0.6875rem; color: var(--text-dim); }
+.swin__fields input {
+  font: inherit; font-size: 0.8125rem; color: var(--text);
+  background: var(--field); border: 1px solid var(--field-edge);
+  border-radius: var(--r-md); min-block-size: calc(var(--s) * 8); padding-inline: var(--s-3);
+}
+.swin__fields input:focus-visible { border-color: var(--accent); }
+/* The button sits in a row of inputs, so it takes the input's height rather
+   than the toolbar height it has everywhere else: aligned bottoms with two
+   different heights read as one of them being crooked. */
+.swin__fields .cta--sm { flex: none; white-space: nowrap; min-block-size: calc(var(--s) * 8); }
+.ghost--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
+
+/* ---- the search window ------------------------------------------------- */
+.swin {
+  margin-block-start: var(--s-8);
+  background: var(--card-solid);
+  border: 1px solid var(--card-edge); border-radius: var(--r-2xl);
+  overflow: hidden;
+}
+.swin__now {
+  display: flex; flex-wrap: wrap; gap: var(--s-4) var(--s-8); align-items: center;
+  margin: 0 var(--s-4) var(--s-3); padding: var(--s-4);
+  background: var(--field); border-radius: var(--r-xl);
+}
+.swin__now > div:first-child { flex: 1; min-inline-size: 0; display: flex; align-items: baseline; gap: var(--s-3); }
+.swin__now b { color: var(--text-strong); font-size: 1.0625rem; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swin__now > div:first-child span { color: var(--text-dim); font-size: 0.8125rem; flex: none; }
+.swin__now dl { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-6); margin: 0; }
+.swin__now dl div { display: flex; gap: var(--s-2); font-size: 0.75rem; }
+.swin__now dt { color: var(--text-dim); margin: 0; }
+.swin__now dd { color: var(--text); margin: 0; font-weight: 600; }
+
+.swin__head { display: flex; align-items: center; gap: var(--s-3); padding: 0 var(--s-6) var(--s-3); }
+.swin__label { display: inline-flex; align-items: center; gap: var(--s-2); color: var(--text-strong); font-weight: 600; font-size: 0.875rem; }
+.swin__label svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); color: var(--text-dim); }
+.swin__miss { flex: 1; min-inline-size: 0; color: var(--text-dim); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.swin__only { display: inline-flex; align-items: center; gap: var(--s-2); font-size: 0.75rem; color: var(--text-dim); cursor: pointer; flex: none; }
+.swin__only input { accent-color: var(--accent); }
+
+.tablewrap { overflow-x: auto; padding-inline: var(--s-4); }
+/* Seven columns of real result rows do not fit a phone, and squeezing them
+   wraps every cell to two lines. The table keeps the width it needs and the
+   window scrolls it, which is what the program's own window does. */
+.tablewrap { overflow-x: auto; }
+.res { inline-size: 100%; border-collapse: collapse; font-size: 0.8125rem; min-inline-size: 46rem; }
+.res th button, .res .src, .res .ver, .res .num { white-space: nowrap; }
+.res th { padding: 0; border-block-end: 1px solid var(--card-edge); }
+.res th button {
+  inline-size: 100%; appearance: none; border: 0; background: transparent; cursor: pointer;
+  font: inherit; font-size: 0.75rem; color: var(--text-dim); text-align: start;
+  padding: var(--s-2) var(--s-3); border-radius: var(--r-sm);
+  transition: color var(--dur) var(--ease-enter);
+}
+.res th button[aria-sort]::after { content: " " attr(data-mark); color: var(--accent); }
+@media (hover: hover) { .res th button:hover { color: var(--text-strong); } }
+.res td { padding: var(--s-2) var(--s-3); border-block-end: 1px solid var(--card-edge); color: var(--text); }
+.res tbody tr { cursor: pointer; }
+.res tbody tr[aria-selected="true"] td { background: color-mix(in srgb, var(--accent) 12%, transparent); }
+.res tbody tr[aria-selected="true"] td:first-child { box-shadow: inset 3px 0 0 var(--accent); }
+@media (hover: hover) { .res tbody tr:hover td { background: var(--field); } }
+.res .num { text-align: end; font-variant-numeric: tabular-nums; }
+.conf { display: inline-flex; border-radius: var(--r-pill); padding: 1px var(--s-2); font-size: 0.6875rem; }
+.conf[data-c="high"] { color: var(--affirm); background: color-mix(in srgb, var(--affirm) 16%, transparent); }
+.conf[data-c="mid"] { color: var(--warn); background: color-mix(in srgb, var(--warn) 16%, transparent); }
+.conf[data-c="none"] { color: var(--chip-text); background: var(--chip); }
+.swin__foot { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) var(--s-6); border-block-start: 1px solid var(--card-edge); }
+.swin__foot span { flex: 1; color: var(--text-dim); font-size: 0.8125rem; }
+.cta--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
+
+/* ---- install: one switcher feeding one block ---------------------------- */
+.get { margin-block-start: var(--s-8); background: var(--card-solid); border: 1px solid var(--card-edge); border-radius: var(--r-xl); overflow: hidden; }
+.get__tabs, .get__sub { display: flex; flex-wrap: wrap; gap: var(--s-1); padding: var(--s-2); border-block-end: 1px solid var(--card-edge); }
+.get__sub { background: var(--field); }
+.get__tabs button, .get__sub button {
+  appearance: none; border: 0; background: transparent; cursor: pointer; font: inherit;
+  font-size: 0.8125rem; color: var(--text-dim); min-block-size: calc(var(--s) * 8);
+  padding-inline: var(--s-4); border-radius: var(--r-md);
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+.get__tabs button svg { inline-size: calc(var(--s) * 4.5); block-size: calc(var(--s) * 4.5); fill: currentColor; flex: none; opacity: 0.85; }
+.get__tabs button[aria-selected="true"], .get__sub button[aria-selected="true"] { background: var(--card-solid); color: var(--text-strong); box-shadow: var(--shadow-card); }
+@media (hover: hover) { .get__tabs button:hover, .get__sub button:hover { color: var(--text-strong); } }
+.get__body { display: flex; align-items: flex-start; gap: var(--s-3); padding: var(--s-4); }
+/* The scrollbar sits inside the box, so the last line needs room under it
+   or the thumb lands on the text. */
+.get__body pre { margin: 0; flex: 1; min-inline-size: 0; overflow-x: auto; background: transparent; border: 0; padding: 0 0 var(--s-3); }
+.get__note { padding: 0 var(--s-4) var(--s-4); color: var(--text-dim); font-size: 0.8125rem; }
+.get__note:empty { display: none; }
+.copy {
+  flex: none; appearance: none; background: var(--field); border: 1px solid var(--field-edge);
+  color: var(--text-dim); border-radius: var(--r-md); cursor: pointer;
+  min-block-size: calc(var(--s) * 8); padding-inline: var(--s-3);
+  display: inline-flex; align-items: center; gap: var(--s-2); font: inherit; font-size: 0.75rem;
+  transition: color var(--dur) var(--ease-enter), border-color var(--dur) var(--ease-enter);
+}
+.copy svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); }
+.copy b { font-weight: 500; }
+.copy[data-state="done"] { color: var(--affirm); border-color: var(--affirm); }
+@media (hover: hover) { .copy:hover { color: var(--text-strong); } }
+.sr { position: absolute; inline-size: 1px; block-size: 1px; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; }
+
+/* A particle field that answers the pointer: each fleck is pushed away and
+   springs back. Colours are read from the preset tokens at start and on every
+   theme change, so the field is the token layer rather than a picture. */
+.field { position: absolute; inset: 0; inline-size: 100%; block-size: 100%; pointer-events: none; }
+.head { position: relative; z-index: 1; }
+
+/* ---- page -------------------------------------------------------------- */
+.head { padding-block: var(--s-24) var(--s-12); }
+.eyebrow {
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  font-size: 0.8125rem; color: var(--chip-text); background: var(--chip);
+  border: 1px solid var(--chip-edge); border-radius: var(--r-pill);
+  padding: var(--s-1) var(--s-3); margin-block-end: var(--s-6);
+}
+.lead { margin-block-start: var(--s-6); max-inline-size: var(--measure); color: var(--text-dim); font-size: 1.125rem; }
+
+section { padding-block: var(--s-16); border-block-start: 1px solid var(--card-edge); }
+/* The capability section carries straight on from the hero — same field, same
+   ground — so it does not open with a rule across the page. */
+#does { border-block-start: 0; }
+
+/* The same field behind the two window sections. It takes no layout space and
+   pins to the viewport, so the canvas is one screen tall however long the
+   section is; clip, not hidden, because a canvas taller than its section would
+   otherwise paint over whatever follows. */
+#search, #get { position: relative; }
+/* Absolute over the section rather than sticky inside it: sticky needed a clip
+   container to stop a viewport-tall canvas painting over the footer, and a clip
+   container turns the section into a scroll container in some browsers — which
+   is a window that scrolls inside itself. Absolute covers the section exactly
+   and needs neither. */
+.sec-fx {
+  position: absolute; inset: 0; z-index: 0;
+  display: block; inline-size: 100%; block-size: 100%; pointer-events: none;
+}
+#search > .shell, #get > .shell { position: relative; z-index: 1; }
+.section-lead { margin-block-start: var(--s-3); color: var(--text-dim); max-inline-size: var(--measure); }
+
+
+/* A kicker: one dot, the section's own word, and the constraint it is
+   about. Small, tracked out, and above the heading, so a section announces
+   its subject before its sentence. */
+.kicker {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-2);
+  margin-block-end: var(--s-4);
+  font-size: 0.6875rem; letter-spacing: 0.14em; text-transform: uppercase;
+  color: var(--text-dim);
+}
+.kicker::before {
+  content: ""; flex: none;
+  inline-size: calc(var(--s) * 1.5); block-size: calc(var(--s) * 1.5);
+  border-radius: var(--r-pill); background: var(--accent);
+}
+.kicker b { font-weight: 500; white-space: nowrap; }
+.kicker span { font-family: var(--font-mono); opacity: 0.65; }
+
+/* Anchors travel instead of jumping, and each block arrives with a few pixels
+   of its own. The travel is declared twice-guarded: it exists only where the
+   browser has scroll-driven animation and only when the reader has not asked
+   for less motion, so everywhere else the page is simply finished. It animates
+   `translate`, not `transform`, because the pointer drift owns `transform` and
+   the two compose instead of overwriting each other. */
+@media (prefers-reduced-motion: no-preference) {
+  html { scroll-behavior: smooth; }
+}
+section, .foot { scroll-margin-block-start: calc(var(--s) * 6); }
+
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    .rise {
+      animation: rise linear both;
+      animation-timeline: view();
+      animation-range: entry 12% entry 88%;
+    }
+  }
+}
+@keyframes rise {
+  from { opacity: 0; translate: 0 calc(var(--s) * 4); }
+  to { opacity: 1; translate: 0 0; }
+}
+
+
+/* The component bench: one row per role, rendered together. Looking at them
+   side by side is the only way a drifted variant shows up. */
+.bench { margin-block-start: var(--s-8); border: 1px solid var(--card-edge); border-radius: var(--r-xl); overflow: hidden; }
+.bench__row {
+  display: flex; flex-wrap: wrap; align-items: center; gap: var(--s-3);
+  padding: var(--s-4) var(--s-6); border-block-end: 1px solid var(--card-edge);
+}
+.bench__row:last-child { border-block-end: 0; }
+.bench__name { flex: none; inline-size: calc(var(--s) * 16); color: var(--text-dim); font-size: 0.75rem; }
+.bench__nav { display: flex; gap: 2px; }
+
+
+/* The section header: the title holds the left column and the explanation sits
+   in the right one, with the gap doing the separating. */
+.sec-head {
+  display: grid; gap: var(--s-4) var(--s-16); align-items: start;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 0.9fr);
+}
+.sec-head h2 { font-size: clamp(1.5rem, 2.6vw, 2.1rem); max-inline-size: 16ch; }
+.sec-head .section-lead { margin-block-start: 0; }
+@media (max-width: 56rem) { .sec-head { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); } }
+
+/* The footer: a brand column that says what this is, two link columns, and a
+   slim legal row. */
+.foot { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-16) var(--s-8); color: var(--text-dim); font-size: 0.875rem; }
+.foot__top { display: grid; gap: var(--s-12) var(--s-8); grid-template-columns: minmax(0, 1.6fr) repeat(2, minmax(0, 1fr)); }
+.foot__brand { display: grid; gap: var(--s-3); align-content: start; }
+.foot__brand .mark { font-size: 1rem; }
+.foot__desc { max-inline-size: 34ch; }
+.foot__lead { margin: 0; color: var(--text-strong); font-size: 1.25rem; font-weight: 650; letter-spacing: -0.02em; line-height: 1.35; }
+.foot__col h3 { font-size: 0.75rem; color: var(--text-dim); font-weight: 500; margin-block-end: var(--s-3); }
+.foot__col a { display: block; color: var(--text); text-decoration: none; padding-block: var(--s-1); }
+@media (hover: hover) { .foot__col a:hover { color: var(--accent); } }
+/* The mark used to hold this row off the columns above it; without it the
+   row needs its own space. */
+.foot__legal { margin-block-start: var(--s-12); display: flex; flex-wrap: wrap; gap: var(--s-3) var(--s-6); align-items: center; border-block-start: 1px solid var(--card-edge); padding-block-start: var(--s-6); font-size: 0.75rem; }
+@media (max-width: 56rem) { .foot__top { grid-template-columns: minmax(0, 1fr); } }
+
+/* ---- swatches ---------------------------------------------------------- */
+.swatches { display: grid; gap: var(--s-3); grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr)); margin-block-start: var(--s-8); }
+.sw { border: 1px solid var(--card-edge); border-radius: var(--r-lg); overflow: hidden; background: var(--card); }
+.sw i { display: block; block-size: calc(var(--s) * 14); }
+.sw b { display: block; padding: var(--s-3) var(--s-4) var(--s-1); font-size: 0.875rem; color: var(--text-strong); font-weight: 600; }
+.sw code { display: block; padding: 0 var(--s-4) var(--s-4); font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); }
+
+/* ---- ramps ------------------------------------------------------------- */
+.ramp { margin-block-start: var(--s-8); display: grid; gap: var(--s-4); }
+.ramp > div { display: flex; align-items: baseline; gap: var(--s-4); flex-wrap: wrap; border-block-end: 1px dashed var(--card-edge); padding-block-end: var(--s-3); }
+.ramp code { font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); min-inline-size: 9rem; }
+
+.radii { display: flex; gap: var(--s-4); flex-wrap: wrap; margin-block-start: var(--s-8); }
+.radii figure { margin: 0; text-align: center; }
+.radii i { display: block; inline-size: calc(var(--s) * 18); block-size: calc(var(--s) * 18); background: var(--card); border: 1px solid var(--field-edge); }
+.radii figcaption { margin-block-start: var(--s-2); font-family: var(--font-mono); font-size: 0.75rem; color: var(--text-dim); }
+
+.scale { display: flex; align-items: flex-end; gap: var(--s-2); margin-block-start: var(--s-8); flex-wrap: wrap; }
+.scale i { display: block; inline-size: var(--s-4); background: var(--accent); border-radius: var(--r-sm); }
+.scale figure { margin: 0; text-align: center; }
+.scale figcaption { margin-block-start: var(--s-2); font-family: var(--font-mono); font-size: 0.6875rem; color: var(--text-dim); }
+
+
+/* An icon-only action. Same height and radius as the text buttons beside it:
+   one control family, three shapes, not three families. */
+.icon-btn {
+  appearance: none; background: transparent; border: 1px solid var(--field-edge);
+  color: var(--text-dim); border-radius: var(--r-lg); cursor: pointer;
+  inline-size: calc(var(--s) * 11); block-size: calc(var(--s) * 11);
+  display: inline-grid; place-items: center; flex: none;
+  transition: color var(--dur) var(--ease-enter), border-color var(--dur) var(--ease-enter),
+    background-color var(--dur) var(--ease-enter);
+}
+.icon-btn svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); }
+@media (hover: hover) { .icon-btn:hover { color: var(--text-strong); border-color: var(--text-dim); background: var(--field); } }
+
+/* ---- components -------------------------------------------------------- */
+.row { display: flex; flex-wrap: wrap; gap: var(--s-3); align-items: center; margin-block-start: var(--s-6); }
+.cta {
+  display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: calc(var(--s) * 11);
+  padding-inline: var(--s-6); background: var(--accent); color: var(--on-accent);
+  border: 0; border-radius: var(--r-lg); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
+  transition: background-color var(--dur) var(--ease-enter), transform var(--dur) var(--ease-exit);
+}
+/* The icon inside had no size at all: nothing on a shrink-to-fit button, where
+   it collapsed to 0 and simply never appeared, and 204px on a full-width one,
+   where it took the whole button. */
+.cta svg { flex: none; inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); }
+@media (hover: hover) { .cta:hover { background: var(--accent-soft); } }
+.cta:active { transform: translateY(1px); }
+.ghost {
+  display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: calc(var(--s) * 11);
+  padding-inline: var(--s-4); background: transparent; color: var(--text);
+  border: 1px solid var(--field-edge); border-radius: var(--r-lg); font: inherit; cursor: pointer; text-decoration: none;
+  transition: border-color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
+}
+@media (hover: hover) { .ghost:hover { background: var(--field); border-color: var(--text-dim); } }
+/* A label, not a button: filled, square-ish, no border. An outlined pill reads
+   as something to press, which is what made these look like stray controls. */
+.tag {
+  display: inline-flex; align-items: center;
+  background: var(--chip); color: var(--chip-text);
+  border: 0; border-radius: var(--r-sm);
+  padding: 2px var(--s-2); font-size: 0.6875rem; line-height: 1.6;
+  letter-spacing: 0.02em;
+}
+
+/* The application's own signature: a filled row with a short accent rail
+   inside it, before the glyph. Carried to the web so the two look related. */
+.nav-demo { margin-block-start: var(--s-6); max-inline-size: 16rem; background: var(--card); border: 1px solid var(--card-edge); border-radius: var(--r-lg); padding: var(--s-2); }
+.nav-demo div { display: flex; align-items: center; gap: var(--s-3); padding: var(--s-3) var(--s-4); border-radius: var(--r-md); color: var(--text-dim); }
+.nav-demo div[aria-current] { background: var(--field); color: var(--text-strong); position: relative; }
+.nav-demo div[aria-current]::before {
+  content: ""; position: absolute; inset-inline-start: var(--s-2); inset-block-start: 50%;
+  translate: 0 -50%; inline-size: 3px; block-size: calc(var(--s) * 4);
+  background: var(--accent); border-radius: var(--r-pill);
+}
+.nav-demo svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); color: currentColor; }
+
+pre {
+  margin: var(--s-6) 0 0; padding: var(--s-4); background: var(--card-solid);
+  border: 1px solid var(--card-edge); border-radius: var(--r-lg);
+  font-family: var(--font-mono); font-size: 0.8125rem; line-height: 1.7;
+  color: var(--text-strong); overflow-x: auto;
+}
+
+.list { margin: var(--s-6) 0 0; padding: 0; list-style: none; display: grid; gap: var(--s-3); }
+.list li { display: flex; gap: var(--s-3); align-items: flex-start; }
+.list li svg { flex: none; inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); margin-block-start: 0.4em; color: var(--affirm); }
+.list li[data-kind="no"] svg { color: var(--warn); }
+.list b { color: var(--text-strong); font-weight: 600; }
+.list span { color: var(--text-dim); }
+
+table { border-collapse: collapse; inline-size: 100%; margin-block-start: var(--s-6); font-size: 0.9375rem; }
+th, td { text-align: start; padding: var(--s-3) var(--s-4); border-block-end: 1px solid var(--card-edge); vertical-align: top; }
+th { color: var(--text-strong); font-weight: 600; }
+td { color: var(--text-dim); }
+td:first-child { color: var(--text); }
+td code, th code { font-family: var(--font-mono); font-size: 0.8125rem; }
+
+footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-12); color: var(--text-dim); font-size: 0.875rem; }
+
+
+/* ==========================================================================
+   Pointer-driven effects. Retokenised from the Aceternity / magicui family:
+   the geometry is theirs, every colour here is a token. These are pointer-
+   driven, not continuous, so they sit outside the 2-animation page budget —
+   what they need instead is a guard, because :hover sticks on touch.
+   ========================================================================== */
+
+/* The whole family is gated on one named condition, written once. */
+
+/* Tilt: the product art leans toward the pointer. Transform is written from
+   JavaScript, so a media query cannot clamp it — the guard has to be there. */
+.tilt { perspective: calc(var(--s) * 300); }
+.tilt > * {
+  transition: transform var(--dur) var(--ease-exit);
+  transform: rotateX(var(--rx, 0deg)) rotateY(var(--ry, 0deg));
+  transform-style: preserve-3d;
+}
+
+/* A moving border, one element, drawn from the accent. This is the only
+   continuously animated thing on the page, and it stops for reduced motion. */
+.beam {
+  position: relative;
+  padding: 1px;
+  border-radius: var(--r-xl);
+  background: conic-gradient(
+    from var(--beam-angle, 0deg),
+    transparent 0turn 0.62turn,
+    var(--accent) 0.75turn,
+    transparent 0.88turn 1turn
+  );
+}
+.beam > * { border-radius: calc(var(--r-xl) - 1px); }
+@property --beam-angle {
+  syntax: "<angle>";
+  initial-value: 0deg;
+  inherits: false;
+}
+:root[data-motion="full"] .beam {
+  animation: beam-spin 6s linear infinite;
+}
+@keyframes beam-spin { to { --beam-angle: 1turn; } }
+
+@media (prefers-reduced-motion: reduce) {
+  .beam { animation: none !important; background: var(--card-edge); }
+  .tilt > * { transform: none !important; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { transition-duration: 0.01ms !important; }
+}
+
+/* Two slots that are wider than a narrow phone: the theme switch wraps, and a
+   table scrolls inside its own container rather than widening the page. */
+/* The one scrollbar the reader sees on this page. The system's is a different
+   width, a different colour and a different corner in every browser, and the
+   program does not draw one that way either — the settings window paints its
+   own track from the same tokens. */
+.table-wrap, .tablewrap, .knav, .get__body pre {
+  scrollbar-width: thin;
+  scrollbar-color: var(--scroll-thumb) transparent;
+}
+.table-wrap::-webkit-scrollbar, .tablewrap::-webkit-scrollbar, .knav::-webkit-scrollbar, .get__body pre::-webkit-scrollbar { block-size: 8px; inline-size: 8px; }
+.table-wrap::-webkit-scrollbar-track, .tablewrap::-webkit-scrollbar-track, .knav::-webkit-scrollbar-track, .get__body pre::-webkit-scrollbar-track { background: transparent; }
+.table-wrap::-webkit-scrollbar-thumb, .tablewrap::-webkit-scrollbar-thumb, .knav::-webkit-scrollbar-thumb, .get__body pre::-webkit-scrollbar-thumb {
+  background: var(--scroll-thumb); border-radius: var(--r-pill);
+}
+.table-wrap::-webkit-scrollbar-thumb:hover, .tablewrap::-webkit-scrollbar-thumb:hover, .knav::-webkit-scrollbar-thumb:hover, .get__body pre::-webkit-scrollbar-thumb:hover {
+  background: var(--scroll-thumb-hot);
+}
+
+.table-wrap { overflow-x: auto; margin-block-start: var(--s-6); }
+.table-wrap table { margin-block-start: 0; min-inline-size: 30rem; }
+
+/* Touch: the segments and the footer links are the only real controls that
+   fall under the 32px a finger needs. */
+@media (pointer: coarse) {
+  .seg button { min-block-size: calc(var(--s) * 9); }
+  .foot__col a { padding-block: var(--s-2); }
+  .get__tabs button, .get__sub button, .copy { min-block-size: calc(var(--s) * 9); }
+}
+
+@media (max-width: 36rem) {
+  .bar .shell { flex-wrap: wrap; padding-block: var(--s-3); row-gap: var(--s-2); }
+  .switch { flex-wrap: wrap; }
+  .head { padding-block: var(--s-16) var(--s-8); }
+}
+
+/* ---- narrow -------------------------------------------------------------
+   The two demo windows are the program's own layouts, and the program does not
+   run at 360px. Rather than shrink their type, the parts that are side by side
+   on a desktop stack: the settings rail becomes a row above its card, a field's
+   label sits over its control, and the search form is one field per line. */
+@media (max-width: 48rem) {
+  .scene { padding: var(--s-3); gap: var(--s-4); }
+  .kwin__body { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
+  .knav { display: flex; overflow-x: auto; gap: var(--s-1); padding-block-end: var(--s-2); }
+  .knav button { white-space: nowrap; }
+  .kfield { flex-wrap: wrap; row-gap: var(--s-1); }
+  .kfield > span { inline-size: 100%; }
+  .kfield b { min-inline-size: 0; }
+  .swin__fields label { flex-basis: 100%; }
+  .swin__fields .cta--sm { inline-size: 100%; }
+  .ovl { padding: var(--s-4) var(--s-4) var(--s-3); }
+  .seg button { padding-inline: var(--s-3); }
+}
+
+.bar__link { color: var(--text-dim); text-decoration: none; font-size: 0.8125rem; }
+@media (hover: hover) { .bar__link:hover { color: var(--text-strong); } }
+
+/* The lower sections drift a few pixels as the page scrolls, and that is the
+   whole of it. The pointer sheen these used to carry read as a shadow moving
+   under the cursor, which is an effect the page does not need. */
+.swin, .get { position: relative; transform: translate3d(0, var(--drift, 0px), 0); }
+
+/* The icon sits in a tinted square rather than floating on the card, and a hair
+   of accent runs along the top edge, widening on hover. Two marks, no glow. */
+
+
+
+
+
+
+/* ---- capability ledger -------------------------------------------------
+   Numbered rows beside a heading that stays put while they pass. No card
+   boxes: hairlines and one baseline, because each row is a claim rather than
+   an object, and a box around a claim adds four borders that say nothing. The
+   number is the only ornament, and it is also the reading order. */
+/* One spine for the three lower sections. They carry different things — five
+   panels, a window, a command block — but the heading column, the column ratio
+   and the hairline are the same in all three, so the eye follows one line down
+   the page instead of meeting three unrelated blocks. */
+.sec-rail { display: block; }
+/* The two window sections are built the way the capability section opens:
+   the label and the heading centred on top, the thing itself underneath at the
+   full width. A window and a command block are the widest objects on the page,
+   and a heading column beside them was width they could not spare. */
+/* The base header is a two-column grid, so a centred header has to say it is
+   one column as well — otherwise its children centre inside the left column
+   and sit off to the side of the thing they title. */
+.sec-head--top { display: grid; grid-template-columns: minmax(0, 1fr); justify-items: center; text-align: center; }
+/* The base rule caps the heading at 16ch, which inside a centred column left
+   -aligns a short heading against a wider paragraph. Full width, text centred. */
+.sec-head--top h2 { max-inline-size: none; }
+.sec-head--top .kicker { justify-self: center; }
+.sec-head--top .kicker { justify-content: center; }
+/* A package name split across a line break stops being a package name, and a
+   centred paragraph that ends short on the last line reads as a mistake. */
+.sec-head--top .section-lead { margin-block-start: var(--s-4); max-inline-size: 46ch; text-wrap: balance; }
+.section-lead code { white-space: nowrap; }
+/* The command block is narrower than the window is: a wall of shell across
+   84rem is a line the eye has to walk back along. */
+.rail-body { margin-block-start: var(--s-12); }
+#get .rail-body { max-inline-size: 58rem; margin-inline: auto; }
+#search .rail-body { max-inline-size: 74rem; margin-inline: auto; }
+.rail-body > .swin, .rail-body > .get { margin-block-start: 0; }
+.sec-head--rail { display: block; }
+.sec-head--rail h2 { font-size: clamp(1.5rem, 2.4vw, 2.125rem); max-inline-size: none; text-wrap: balance; }
+.sec-head--rail .section-lead { margin-block-start: var(--s-4); max-inline-size: 30ch; font-size: 0.875rem; }
+/* The point cloud lives on one sticky canvas for the whole column: five panels
+   would otherwise mean five canvases and five loops for one glyph on screen. */
+/* Narrow: the cloud sits behind the panels, taking no layout space, at half
+   weight so the copy stays first. Wide: it gets the right column to itself.
+   It is never display:none — a canvas that is not laid out is a canvas that
+   stopped, and the section then reads as broken rather than as plain. */
+.caps__fx {
+  position: sticky; inset-block-start: 0; z-index: 0;
+  display: block; inline-size: 100%; block-size: 100svh;
+  margin-block-end: -100svh; opacity: 0.45; pointer-events: none;
+}
+.cap { z-index: 1; }
+
+/* One capability fills the reading area and the next arrives on a scroll: the
+   panel is tall and the two either side of the centred one are dimmed rather
+   than hidden. No scroll snapping — snap and smooth scrolling fight each other
+   on a page whose panels are taller than half the viewport, and what that
+   feels like is a page that will not scroll. */
+.cap {
+  position: relative;
+  display: grid; grid-template-columns: minmax(0, 1fr);
+  gap: var(--s-4);
+  align-content: center;
+  padding: var(--s-8) 0 var(--s-8) var(--s-4);
+  border-block-end: 1px solid var(--card-edge);
+  transform: translate3d(0, var(--drift, 0px), 0);
+}
+.cap:first-of-type { border-block-start: 1px solid var(--card-edge); }
+.cap:last-child { border-block-end: 0; }
+.cap__no {
+  max-inline-size: 26rem;
+  font-family: var(--font-mono); font-size: 0.75rem; letter-spacing: 0.2em;
+  font-variant-numeric: tabular-nums; color: var(--text-dim);
+  transition: color 200ms var(--ease-enter);
+}
+.cap__hd { display: flex; align-items: center; gap: var(--s-4); max-inline-size: 26rem; }
+.cap__hd svg {
+  flex: none; inline-size: calc(var(--s) * 7); block-size: calc(var(--s) * 7);
+  color: var(--accent);
+  transition: translate 260ms var(--ease-enter);
+}
+.cap h3 { font-size: clamp(1.5rem, 3.1vw, 2.375rem); margin: 0; letter-spacing: -0.03em; line-height: 1.2; }
+
+.cap p { color: var(--text-dim); font-size: 1.0625rem; line-height: 1.7; max-inline-size: 26rem; }
+.chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-block-start: var(--s-6); max-inline-size: 26rem; }
+
+/* The row answers the pointer with its own rule and its number, not with a
+   glow: the one under the cursor is the one with an accent edge. */
+@media (hover: hover) {
+  .cap:hover .cap__no { color: var(--accent); }
+  .cap:hover .cap__hd svg { translate: 0 calc(var(--s) * -0.5); }
+}
+
+/* The panel the reader is on is the lit one. Same double guard as the rest of
+   the motion: where scroll-driven animation is missing, or less motion was
+   asked for, every panel simply stays legible. */
+@supports (animation-timeline: view()) {
+  @media (prefers-reduced-motion: no-preference) {
+    #does .shell { timeline-scope: --caps; }
+    .caps { position: relative; }
+/* The copy sits at the page's left margin and the point cloud holds the whole
+   right column, pinned: the glyph stays where it is while the panels pass it,
+   so the reader's eye has one fixed place to look. */
+.caps { view-timeline-name: --caps; }
+    .cap { animation: focus linear both; animation-timeline: view(); animation-range: cover; }
+    /* Four ranges, one scroll: the panel lifts, its heading and its body arrive
+       one after the other, and the numeral behind them travels the other way.
+       The offset between them is the whole effect — a block that moves as one
+       piece reads as a jump. */
+    .cap__hd { animation: enter linear both; animation-timeline: view(); animation-range: entry 14% cover 44%; }
+    .cap__body { animation: enter linear both; animation-timeline: view(); animation-range: entry 22% cover 52%; }
+  }
+}
+@keyframes focus {
+  0% { opacity: 0.12; translate: 0 calc(var(--s) * 9); scale: 0.97; }
+  36%, 64% { opacity: 1; translate: 0 0; scale: 1; }
+  100% { opacity: 0.12; translate: 0 calc(var(--s) * -9); scale: 0.97; }
+}
+@keyframes enter {
+  from { translate: calc(var(--s) * -5) 0; opacity: 0; }
+  to { translate: 0 0; opacity: 1; }
+}
+/* The two window sections arrive with more travel than a heading does: they
+   are one large object each, and a large object that barely moves reads as
+   not having moved. */
+@keyframes drop {
+  from { opacity: 0; translate: 0 calc(var(--s) * 20); scale: 0.97; }
+  to { opacity: 1; translate: 0 0; scale: 1; }
+}
+/* Entry is driven from script in every browser, not from a scroll timeline.
+   `@supports (animation-timeline: view())` is not the same question as "does
+   this browser run scroll-driven animations": a browser can parse the
+   declaration and animate nothing, and then both the stylesheet's version and
+   the scripted fallback stand down and there is no movement at all. The hidden
+   half still lives under [data-reveal="js"], which only a running script sets,
+   so nothing here can leave the page blank. */
+:root[data-reveal="js"] .rise,
+:root[data-reveal="js"] .sec-head--top > *,
+:root[data-reveal="js"] .rail-body > *,
+:root[data-reveal="js"] .swin > *,
+:root[data-reveal="js"] .get > * {
+  transition: opacity 700ms var(--ease-enter), translate 700ms var(--ease-enter);
+}
+:root[data-reveal="js"] .rise:not([data-seen]),
+:root[data-reveal="js"] .sec-head--top > *:not([data-seen]),
+:root[data-reveal="js"] .rail-body > *:not([data-seen]) {
+  opacity: 0; translate: 0 calc(var(--s) * 20);
+}
+:root[data-reveal="js"] .swin > *:not([data-seen]),
+:root[data-reveal="js"] .get > *:not([data-seen]) {
+  opacity: 0; translate: 0 calc(var(--s) * 4);
+}
+
+@keyframes settle {
+  from { opacity: 0; translate: 0 calc(var(--s) * 5); }
+  to { opacity: 1; translate: 0 0; }
+}
+
+/* Wide enough for two columns: the heading takes one, the content the other,
+   and the capability section trades its right column for the point cloud. */
+@media (min-width: 62rem) {
+  .sec-rail {
+    display: grid; align-items: start;
+    gap: var(--s-8) var(--s-16);
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.7fr);
+  }
+  .sec-rail--does { grid-template-columns: minmax(0, 1.15fr) minmax(0, 1.3fr); gap: 0 var(--s-12); }
+  /* The capability section reads as a page of its own, so it takes the wider
+     container and a larger ramp than a section inside a page would. */
+  #does > .shell, #search > .shell, #get > .shell { max-inline-size: 84rem; }
+  #does { padding-block: 0 var(--s-24); }
+  .caps > .sec-head--rail h2 { font-size: clamp(2rem, 3.6vw, 3rem); }
+  .cap h3 { font-size: clamp(1.75rem, 3.4vw, 2.75rem); }
+  .cap p { font-size: 1.125rem; max-inline-size: 30rem; }
+  .cap__hd { max-inline-size: 30rem; }
+  .sec-head--rail { position: sticky; inset-block-start: 38svh; }
+  .cap { min-block-size: 62svh; }
+  /* The canvas spans the whole row and sits under the copy: the loose state is
+     the field the section is written on, and a field boxed into one column
+     reads as a patch with empty page around it. The glyph still forms in the
+     right-hand part, which is where the column would have been. */
+  .caps__fx {
+    grid-column: 1 / -1; grid-row: 1; align-self: start;
+    margin-block-end: 0; opacity: 1;
+  }
+  .caps { grid-column: 1; grid-row: 1; }
+}

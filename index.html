@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="zh-Hans" data-theme="dark">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Kotonoha — Linux 桌面歌词</title>
+<meta name="description" content="从 MPRIS 读当前曲目与播放位置，在 Wayland 图层上画一层半透明歌词。任何 MPRIS 播放器都算，不需要插件。">
+<link rel="icon" href="assets/leaf-pink.svg" type="image/svg+xml">
+<meta name="theme-color" content="">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Kotonoha — Linux 桌面歌词">
+<meta property="og:description" content="从 MPRIS 读当前曲目与播放位置，在 Wayland 图层上画一层半透明歌词。任何 MPRIS 播放器都算，不需要插件。">
+<script>
+  // Before first paint: anything later paints one frame of the wrong theme.
+  try {
+    var t = localStorage.getItem("kotonoha-site-theme") || "dark";
+    document.documentElement.dataset.choice = t;
+    document.documentElement.dataset.theme =
+      t === "system"
+        ? (matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light")
+        : t;
+  } catch (e) { document.documentElement.dataset.theme = "dark"; }
+</script>
+<link rel="stylesheet" href="assets/site.css">
+</head>
+<body>
+
+<svg width="0" height="0" aria-hidden="true" style="position:absolute">
+  <symbol id="leaf" viewBox="181 42 900 900"><path fill="var(--leaf-body)" d="M1016.59,382.21c-15.87,71.22-65.07,134.38-125.74,180.72-80.07,61.16-183.07,100.16-280.21,125.73-50.86,13.39-101.64,23.27-153.34,32.65l-128.14,23.25c-97.72-116.09-107.3-282.57-19.31-407.85,34.7-49.4,81.41-89.13,135.21-116.63,86.22-44.09,182.36-55.4,277.15-59.75,49.9-2.29,98.62-4.68,148.15-9.87,30.31-3.18,59.37-7.8,88.41-16.5,12.09-7.15,26.23-2.76,32.6,9.87,24.91,76.88,31.03,158.24,25.21,238.36ZM775.88,446.46l124.02.38c11.37-.02,19.18-10.44,19.53-20.39.36-10.09-7.1-21.2-18.62-21.22l-123.66.34c-6.77-11.48-19.02-18.56-31.76-18.91-13.78-.39-25.45,6.2-33.25,17.69l-315.56.24c-11.34,0-18.27,12.66-17.96,21.83.34,10.06,7.96,20.48,19.59,20.49l315.32.11c7.44,10.98,19.18,16.55,31.86,16.28,11.87-.25,23.26-6.39,30.49-16.84ZM744.3,557.18c10.37-2.01,15.64-10.17,15.12-19.57-.43-7.79-7.18-16.64-16.59-16.64l-358.62-.02c-10.8,0-17.6,7.97-18.17,17.76-.47,8.11,5.98,18.43,16.12,18.43l362.15.04Z"/>
+  <path fill="var(--leaf-vein)" d="M1016.59,382.21c-3.78,52.06-10.28,103.82-24.9,154.03-108.43,141.16-255.85,197-427.64,221.87-41.93,6.07-83.59,9.31-126.59,15.91,72.56,46.99,158.02,60.18,241,68.31-108.02,17.16-206.75-14.68-304.13-59.69-28.2,9.26-49.58,28.54-66.55,52.13-11.29,15.7-28.9,23.6-46.46,14.28-16.39-8.7-22.87-28.73-14.15-46,6.88-13.62,17.13-24.29,29.59-33.38,16.1-11.56,33.9-19.56,52.4-25.1l128.14-23.25c51.7-9.38,102.48-19.26,153.34-32.65,97.14-25.57,200.14-64.58,280.21-125.73,60.67-46.34,109.87-109.51,125.74-180.72Z"/>
+  <path fill="var(--leaf-fold)" d="M678.46,842.33c-82.98-8.13-168.44-21.32-241-68.31,42.99-6.61,84.65-9.84,126.59-15.91,171.79-24.86,319.21-80.71,427.64-221.87-13.89,47.73-31.34,94.75-57.72,137.7-59.7,97.19-143.68,150.63-255.51,168.4Z"/>
+  <path fill="var(--leaf-motif)" d="M744.3,557.18l-362.15-.04c-10.14,0-16.59-10.32-16.12-18.43.57-9.79,7.37-17.76,18.17-17.76l358.62.02c9.42,0,16.16,8.86,16.59,16.64.52,9.4-4.75,17.56-15.12,19.57Z"/>
+  <g>
+    <path fill="var(--leaf-motif)" d="M777.15,405.57c7.44,12.6,7.23,28.6-1.26,40.89-7.22,10.45-18.62,16.59-30.49,16.84-12.68.27-24.42-5.3-31.86-16.28l-315.32-.11c-11.63,0-19.25-10.43-19.59-20.49-.31-9.17,6.61-21.82,17.96-21.83l315.56-.24c7.81-11.49,19.48-18.08,33.25-17.69,12.74.36,24.99,7.44,31.76,18.91ZM769.02,424.59c0-13.66-11.07-24.73-24.73-24.73s-24.73,11.07-24.73,24.73,11.07,24.73,24.73,24.73,24.73-11.07,24.73-24.73Z"/>
+    <path fill="var(--leaf-fold)" d="M775.88,446.46c8.5-12.29,8.7-28.29,1.26-40.89l123.66-.34c11.52.02,18.98,11.13,18.62,21.22-.35,9.95-8.16,20.37-19.53,20.39l-124.02-.38Z"/>
+    <circle fill="var(--leaf-vein)" cx="744.29" cy="424.59" r="24.73"/>
+  </g></symbol>
+  <symbol id="m-gentoo" viewBox="0 0 24 24"><path d="M9.94 0a7.31 7.31 0 00-1.26.116c-4.344.795-7.4 4.555-7.661 7.031-.126 1.215.53 2.125.89 2.526.977 1.085 2.924 1.914 4.175 2.601-1.81 1.543-2.64 2.296-3.457 3.154C1.403 16.712.543 18.125.54 19.138c0 .325-.053 1.365.371 2.187.16.309.613 1.338 1.98 2.109.874.494 2.119.675 3.337.501 3.772-.538 8.823-3.737 12.427-6.716 2.297-1.9 3.977-3.739 4.462-4.644.39-.731.434-2.043.207-2.866-.645-2.337-5.887-7.125-10.172-9.051A7.824 7.824 0 009.94 0zm-.008.068a7.4 7.4 0 013.344.755c3.46 1.7 9.308 6.482 9.739 8.886.534 2.972-9.931 11.017-16.297 12.272-2.47.485-4.576.618-5.537-1.99-.832-2.262.783-3.916 3.16-6.09a92.546 92.546 0 012.96-2.576c.065-.069-5.706-2.059-5.89-4.343C1.221 4.634 4.938.3 9.697.076c.08-.004.157-.007.235-.008zm-.112.52a5.647 5.647 0 00-.506.032c-2.337.245-2.785.547-4.903 2.149-.71.537-2.016 1.844-2.35 3.393-.128.59.024 1.1.448 1.458 1.36 1.144 3.639 2.072 5.509 2.97.547.263.185.74-.698 1.505-2.227 1.928-5.24 4.276-5.45 6.066-.099.842.19 1.988 1.213 2.574 1.195.685 3.676.238 5.333-.379 2.422-.902 5.602-2.892 8.127-4.848 2.625-2.034 5.067-4.617 5.188-5.038.148-.517.133-.996-.154-1.546-.448-.862-1.049-1.503-1.694-2.22-1.732-1.825-3.563-3.43-5.754-4.658C12.694 1.242 11.417.564 9.82.588zm1.075 3.623c.546 0 1.176.173 1.853.5 1.688.817 3.422 2.961-.015 4.195-.935.336-3.9-.824-3.81-2.407.09-1.57.854-2.289 1.972-2.288zm.285 1.367c-.317-.002-.575.079-.694.263-.557.861-.303 1.472.212 1.862.192-.457 2.156.043 2.148.472a.32.32 0 00.055-.032c1.704-1.282-.472-2.557-1.72-2.565z"/></symbol>
+  <symbol id="m-archlinux" viewBox="0 0 24 24"><path d="M11.39.605C10.376 3.092 9.764 4.72 8.635 7.132c.693.734 1.543 1.589 2.923 2.554-1.484-.61-2.496-1.224-3.252-1.86C6.86 10.842 4.596 15.138 0 23.395c3.612-2.085 6.412-3.37 9.021-3.862a6.61 6.61 0 01-.171-1.547l.003-.115c.058-2.315 1.261-4.095 2.687-3.973 1.426.12 2.534 2.096 2.478 4.409a6.52 6.52 0 01-.146 1.243c2.58.505 5.352 1.787 8.914 3.844-.702-1.293-1.33-2.459-1.929-3.57-.943-.73-1.926-1.682-3.933-2.713 1.38.359 2.367.772 3.137 1.234-6.09-11.334-6.582-12.84-8.67-17.74zM22.898 21.36v-.623h-.234v-.084h.562v.084h-.234v.623h.331v-.707h.142l.167.5.034.107a2.26 2.26 0 01.038-.114l.17-.493H24v.707h-.091v-.593l-.206.593h-.084l-.205-.602v.602h-.091"/></symbol>
+  <symbol id="m-nixos" viewBox="0 0 24 24"><path d="M7.352 1.592l-1.364.002L5.32 2.75l1.557 2.713-3.137-.008-1.32 2.34H14.11l-1.353-2.332-3.192-.006-2.214-3.865zm6.175 0l-2.687.025 5.846 10.127 1.341-2.34-1.59-2.765 2.24-3.85-.683-1.182h-1.336l-1.57 2.705-1.56-2.72zm6.887 4.195l-5.846 10.125 2.696-.008 1.601-2.76 4.453.016.682-1.183-.666-1.157-3.13-.008L21.778 8.1l-1.365-2.313zM9.432 8.086l-2.696.008-1.601 2.76-4.453-.016L0 12.02l.666 1.157 3.13.008-1.575 2.71 1.365 2.315L9.432 8.086zM7.33 12.25l-.006.01-.002-.004-1.342 2.34 1.59 2.765-2.24 3.85.684 1.182H7.35l.004-.006h.001l1.567-2.698 1.558 2.72 2.688-.026-.004-.006h.01L7.33 12.25zm2.55 3.93l1.354 2.332 3.192.006 2.215 3.865 1.363-.002.668-1.156-1.557-2.713 3.137.008 1.32-2.34H9.881Z"/></symbol>
+  <symbol id="n-general" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 4H3"/><path d="M21 12H9"/><path d="M21 20H7"/><path d="M7 4v4"/><path d="M9 12v4"/><path d="M5 20v-4"/></symbol>
+  <symbol id="n-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.1-3.1a2 2 0 0 0-2.8 0L6 21"/></symbol>
+  <symbol id="n-text" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7V5h16v2"/><path d="M12 5v14"/><path d="M9 19h6"/></symbol>
+  <symbol id="n-panel" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2"/><path d="M3 9h18"/></symbol>
+  <symbol id="n-effects" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4"/><path d="M12 17v4"/><path d="M3 12h4"/><path d="M17 12h4"/><path d="m6 6 2.5 2.5"/><path d="m15.5 15.5 2.5 2.5"/><path d="m18 6-2.5 2.5"/><path d="m8.5 15.5-2.5 2.5"/></symbol>
+  <symbol id="n-lyrics" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6h16"/><path d="M4 12h10"/><path d="M4 18h13"/></symbol>
+  <symbol id="n-position" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v18"/><path d="M3 12h18"/><path d="m9 6 3-3 3 3"/><path d="m9 18 3 3 3-3"/><path d="m6 9-3 3 3 3"/><path d="m18 9 3 3-3 3"/></symbol>
+  <symbol id="n-sources" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></symbol>
+</svg>
+
+<header class="bar">
+  <div class="shell">
+    <span class="mark">
+      <svg class="leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
+      Kotonoha
+    </span>
+    <span class="grow"></span>
+    <div class="seg" role="group" aria-label="语言" id="langSeg">
+      <button type="button" data-lang="zh-Hans" aria-pressed="true">简体</button>
+      <button type="button" data-lang="zh-Hant" aria-pressed="false">繁體</button>
+      <button type="button" data-lang="en" aria-pressed="false">English</button>
+    </div>
+    <div class="seg" role="group" aria-label="主题" id="themeSeg">
+      <button type="button" data-theme-set="light" aria-pressed="false" data-i18n="theme.light">浅色</button>
+      <button type="button" data-theme-set="dark" aria-pressed="true" data-i18n="theme.dark">深色</button>
+      <button type="button" data-theme-set="system" aria-pressed="false" data-i18n="theme.system">系统</button>
+    </div>
+  </div>
+</header>
+
+<main id="main">
+
+<div class="grid-bg" id="hero">
+  <canvas class="field" id="field" aria-hidden="true"></canvas>
+  <div class="shell head">
+    <div class="head__grid">
+      <div>
+        <h1 data-i18n="hero.title">Wayland 桌面歌词</h1>
+        <p class="lead" data-i18n="hero.lead">Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上逐字显示歌词。任何实现 MPRIS 的播放器都可用，无需在播放器一侧安装组件。</p>
+        <div class="row">
+          <a class="cta" href="#get" data-i18n="hero.install">安装<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></a>
+        </div>
+      </div>
+
+      <!-- 右栏：桌面上实际的样子——设置窗口，加一层浮在它前面、正在跑的歌词。 -->
+      <div class="scene" id="scene">
+        <!-- 一层合成的桌面。毛玻璃要有东西可糊才看得出来，就像它在真桌面上那样。 -->
+        <div class="desk" aria-hidden="true"></div>
+        <!-- 浮窗：上一行 / 当前行 / 翻译 / 下一行，居中，右上角两个小按钮。 -->
+        <div class="ovl" id="ovl">
+          <div class="ovl__chrome">
+            <button type="button" class="ovl__ic" id="ovlPlay" aria-pressed="true" aria-label="暂停">
+              <svg class="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
+              <svg class="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 14 9-14 9Z"/></svg>
+            </button>
+            <button type="button" class="ovl__ic" id="ovlLock" aria-pressed="false" aria-label="锁定位置">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+            </button>
+            <button type="button" class="ovl__ic" id="ovlSearch" aria-label="搜索歌词">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            </button>
+          </div>
+          <p class="ovl__side" id="ovlPrev"></p>
+          <p class="ovl__line" id="ovlLine"></p>
+          <p class="ovl__sub" id="ovlSub"></p>
+          <p class="ovl__side" id="ovlNext"></p>
+        </div>
+
+        <div class="kwin">
+          <div class="kwin__bar">
+            <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
+            <span class="kwin__title">Kotonoha 设置</span>
+            <span class="kwin__x" aria-hidden="true">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+            </span>
+          </div>
+          <div class="kwin__body">
+            <nav class="knav" id="knav" aria-label="设置分类">
+              <button type="button" aria-current="page">通用</button>
+              <button type="button">图标</button>
+              <button type="button">文字</button>
+              <button type="button">效果</button>
+              <button type="button">歌词</button>
+            </nav>
+            <div class="kcard" id="kcard"></div>
+          </div>
+        </div>
+
+
+
+      </div>
+    </div>
+  </div>
+</div>
+<section id="does">
+  <div class="shell sec-rail sec-rail--does">
+    <canvas class="caps__fx" id="capsFx" aria-hidden="true"></canvas>
+    <div class="caps">
+      <article class="cap" data-no="01">
+        <p class="cap__no" aria-hidden="true">01</p>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><h3 data-i18n="does.mpris">任何 MPRIS 播放器，无需插件</h3></div>
+        <div class="cap__body">
+          <p data-i18n="does.mpris.body">曲目与播放位置经 D-Bus 读取，播放器一侧无需适配。位置由本地时钟插值，不逐帧查询。</p>
+        </div>
+      </article>
+      <article class="cap" data-no="02">
+        <p class="cap__no" aria-hidden="true">02</p>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 12h9"/><path d="M11 6h9"/><path d="M11 18h9"/><path d="M4 10h2V4H4"/><path d="M4 20h3"/><path d="M6 20a1.5 1.5 0 0 0 0-3H4l3-3"/></svg><h3 data-i18n="does.sources">四个歌词来源</h3></div>
+        <div class="cap__body">
+          <p data-i18n="does.sources.body">来源顺序、匹配条件、回退策略与本地缓存均可配置；当前来源无结果时按顺序回退到下一个。</p>
+        </div>
+      </article>
+      <article class="cap" data-no="03">
+        <p class="cap__no" aria-hidden="true">03</p>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg><h3 data-i18n="does.through">点击穿透</h3></div>
+        <div class="cap__body">
+          <p data-i18n="does.through.body">启用后鼠标事件直接传递到下层窗口，歌词不再拦截点击。</p>
+        </div>
+      </article>
+      <article class="cap" data-no="04">
+        <p class="cap__no" aria-hidden="true">04</p>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><h3 data-i18n="does.follow">主题与语言跟随系统</h3></div>
+        <div class="cap__body">
+          <p data-i18n="does.follow.body">浅色、深色、跟随系统三态；界面语言同样可交由系统决定。两项均在设置窗口首页，修改后立即生效，无需重启。</p>
+          <div class="chips"><span class="tag" data-i18n="does.follow.a">浅色 / 深色 / 跟随系统</span><span class="tag" data-i18n="does.follow.b">简体 · 繁體 · English</span></div>
+        </div>
+      </article>
+      <article class="cap" data-no="05">
+        <p class="cap__no" aria-hidden="true">05</p>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg><h3 data-i18n="does.layer">全屏之上的图层窗口</h3></div>
+        <div class="cap__body">
+          <p data-i18n="does.layer.body">需要实现 <code>wlr-layer-shell</code> 的合成器，KDE/KWin 与基于 wlroots 的合成器均可；GNOME/Mutter 退化为普通置顶窗口。毛玻璃另需 <code>ext-background-effect-v1</code> 或旧的 <code>org_kde_kwin_blur</code>，两者缺失时仅保留半透明，相关选项自动禁用。</p>
+          <div class="chips"><span class="tag">wlr-layer-shell</span><span class="tag">ext-background-effect-v1</span></div>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+<section id="search">
+  <canvas class="sec-fx" id="fx-search" aria-hidden="true"></canvas>
+  <div class="shell">
+    <div class="sec-head sec-head--top rise">
+      <p class="kicker"><b data-i18n="eb.search">歌词来源</b></p>
+      <h2 data-i18n="s.search">搜索窗口</h2>
+      <p class="section-lead" data-i18n="s.search.lead">一首歌常有十几个搜索结果。点击表头排序：时长按秒数排列，匹配度按等级排列，均不按字面顺序。</p>
+    </div>
+
+    <div class="rail-body rise">
+      <div class="swin">
+        <div class="kwin__bar">
+          <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
+          <span class="kwin__title">查找歌词</span>
+          <span class="kwin__x" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </span>
+        </div>
+  
+        <p class="swin__lead">搜索不同来源，为当前歌曲选择合适的歌词版本。</p>
+  
+        <div class="swin__now">
+          <div>
+            <b>何度でも立ち上がれ</b>
+            <span>4:03</span>
+          </div>
+          <dl>
+            <div><dt>歌词来源</dt><dd>逐字</dd></div>
+            <div><dt>播放来源</dt><dd>MPRIS</dd></div>
+            <div><dt>缓存状态</dt><dd>已缓存</dd></div>
+          </dl>
+        </div>
+  
+        <div class="swin__query">
+          <span class="swin__label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            搜索歌词
+          </span>
+          <div class="swin__fields">
+            <label><span>歌曲</span><input type="text" value="何度でも立ち上がれ" aria-label="歌曲"></label>
+            <label><span>艺术家</span><input type="text" placeholder="艺术家名称" aria-label="艺术家"></label>
+            <label><span>专辑</span><input type="text" placeholder="专辑名称" aria-label="专辑"></label>
+            <button class="cta cta--sm" type="button">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+              搜索
+            </button>
+          </div>
+        </div>
+  
+        <div class="swin__head">
+          <span class="swin__label">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
+            搜索结果
+          </span>
+          <span class="swin__miss" id="swMiss"></span>
+          <label class="swin__only">
+            <input type="checkbox" id="swHigh">
+            仅显示高匹配
+          </label>
+        </div>
+  
+        <div class="tablewrap">
+          <table class="res" id="res">
+            <thead>
+              <tr>
+                <th><button type="button" data-sort="src">来源</button></th>
+                <th><button type="button" data-sort="title">歌曲</button></th>
+                <th><button type="button" data-sort="artist">艺术家</button></th>
+                <th><button type="button" data-sort="album">专辑</button></th>
+                <th><button type="button" data-sort="len">时长</button></th>
+                <th><button type="button" data-sort="ver">歌词版本</button></th>
+                <th><button type="button" data-sort="conf">匹配度</button></th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+  
+        <div class="swin__foot">
+          <span id="swCount"></span>
+          <button class="cta cta--sm" type="button" id="swApply">应用选中歌词</button>
+          <button class="ghost ghost--sm" type="button">关闭</button>
+        </div>
+      </div>
+    </div>
+    </div>
+  </section>
+<section id="get">
+  <canvas class="sec-fx" id="fx-get" aria-hidden="true"></canvas>
+  <div class="shell">
+    <div class="sec-head sec-head--top rise">
+      <p class="kicker"><b data-i18n="eb.get">软件包</b><span>LINUX</span></p>
+      <h2 data-i18n="s.get">安装</h2>
+    <p class="section-lead" data-i18n="get.lead">Gentoo 使用 <code>gentoo-zh</code> overlay，Arch 使用 AUR 的 <code>kotonoha-git</code>，NixOS 使用 flake，也可以从源码构建。</p>
+    </div>
+
+    <div class="rail-body rise">
+      <div class="get">
+        <div class="get__tabs" role="tablist" aria-label="发行版" id="getTabs"></div>
+        <div class="get__sub" id="getSub" hidden></div>
+        <div class="get__body">
+          <pre id="getCmd">sudo emerge --ask app-eselect/eselect-repository
+  sudo eselect repository enable gentoo-zh
+  sudo emaint sync -r gentoo-zh
+  
+  # live ebuild 没有任何关键字
+  echo 'media-plugins/kotonoha **' | sudo tee /etc/portage/package.accept_keywords/kotonoha
+  
+  sudo emerge --ask media-plugins/kotonoha::gentoo-zh</pre>
+          <button class="copy" type="button" id="getCopy">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>
+            <b id="getCopyLabel" data-i18n="copy">复制</b>
+          </button>
+        </div>
+        <p class="get__note" id="getNote"></p>
+      </div>
+    </div>
+    <p class="sr" role="status" id="getStatus"></p>
+  </div>
+</section>
+</main>
+
+<footer class="foot">
+  <div class="shell">
+    <div class="foot__top rise">
+      <div class="foot__brand">
+        <span class="mark">
+          <svg class="leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
+          Kotonoha
+        </span>
+        <p class="foot__lead" data-i18n="foot.lead">Linux 桌面的 Wayland 歌词图层</p>
+        <p class="foot__desc" data-i18n="foot.desc">运行需要实现 wlr-layer-shell 的 Wayland 合成器，KDE/KWin 与基于 wlroots 的合成器均可。</p>
+      </div>
+      <div class="foot__col">
+        <h3 data-i18n="foot.project">项目</h3>
+        <a href="https://github.com/locez/kotonoha">源码</a>
+        <a href="https://github.com/locez/kotonoha/releases">发行版</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/LICENSE">MIT 授权</a>
+      </div>
+      <div class="foot__col">
+        <h3 data-i18n="foot.docs">文档</h3>
+        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC.md">架构</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC-lyrics.md">歌词与缓存</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/plugins/README.md">外部适配协议</a>
+      </div>
+    </div>
+    <div class="foot__legal">
+      <span data-i18n="foot.credit">图标、软件界面与网站：<a href="https://github.com/Zakkaus">Zakk</a>。</span>
+      <span>控件图形 Lucide，ISC。</span>
+      <span>发行版标志 simple-icons，CC0。</span>
+    </div>
+  </div>
+</footer>
+
+<script src="assets/site.js"></script>
+</body>
+</html>
