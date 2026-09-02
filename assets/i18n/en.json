@@ -152,5 +152,9 @@
   "foot.project": "Project",
   "foot.docs": "Docs",
   "foot.credit": "Icon, application interface and site: <a href=\"https://github.com/Zakkaus\">Zakk</a>.",
-  "get.lead": "Gentoo via the <code>gentoo-zh</code> overlay, Arch via <code>kotonoha-git</code> on the AUR, or NixOS via a flake. You can also build from source."
+  "get.lead": "Gentoo via the <code>gentoo-zh</code> overlay, Arch via <code>kotonoha-git</code> on the AUR, or NixOS via a flake. Debian/Ubuntu can install the DEB; Fedora and other RPM-based systems can install the RPM, or you can build from source.",
+  "get.deb": "Debian / Ubuntu",
+  "get.rpm": "Fedora / RPM",
+  "get.deb.note": "The official Release provides an amd64 package; the command needs curl and jq.",
+  "get.rpm.note": "The official Release provides an x86_64 package; the command needs curl and jq."
 }

@@ -133,7 +133,7 @@
       "s.motion": "动效预算",
       "s.not": "刻意不做",
       "s.get": "安装",
-      "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；也可以从源码构建。",
+      "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；Debian/Ubuntu 可直接安装 DEB，Fedora 等 RPM 系可安装 RPM，也可以从源码构建。",
       "eb.does": "概览",
       "eb.search": "歌词来源",
       "eb.get": "软件包",
@@ -145,6 +145,10 @@
       "get.mirror": "CERNET 镜像",
       "get.manual": "手动 repos.conf",
       "get.source": "从源码编译",
+      "get.deb": "Debian / Ubuntu",
+      "get.rpm": "Fedora / RPM",
+      "get.deb.note": "官方 Release 提供 amd64 包；需要 curl 和 jq 命令。",
+      "get.rpm.note": "官方 Release 提供 x86_64 包；需要 curl 和 jq 命令。",
       "get.arch.note": "AUR 包名是 kotonoha-git，构建自 main 分支最新提交。",
       "get.nixos.note": "加进 flake，再把包放进 systemPackages。",
       "get.source.note": "先装系统依赖。uv sync 会自动编译原生 Wayland 桥接。",
@@ -678,6 +682,13 @@
   function liveKeys() {
     return "\n\n# " + msg("get.live.comment") + "\necho 'media-plugins/kotonoha **' | sudo tee /etc/portage/package.accept_keywords/kotonoha\n\nsudo emerge --ask media-plugins/kotonoha::gentoo-zh";
   }
+  var RELEASE_API = "https://api.github.com/repos/locez/kotonoha/releases/latest";
+  function releaseCommand(suffix, filename, installer) {
+    return "set -e\nasset_url=\"$(curl -fsSL " + RELEASE_API + " | jq -r '.assets[] | select(.name | endswith(\"" + suffix + "\")) | .browser_download_url' | head -n 1)\"\ntest -n \"$asset_url\"\n" +
+      "curl -fL \"$asset_url\" -o " + filename + "\n" +
+      installer + "\n" +
+      "rm " + filename;
+  }
   var GET = [
     { id: "gentoo", mark: "gentoo", label: "Gentoo",
       note: "",
@@ -699,6 +710,12 @@
     { id: "nixos", mark: "nixos", label: "NixOS",
       noteKey: "get.nixos.note",
       cmd: 'inputs.kotonoha = {\n  url = "github:locez/kotonoha";\n  inputs.nixpkgs.follows = "nixpkgs";\n};\n\nenvironment.systemPackages = [\n  inputs.kotonoha.packages.${pkgs.stdenv.hostPlatform.system}.default\n];' },
+    { id: "deb", labelKey: "get.deb",
+      noteKey: "get.deb.note",
+      cmd: releaseCommand("_amd64.deb", "kotonoha.deb", "sudo apt install ./kotonoha.deb") },
+    { id: "rpm", labelKey: "get.rpm",
+      noteKey: "get.rpm.note",
+      cmd: releaseCommand(".x86_64.rpm", "kotonoha.rpm", "sudo dnf install ./kotonoha.rpm") },
     { id: "source", labelKey: "get.source",
       noteKey: "get.source.note",
       cmd: "# Arch\nsudo pacman -S cmake qt6-base qt6-wayland layer-shell-qt\n# Gentoo\nsudo emerge -a dev-build/cmake kde-plasma/layer-shell-qt dev-qt/qtwayland\n\ngit clone https://github.com/locez/kotonoha.git\ncd kotonoha\nuv sync\nuv run kotonoha" }

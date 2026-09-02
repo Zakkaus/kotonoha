@@ -152,5 +152,9 @@
   "eb.search": "歌詞來源",
   "eb.get": "軟體套件",
   "foot.desc": "需要支援 wlr-layer-shell 的 Wayland 合成器。KDE/KWin 和 wlroots 合成器都可以。",
-  "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；也可以從原始碼建置。"
+  "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；Debian/Ubuntu 可直接安裝 DEB，Fedora 等 RPM 系可安裝 RPM，也可以從原始碼建置。",
+  "get.deb": "Debian / Ubuntu",
+  "get.rpm": "Fedora / RPM",
+  "get.deb.note": "官方 Release 提供 amd64 套件；需要 curl 和 jq 命令。",
+  "get.rpm.note": "官方 Release 提供 x86_64 套件；需要 curl 和 jq 命令。"
 }
