@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kotonoha — Linux 桌面歌词</title>
-<meta name="description" content="从 MPRIS 读当前曲目与播放位置，在 Wayland 图层上画一层半透明歌词。任何 MPRIS 播放器都算，不需要插件。">
+<title>Kotonoha — Wayland 桌面歌词</title>
+<meta name="description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。">
 <link rel="icon" href="assets/leaf-pink.svg" type="image/svg+xml">
 <meta name="theme-color" content="">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Kotonoha — Linux 桌面歌词">
-<meta property="og:description" content="从 MPRIS 读当前曲目与播放位置，在 Wayland 图层上画一层半透明歌词。任何 MPRIS 播放器都算，不需要插件。">
+<meta property="og:title" content="Kotonoha — Wayland 桌面歌词">
+<meta property="og:description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。">
 <script>
   // Before first paint: anything later paints one frame of the wrong theme.
   try {
@@ -76,7 +76,7 @@
     <div class="head__grid">
       <div>
         <h1 data-i18n="hero.title">Wayland 桌面歌词</h1>
-        <p class="lead" data-i18n="hero.lead">Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上逐字显示歌词。任何实现 MPRIS 的播放器都可用，无需在播放器一侧安装组件。</p>
+        <p class="lead" data-i18n="hero.lead">Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。</p>
         <div class="row">
           <a class="cta" href="#get" data-i18n="hero.install">安装<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></a>
         </div>
@@ -140,37 +140,64 @@
         <p class="cap__no" aria-hidden="true">01</p>
         <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M9 18V5l12-2v13"/><circle cx="6" cy="18" r="3"/><circle cx="18" cy="16" r="3"/></svg><h3 data-i18n="does.mpris">任何 MPRIS 播放器，无需插件</h3></div>
         <div class="cap__body">
-          <p data-i18n="does.mpris.body">曲目与播放位置经 D-Bus 读取，播放器一侧无需适配。位置由本地时钟插值，不逐帧查询。</p>
+          <p data-i18n="does.mpris.body">通过 D-Bus 读取曲目和播放位置。播放器无需适配。播放位置用本地时钟插值，不逐帧查询。</p>
         </div>
       </article>
       <article class="cap" data-no="02">
         <p class="cap__no" aria-hidden="true">02</p>
         <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M11 12h9"/><path d="M11 6h9"/><path d="M11 18h9"/><path d="M4 10h2V4H4"/><path d="M4 20h3"/><path d="M6 20a1.5 1.5 0 0 0 0-3H4l3-3"/></svg><h3 data-i18n="does.sources">四个歌词来源</h3></div>
         <div class="cap__body">
-          <p data-i18n="does.sources.body">来源顺序、匹配条件、回退策略与本地缓存均可配置；当前来源无结果时按顺序回退到下一个。</p>
+          <p data-i18n="does.sources.body">来源顺序、匹配规则、回退和本地缓存都能配置。</p>
+          <div class="chips">
+            <span class="tag">Netease</span>
+            <span class="tag">LRCLIB</span>
+            <span class="tag">Kugou</span>
+            <span class="tag">Cider</span>
+            <span class="tag">Embedded lyrics</span>
+          </div>
         </div>
       </article>
       <article class="cap" data-no="03">
         <p class="cap__no" aria-hidden="true">03</p>
         <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m3 3 7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/><path d="m13 13 6 6"/></svg><h3 data-i18n="does.through">点击穿透</h3></div>
         <div class="cap__body">
-          <p data-i18n="does.through.body">启用后鼠标事件直接传递到下层窗口，歌词不再拦截点击。</p>
+          <p data-i18n="does.through.body">启用后，鼠标事件直接传给下层窗口。歌词层不拦截点击。</p>
         </div>
       </article>
       <article class="cap" data-no="04">
         <p class="cap__no" aria-hidden="true">04</p>
-        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><h3 data-i18n="does.follow">主题与语言跟随系统</h3></div>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg><h3 data-i18n="does.follow">主题和语言都能跟随系统</h3></div>
         <div class="cap__body">
-          <p data-i18n="does.follow.body">浅色、深色、跟随系统三态；界面语言同样可交由系统决定。两项均在设置窗口首页，修改后立即生效，无需重启。</p>
+          <p data-i18n="does.follow.body">浅色、深色，或跟随系统。界面语言也能跟随系统。设置首页就能改，改完立即生效，不用重启。</p>
           <div class="chips"><span class="tag" data-i18n="does.follow.a">浅色 / 深色 / 跟随系统</span><span class="tag" data-i18n="does.follow.b">简体 · 繁體 · English</span></div>
         </div>
       </article>
       <article class="cap" data-no="05">
         <p class="cap__no" aria-hidden="true">05</p>
-        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg><h3 data-i18n="does.layer">全屏之上的图层窗口</h3></div>
+        <div class="cap__hd"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a2 2 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg><h3 data-i18n="does.layer">Wayland Overlay</h3></div>
         <div class="cap__body">
-          <p data-i18n="does.layer.body">需要实现 <code>wlr-layer-shell</code> 的合成器，KDE/KWin 与基于 wlroots 的合成器均可；GNOME/Mutter 退化为普通置顶窗口。毛玻璃另需 <code>ext-background-effect-v1</code> 或旧的 <code>org_kde_kwin_blur</code>，两者缺失时仅保留半透明，相关选项自动禁用。</p>
-          <div class="chips"><span class="tag">wlr-layer-shell</span><span class="tag">ext-background-effect-v1</span></div>
+          <table class="cap__table">
+            <thead>
+              <tr>
+                <th scope="col" data-i18n="does.layer.table.capability">能力</th>
+                <th scope="col" data-i18n="does.layer.table.condition">条件</th>
+                <th scope="col" data-i18n="does.layer.table.behavior">行为</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <th scope="row" data-i18n="does.layer.fullscreen">全屏上方显示</th>
+                <td><span class="cap__table-label" data-i18n="does.layer.table.condition">条件</span><span data-i18n="does.layer.fullscreen.condition">Wayland 合成器支持 <code>wlr-layer-shell</code></span></td>
+                <td><span class="cap__table-label" data-i18n="does.layer.table.behavior">行为</span><span data-i18n="does.layer.fullscreen.behavior">KDE/KWin、wlroots 可浮在全屏窗口上方</span></td>
+              </tr>
+              <tr>
+                <th scope="row" data-i18n="does.layer.blur">毛玻璃</th>
+                <td><span class="cap__table-label" data-i18n="does.layer.table.condition">条件</span><span data-i18n="does.layer.blur.condition">支持 <code>ext-background-effect-v1</code> 或 <code>org_kde_kwin_blur</code></span></td>
+                <td><span class="cap__table-label" data-i18n="does.layer.table.behavior">行为</span><span data-i18n="does.layer.blur.behavior">缺少时保留半透明，禁用毛玻璃</span></td>
+              </tr>
+            </tbody>
+          </table>
+          <p class="cap__compat" data-i18n="does.layer.compatibility">兼容性：不支持 <code>wlr-layer-shell</code> 的合成器（如 GNOME/Mutter）使用普通置顶窗口。</p>
         </div>
       </article>
     </div>
@@ -182,20 +209,20 @@
     <div class="sec-head sec-head--top rise">
       <p class="kicker"><b data-i18n="eb.search">歌词来源</b></p>
       <h2 data-i18n="s.search">搜索窗口</h2>
-      <p class="section-lead" data-i18n="s.search.lead">一首歌常有十几个搜索结果。点击表头排序：时长按秒数排列，匹配度按等级排列，均不按字面顺序。</p>
+      <p class="section-lead" data-i18n="s.search.lead">搜索结果多时，点表头排序。时长按秒数，匹配度按等级。</p>
     </div>
 
     <div class="rail-body rise">
       <div class="swin">
         <div class="kwin__bar">
           <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
-          <span class="kwin__title">查找歌词</span>
+          <span class="kwin__title">搜索歌词</span>
           <span class="kwin__x" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </span>
         </div>
   
-        <p class="swin__lead">搜索不同来源，为当前歌曲选择合适的歌词版本。</p>
+        <p class="swin__lead">从不同来源找歌词，选中后应用。</p>
   
         <div class="swin__now">
           <div>
@@ -233,7 +260,7 @@
           <span class="swin__miss" id="swMiss"></span>
           <label class="swin__only">
             <input type="checkbox" id="swHigh">
-            仅显示高匹配
+            仅看高匹配
           </label>
         </div>
   
@@ -256,7 +283,7 @@
   
         <div class="swin__foot">
           <span id="swCount"></span>
-          <button class="cta cta--sm" type="button" id="swApply">应用选中歌词</button>
+          <button class="cta cta--sm" type="button" id="swApply">应用所选歌词</button>
           <button class="ghost ghost--sm" type="button">关闭</button>
         </div>
       </div>
@@ -269,7 +296,7 @@
     <div class="sec-head sec-head--top rise">
       <p class="kicker"><b data-i18n="eb.get">软件包</b><span>LINUX</span></p>
       <h2 data-i18n="s.get">安装</h2>
-    <p class="section-lead" data-i18n="get.lead">Gentoo 使用 <code>gentoo-zh</code> overlay，Arch 使用 AUR 的 <code>kotonoha-git</code>，NixOS 使用 flake，也可以从源码构建。</p>
+    <p class="section-lead" data-i18n="get.lead">Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；也可以从源码构建。</p>
     </div>
 
     <div class="rail-body rise">
@@ -306,8 +333,8 @@
           <svg class="leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
           Kotonoha
         </span>
-        <p class="foot__lead" data-i18n="foot.lead">Linux 桌面的 Wayland 歌词图层</p>
-        <p class="foot__desc" data-i18n="foot.desc">运行需要实现 wlr-layer-shell 的 Wayland 合成器，KDE/KWin 与基于 wlroots 的合成器均可。</p>
+        <p class="foot__lead" data-i18n="foot.lead">Linux 上的 Wayland 歌词</p>
+        <p class="foot__desc" data-i18n="foot.desc">需要支持 wlr-layer-shell 的 Wayland 合成器。KDE/KWin 和 wlroots 合成器都可以。</p>
       </div>
       <div class="foot__col">
         <h3 data-i18n="foot.project">项目</h3>
@@ -324,8 +351,8 @@
     </div>
     <div class="foot__legal">
       <span data-i18n="foot.credit">图标、软件界面与网站：<a href="https://github.com/Zakkaus">Zakk</a>。</span>
-      <span>控件图形 Lucide，ISC。</span>
-      <span>发行版标志 simple-icons，CC0。</span>
+      <span>控件图标：Lucide，ISC。</span>
+      <span>发行版图标：simple-icons，CC0。</span>
     </div>
   </div>
 </footer>

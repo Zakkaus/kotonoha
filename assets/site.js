@@ -9,21 +9,30 @@
      which is the one thing the wording rules refuse outright. */
   var MESSAGES = { "zh-Hans": {
       "does.mpris": "任何 MPRIS 播放器，无需插件",
-      "does.mpris.body": "曲目与播放位置经 D-Bus 读取，播放器一侧无需适配。位置由本地时钟插值，不逐帧查询。",
-      "does.sources": "四个歌词来源",
-      "does.sources.body": "来源顺序、匹配条件、回退策略与本地缓存均可配置；当前来源无结果时按顺序回退到下一个。",
+      "does.mpris.body": "通过 D-Bus 读取曲目和播放位置。播放器无需适配。播放位置用本地时钟插值，不逐帧查询。",
+      "does.sources": "多种歌词来源",
+      "does.sources.body": "来源顺序、匹配规则、回退和本地缓存都能配置。",
       "does.through": "点击穿透",
-      "does.through.body": "启用后鼠标事件直接传递到下层窗口，歌词不再拦截点击。",
-      "does.follow": "主题与语言跟随系统",
-      "does.follow.body": "浅色、深色、跟随系统三态；界面语言同样可交由系统决定。两项均在设置窗口首页，修改后立即生效，无需重启。",
-      "does.layer": "全屏之上的图层窗口",
-      "does.layer.body": "需要实现 <code>wlr-layer-shell</code> 的合成器，KDE/KWin 与基于 wlroots 的合成器均可；GNOME/Mutter 退化为普通置顶窗口。毛玻璃另需 <code>ext-background-effect-v1</code> 或旧的 <code>org_kde_kwin_blur</code>，两者缺失时仅保留半透明，相关选项自动禁用。",
+      "does.through.body": "启用后，鼠标事件直接传给下层窗口。歌词层不拦截点击。",
+      "does.follow": "主题和语言都能跟随系统",
+      "does.follow.body": "浅色、深色，或跟随系统。界面语言也能跟随系统。设置首页就能改，改完立即生效，不用重启。",
+      "does.layer": "Wayland Overlay",
+      "does.layer.table.capability": "能力",
+      "does.layer.table.condition": "条件",
+      "does.layer.table.behavior": "行为",
+      "does.layer.fullscreen": "全屏上方显示",
+      "does.layer.fullscreen.condition": "Wayland 合成器支持 <code>wlr-layer-shell</code>",
+      "does.layer.fullscreen.behavior": "KDE/KWin、wlroots 可浮在全屏窗口上方",
+      "does.layer.blur": "毛玻璃",
+      "does.layer.blur.condition": "支持 <code>ext-background-effect-v1</code> 或 <code>org_kde_kwin_blur</code>",
+      "does.layer.blur.behavior": "缺少时保留半透明，禁用毛玻璃",
+      "does.layer.compatibility": "兼容性：不支持 <code>wlr-layer-shell</code> 的合成器（如 GNOME/Mutter）使用普通置顶窗口。",
       "theme.light": "浅色",
       "theme.dark": "深色",
       "theme.system": "系统",
       "chip.draft": "设计语言 · 草案",
       "hero.title": "Wayland 桌面歌词",
-      "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上逐字显示歌词。任何实现 MPRIS 的播放器都可用，无需在播放器一侧安装组件。",
+      "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。",
       "hero.install": "安装",
       "nav.design": "设计语言",
       "nav.home": "首页",
@@ -39,19 +48,19 @@
       "does.follow.a": "浅色 / 深色 / 跟随系统",
       "does.follow.b": "简体 · 繁體 · English",
       "s.search": "搜索窗口",
-      "s.search.lead": "一首歌常有十几个搜索结果。点击表头排序：时长按秒数排列，匹配度按等级排列，均不按字面顺序。",
+      "s.search.lead": "搜索结果多时，点表头排序。时长按秒数，匹配度按等级。",
       "s.motion": "动效预算",
       "s.not": "刻意不做",
       "s.get": "安装",
-      "get.lead": "Gentoo 使用 <code>gentoo-zh</code> overlay，Arch 使用 AUR 的 <code>kotonoha-git</code>，NixOS 使用 flake，也可以从源码构建。",
+      "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；也可以从源码构建。",
       "eb.does": "概览",
       "eb.search": "歌词来源",
       "eb.get": "软件包",
       "s.red": "什么能报红",
       "copy": "复制",
       "copied": "已复制",
-      "foot.lead": "Linux 桌面的 Wayland 歌词图层",
-      "foot.desc": "运行需要实现 wlr-layer-shell 的 Wayland 合成器，KDE/KWin 与基于 wlroots 的合成器均可。",
+      "foot.lead": "Linux 上的 Wayland 歌词",
+      "foot.desc": "需要支持 wlr-layer-shell 的 Wayland 合成器。KDE/KWin 和 wlroots 合成器都可以。",
       "foot.project": "项目",
       "foot.docs": "文档",
       "foot.credit": "图标、软件界面与网站：<a href=\"https://github.com/Zakkaus\">Zakk</a>。"
@@ -557,7 +566,7 @@
           cmd: "sudo tee /etc/portage/repos.conf/gentoo-zh.conf <<'EOF'\n[gentoo-zh]\nlocation = /var/db/repos/gentoo-zh\nsync-type = git\nsync-uri = https://mirrors.cernet.edu.cn/gentoo-zh.git\nauto-sync = yes\nEOF\n\nsudo emaint sync -r gentoo-zh" + KEYS }
       ] },
     { id: "arch", mark: "archlinux", label: "Arch",
-      note: "AUR 包名 kotonoha-git，构建自 main 分支的最新提交。",
+      note: "AUR 包名是 kotonoha-git，构建自 main 分支最新提交。",
       helpers: [
         { id: "paru", label: "paru", cmd: "paru -S kotonoha-git" },
         { id: "yay", label: "yay", cmd: "yay -S kotonoha-git" },
@@ -567,7 +576,7 @@
       note: "加进 flake，再把包放进 systemPackages。",
       cmd: 'inputs.kotonoha = {\n  url = "github:locez/kotonoha";\n  inputs.nixpkgs.follows = "nixpkgs";\n};\n\nenvironment.systemPackages = [\n  inputs.kotonoha.packages.${pkgs.stdenv.hostPlatform.system}.default\n];' },
     { id: "source", label: "从源码编译",
-      note: "先装系统依赖；uv sync 会顺带把原生 Wayland 桥接编出来。",
+      note: "先装系统依赖。uv sync 会自动编译原生 Wayland 桥接。",
       cmd: "# Arch\nsudo pacman -S cmake qt6-base qt6-wayland layer-shell-qt\n# Gentoo\nsudo emerge -a dev-build/cmake kde-plasma/layer-shell-qt dev-qt/qtwayland\n\ngit clone https://github.com/locez/kotonoha.git\ncd kotonoha\nuv sync\nuv run kotonoha" }
   ];
 
@@ -1107,8 +1116,8 @@
       });
       var hidden = RESULTS.length - list.length;
       document.getElementById("swCount").textContent =
-        list.length + " 个结果" + (hidden ? "，已隐去 " + hidden + " 个" : "");
-      document.getElementById("swMiss").textContent = "不可用：两个来源没有应答";
+        list.length + " 条结果" + (hidden ? "，另有 " + hidden + " 条隐藏" : "");
+      document.getElementById("swMiss").textContent = "不可用：两个来源未响应";
     }
     res.querySelectorAll("th button").forEach(function (b) {
       b.addEventListener("click", function () {

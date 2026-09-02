@@ -958,11 +958,84 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
 .cap p { color: var(--text-dim); font-size: 1.0625rem; line-height: 1.7; max-inline-size: 26rem; }
 .chips { display: flex; flex-wrap: wrap; gap: var(--s-2); margin-block-start: var(--s-6); max-inline-size: 26rem; }
 
+.cap__table {
+  inline-size: min(100%, 42rem);
+  margin-block-start: var(--s-6);
+  table-layout: fixed;
+  font-size: 0.8125rem;
+}
+.cap__table th,
+.cap__table td {
+  padding: var(--s-3) var(--s-2);
+  border-block-end: 1px solid var(--card-edge);
+  text-align: start;
+  vertical-align: top;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}
+.cap__table thead th {
+  color: var(--text-dim);
+  font-family: var(--font-mono);
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.08em;
+}
+.cap__table tbody th {
+  color: var(--text-strong);
+  font-weight: 600;
+}
+.cap__table tbody td { color: var(--text-dim); }
+.cap__table code { white-space: nowrap; font-size: 0.75rem; }
+.cap__table tr:last-child th,
+.cap__table tr:last-child td { border-block-end: 0; }
+.cap__table-label { display: none; }
+.cap p.cap__compat {
+  max-inline-size: 42rem;
+  margin-block-start: var(--s-4);
+  padding-block-start: var(--s-4);
+  border-block-start: 1px solid var(--card-edge);
+  color: var(--text-dim);
+  font-size: 0.8125rem;
+  line-height: 1.55;
+}
+.cap__compat code { white-space: nowrap; font-size: 0.75rem; }
+
 /* The row answers the pointer with its own rule and its number, not with a
    glow: the one under the cursor is the one with an accent edge. */
 @media (hover: hover) {
   .cap:hover .cap__no { color: var(--accent); }
   .cap:hover .cap__hd svg { translate: 0 calc(var(--s) * -0.5); }
+}
+
+@media (max-width: 36rem) {
+  .cap__table { display: block; }
+  .cap__table thead {
+    position: absolute;
+    inline-size: 1px;
+    block-size: 1px;
+    overflow: hidden;
+    clip: rect(0 0 0 0);
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+  .cap__table tbody,
+  .cap__table tr,
+  .cap__table th,
+  .cap__table td { display: block; }
+  .cap__table tr { padding-block: var(--s-3); border-block-end: 1px solid var(--card-edge); }
+  .cap__table tr:first-child { padding-block-start: 0; }
+  .cap__table tr:last-child { border-block-end: 0; }
+  .cap__table tbody th { padding: 0 0 var(--s-2); border: 0; }
+  .cap__table tbody td { padding: 0 0 var(--s-2); border: 0; }
+  .cap__table tbody td:last-child { padding-block-end: 0; }
+  .cap__table-label {
+    display: block;
+    margin-block-end: var(--s-1);
+    color: var(--text-dim);
+    font-family: var(--font-mono);
+    font-size: 0.6875rem;
+    letter-spacing: 0.08em;
+  }
 }
 
 /* The panel the reader is on is the lit one. Same double guard as the rest of
