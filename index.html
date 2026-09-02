@@ -3,13 +3,13 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Kotonoha — Wayland 桌面歌词</title>
-<meta name="description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。">
+<title data-i18n="site.title">Kotonoha — Wayland 桌面歌词</title>
+<meta name="description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。" data-i18n-content="site.description">
 <link rel="icon" href="assets/leaf-pink.svg" type="image/svg+xml">
 <meta name="theme-color" content="">
 <meta property="og:type" content="website">
-<meta property="og:title" content="Kotonoha — Wayland 桌面歌词">
-<meta property="og:description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。">
+<meta property="og:title" content="Kotonoha — Wayland 桌面歌词" data-i18n-content="site.title">
+<meta property="og:description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。" data-i18n-content="site.description">
 <script>
   // Before first paint: anything later paints one frame of the wrong theme.
   try {
@@ -55,12 +55,12 @@
       Kotonoha
     </span>
     <span class="grow"></span>
-    <div class="seg" role="group" aria-label="语言" id="langSeg">
+    <div class="seg" role="group" aria-label="语言" data-i18n-aria-label="aria.language" id="langSeg">
       <button type="button" data-lang="zh-Hans" aria-pressed="true">简体</button>
       <button type="button" data-lang="zh-Hant" aria-pressed="false">繁體</button>
       <button type="button" data-lang="en" aria-pressed="false">English</button>
     </div>
-    <div class="seg" role="group" aria-label="主题" id="themeSeg">
+    <div class="seg" role="group" aria-label="主题" data-i18n-aria-label="aria.theme" id="themeSeg">
       <button type="button" data-theme-set="light" aria-pressed="false" data-i18n="theme.light">浅色</button>
       <button type="button" data-theme-set="dark" aria-pressed="true" data-i18n="theme.dark">深色</button>
       <button type="button" data-theme-set="system" aria-pressed="false" data-i18n="theme.system">系统</button>
@@ -78,7 +78,7 @@
         <h1 data-i18n="hero.title">Wayland 桌面歌词</h1>
         <p class="lead" data-i18n="hero.lead">Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。</p>
         <div class="row">
-          <a class="cta" href="#get" data-i18n="hero.install">安装<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></a>
+          <a class="cta" href="#get"><span data-i18n="hero.install">安装</span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg></a>
         </div>
       </div>
 
@@ -89,14 +89,14 @@
         <!-- 浮窗：上一行 / 当前行 / 翻译 / 下一行，居中，右上角两个小按钮。 -->
         <div class="ovl" id="ovl">
           <div class="ovl__chrome">
-            <button type="button" class="ovl__ic" id="ovlPlay" aria-pressed="true" aria-label="暂停">
+            <button type="button" class="ovl__ic" id="ovlPlay" aria-pressed="true" aria-label="暂停" data-i18n-aria-label="aria.pause">
               <svg class="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
               <svg class="i-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="m6 3 14 9-14 9Z"/></svg>
             </button>
-            <button type="button" class="ovl__ic" id="ovlLock" aria-pressed="false" aria-label="锁定位置">
+            <button type="button" class="ovl__ic" id="ovlLock" aria-pressed="false" aria-label="锁定位置" data-i18n-aria-label="aria.lockPosition">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="18" height="11" x="3" y="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             </button>
-            <button type="button" class="ovl__ic" id="ovlSearch" aria-label="搜索歌词">
+            <button type="button" class="ovl__ic" id="ovlSearch" aria-label="搜索歌词" data-i18n-aria-label="aria.searchLyrics">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
             </button>
           </div>
@@ -109,13 +109,13 @@
         <div class="kwin">
           <div class="kwin__bar">
             <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
-            <span class="kwin__title">Kotonoha 设置</span>
+            <span class="kwin__title" data-i18n="settings.title">Kotonoha 设置</span>
             <span class="kwin__x" aria-hidden="true">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
             </span>
           </div>
           <div class="kwin__body">
-            <nav class="knav" id="knav" aria-label="设置分类">
+            <nav class="knav" id="knav" aria-label="设置分类" data-i18n-aria-label="aria.settingsCategories">
               <button type="button" aria-current="page">通用</button>
               <button type="button">图标</button>
               <button type="button">文字</button>
@@ -216,13 +216,13 @@
       <div class="swin">
         <div class="kwin__bar">
           <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
-          <span class="kwin__title">搜索歌词</span>
+          <span class="kwin__title" data-i18n="search.title">搜索歌词</span>
           <span class="kwin__x" aria-hidden="true">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
           </span>
         </div>
   
-        <p class="swin__lead">从不同来源找歌词，选中后应用。</p>
+        <p class="swin__lead" data-i18n="search.lead">从不同来源找歌词，选中后应用。</p>
   
         <div class="swin__now">
           <div>
@@ -230,24 +230,24 @@
             <span>4:03</span>
           </div>
           <dl>
-            <div><dt>歌词来源</dt><dd>逐字</dd></div>
-            <div><dt>播放来源</dt><dd>MPRIS</dd></div>
-            <div><dt>缓存状态</dt><dd>已缓存</dd></div>
+            <div><dt data-i18n="search.lyricSource">歌词来源</dt><dd data-i18n="search.wordTimed">逐字</dd></div>
+            <div><dt data-i18n="search.playbackSource">播放来源</dt><dd>MPRIS</dd></div>
+            <div><dt data-i18n="search.cacheStatus">缓存状态</dt><dd data-i18n="search.cached">已缓存</dd></div>
           </dl>
         </div>
   
         <div class="swin__query">
           <span class="swin__label">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            搜索歌词
+            <span data-i18n="search.searchLyrics">搜索歌词</span>
           </span>
           <div class="swin__fields">
-            <label><span>歌曲</span><input type="text" value="何度でも立ち上がれ" aria-label="歌曲"></label>
-            <label><span>艺术家</span><input type="text" placeholder="艺术家名称" aria-label="艺术家"></label>
-            <label><span>专辑</span><input type="text" placeholder="专辑名称" aria-label="专辑"></label>
+            <label><span data-i18n="search.song">歌曲</span><input type="text" value="何度でも立ち上がれ" aria-label="歌曲" data-i18n-aria-label="search.song"></label>
+            <label><span data-i18n="search.artist">艺术家</span><input type="text" placeholder="艺术家名称" aria-label="艺术家" data-i18n-placeholder="search.artistPlaceholder" data-i18n-aria-label="search.artist"></label>
+            <label><span data-i18n="search.album">专辑</span><input type="text" placeholder="专辑名称" aria-label="专辑" data-i18n-placeholder="search.albumPlaceholder" data-i18n-aria-label="search.album"></label>
             <button class="cta cta--sm" type="button">
               <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-              搜索
+              <span data-i18n="search.search">搜索</span>
             </button>
           </div>
         </div>
@@ -255,12 +255,12 @@
         <div class="swin__head">
           <span class="swin__label">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.3-4.3"/></svg>
-            搜索结果
+            <span data-i18n="search.results">搜索结果</span>
           </span>
           <span class="swin__miss" id="swMiss"></span>
           <label class="swin__only">
             <input type="checkbox" id="swHigh">
-            仅看高匹配
+            <span data-i18n="search.onlyHigh">仅看高匹配</span>
           </label>
         </div>
   
@@ -268,13 +268,13 @@
           <table class="res" id="res">
             <thead>
               <tr>
-                <th><button type="button" data-sort="src">来源</button></th>
-                <th><button type="button" data-sort="title">歌曲</button></th>
-                <th><button type="button" data-sort="artist">艺术家</button></th>
-                <th><button type="button" data-sort="album">专辑</button></th>
-                <th><button type="button" data-sort="len">时长</button></th>
-                <th><button type="button" data-sort="ver">歌词版本</button></th>
-                <th><button type="button" data-sort="conf">匹配度</button></th>
+                <th><button type="button" data-sort="src" data-i18n="search.source">来源</button></th>
+                <th><button type="button" data-sort="title" data-i18n="search.song">歌曲</button></th>
+                <th><button type="button" data-sort="artist" data-i18n="search.artist">艺术家</button></th>
+                <th><button type="button" data-sort="album" data-i18n="search.album">专辑</button></th>
+                <th><button type="button" data-sort="len" data-i18n="search.duration">时长</button></th>
+                <th><button type="button" data-sort="ver" data-i18n="search.version">歌词版本</button></th>
+                <th><button type="button" data-sort="conf" data-i18n="search.match">匹配度</button></th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -283,8 +283,8 @@
   
         <div class="swin__foot">
           <span id="swCount"></span>
-          <button class="cta cta--sm" type="button" id="swApply">应用所选歌词</button>
-          <button class="ghost ghost--sm" type="button">关闭</button>
+          <button class="cta cta--sm" type="button" id="swApply" data-i18n="search.apply">应用所选歌词</button>
+          <button class="ghost ghost--sm" type="button" data-i18n="search.close">关闭</button>
         </div>
       </div>
     </div>
@@ -301,7 +301,7 @@
 
     <div class="rail-body rise">
       <div class="get">
-        <div class="get__tabs" role="tablist" aria-label="发行版" id="getTabs"></div>
+        <div class="get__tabs" role="tablist" aria-label="发行版" data-i18n-aria-label="get.distribution" id="getTabs"></div>
         <div class="get__sub" id="getSub" hidden></div>
         <div class="get__body">
           <pre id="getCmd">sudo emerge --ask app-eselect/eselect-repository
@@ -338,21 +338,21 @@
       </div>
       <div class="foot__col">
         <h3 data-i18n="foot.project">项目</h3>
-        <a href="https://github.com/locez/kotonoha">源码</a>
-        <a href="https://github.com/locez/kotonoha/releases">发行版</a>
-        <a href="https://github.com/locez/kotonoha/blob/main/LICENSE">MIT 授权</a>
+        <a href="https://github.com/locez/kotonoha" data-i18n="foot.source">源码</a>
+        <a href="https://github.com/locez/kotonoha/releases" data-i18n="foot.releases">发行版</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/LICENSE" data-i18n="foot.license">MIT 授权</a>
       </div>
       <div class="foot__col">
         <h3 data-i18n="foot.docs">文档</h3>
-        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC.md">架构</a>
-        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC-lyrics.md">歌词与缓存</a>
-        <a href="https://github.com/locez/kotonoha/blob/main/plugins/README.md">外部适配协议</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC.md" data-i18n="foot.architecture">架构</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/docs/SPEC-lyrics.md" data-i18n="foot.lyricsCache">歌词与缓存</a>
+        <a href="https://github.com/locez/kotonoha/blob/main/plugins/README.md" data-i18n="foot.adapterProtocol">外部适配协议</a>
       </div>
     </div>
     <div class="foot__legal">
       <span data-i18n="foot.credit">图标、软件界面与网站：<a href="https://github.com/Zakkaus">Zakk</a>。</span>
-      <span>控件图标：Lucide，ISC。</span>
-      <span>发行版图标：simple-icons，CC0。</span>
+      <span data-i18n="foot.controlIcons">控件图标：Lucide，ISC。</span>
+      <span data-i18n="foot.distroIcons">发行版图标：simple-icons，CC0。</span>
     </div>
   </div>
 </footer>

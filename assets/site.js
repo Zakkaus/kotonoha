@@ -8,10 +8,55 @@
      file holding every script is one artifact mixing Traditional and Simplified,
      which is the one thing the wording rules refuse outright. */
   var MESSAGES = { "zh-Hans": {
+      "site.title": "Kotonoha — Wayland 桌面歌词",
+      "site.description": "Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。",
       "does.mpris": "任何 MPRIS 播放器，无需插件",
       "does.mpris.body": "通过 D-Bus 读取曲目和播放位置。播放器无需适配。播放位置用本地时钟插值，不逐帧查询。",
       "does.sources": "多种歌词来源",
       "does.sources.body": "来源顺序、匹配规则、回退和本地缓存都能配置。",
+      "aria.language": "语言",
+      "aria.theme": "主题",
+      "aria.pause": "暂停",
+      "aria.play": "播放",
+      "aria.lockPosition": "锁定位置",
+      "aria.lockedPosition": "已锁定位置",
+      "aria.searchLyrics": "搜索歌词",
+      "aria.settingsCategories": "设置分类",
+      "settings.title": "Kotonoha 设置",
+      "settings.general": "通用",
+      "settings.text": "文字",
+      "settings.effects": "效果",
+      "settings.lyrics": "歌词",
+      "settings.position": "位置",
+      "settings.theme": "主题",
+      "settings.light": "浅色",
+      "settings.dark": "深色",
+      "settings.followSystem": "跟随系统",
+      "settings.frosted": "毛玻璃窗口",
+      "settings.opacity": "窗口不透明度",
+      "settings.accent": "强调色",
+      "settings.pink": "粉",
+      "settings.blue": "蓝",
+      "settings.green": "绿",
+      "settings.gold": "金",
+      "settings.fontSize": "字号",
+      "settings.weight": "字重",
+      "settings.regular": "常规",
+      "settings.semibold": "中黑",
+      "settings.bold": "加粗",
+      "settings.lineHeight": "行距",
+      "settings.currentGlow": "当前行发光",
+      "settings.currentWord": "高亮当前字",
+      "settings.transition": "换行动画",
+      "settings.rise": "上浮",
+      "settings.fade": "淡入",
+      "settings.none": "不动",
+      "settings.translation": "显示翻译",
+      "settings.wordTiming": "逐字时间",
+      "settings.sync": "同步微调",
+      "settings.horizontal": "水平",
+      "settings.clickThrough": "点击穿透",
+      "settings.lock": "锁定位置",
       "does.through": "点击穿透",
       "does.through.body": "启用后，鼠标事件直接传给下层窗口。歌词层不拦截点击。",
       "does.follow": "主题和语言都能跟随系统",
@@ -49,6 +94,38 @@
       "does.follow.b": "简体 · 繁體 · English",
       "s.search": "搜索窗口",
       "s.search.lead": "搜索结果多时，点表头排序。时长按秒数，匹配度按等级。",
+      "search.title": "搜索歌词",
+      "search.lead": "从不同来源找歌词，选中后应用。",
+      "search.lyricSource": "歌词来源",
+      "search.wordTimed": "逐字",
+      "search.playbackSource": "播放来源",
+      "search.cacheStatus": "缓存状态",
+      "search.cached": "已缓存",
+      "search.searchLyrics": "搜索歌词",
+      "search.song": "歌曲",
+      "search.artist": "艺术家",
+      "search.artistPlaceholder": "艺术家名称",
+      "search.album": "专辑",
+      "search.albumPlaceholder": "专辑名称",
+      "search.search": "搜索",
+      "search.results": "搜索结果",
+      "search.onlyHigh": "仅看高匹配",
+      "search.source": "来源",
+      "search.duration": "时长",
+      "search.version": "歌词版本",
+      "search.match": "匹配度",
+      "search.apply": "应用所选歌词",
+      "search.close": "关闭",
+      "search.unavailable": "不可用：两个来源未响应",
+      "search.count": "%n 条结果",
+      "search.hidden": "，另有 %n 条隐藏",
+      "search.verWord": "逐字",
+      "search.verLine": "逐行",
+      "search.verNone": "无时间",
+      "search.verTranslation": "逐字 · 带翻译",
+      "search.confNone": "无",
+      "search.confMid": "中",
+      "search.confHigh": "高",
       "s.motion": "动效预算",
       "s.not": "刻意不做",
       "s.get": "安装",
@@ -59,7 +136,24 @@
       "s.red": "什么能报红",
       "copy": "复制",
       "copied": "已复制",
+      "get.distribution": "发行版",
+      "get.official": "官方源",
+      "get.mirror": "CERNET 镜像",
+      "get.manual": "手动 repos.conf",
+      "get.source": "从源码编译",
+      "get.arch.note": "AUR 包名是 kotonoha-git，构建自 main 分支最新提交。",
+      "get.nixos.note": "加进 flake，再把包放进 systemPackages。",
+      "get.source.note": "先装系统依赖。uv sync 会自动编译原生 Wayland 桥接。",
+      "get.live.comment": "live ebuild 没有任何关键字",
       "foot.lead": "Linux 上的 Wayland 歌词",
+      "foot.source": "源码",
+      "foot.releases": "发行版",
+      "foot.license": "MIT 授权",
+      "foot.architecture": "架构",
+      "foot.lyricsCache": "歌词与缓存",
+      "foot.adapterProtocol": "外部适配协议",
+      "foot.controlIcons": "控件图标：Lucide，ISC。",
+      "foot.distroIcons": "发行版图标：simple-icons，CC0。",
       "foot.desc": "需要支持 wlr-layer-shell 的 Wayland 合成器。KDE/KWin 和 wlroots 合成器都可以。",
       "foot.project": "项目",
       "foot.docs": "文档",
@@ -67,6 +161,7 @@
   } };
 
   var SOURCE = "zh-Hans";
+  var localeUpdaters = [];
 
   // Named msg, not t: the overlay's clock already owns `t`, and a var at the
   // same scope overwrote the function without a word from anyone.
@@ -97,9 +192,19 @@
       var text = msg(el.dataset.i18n);
       el.innerHTML = text === el.dataset.i18n ? el.dataset.i18nSource : text;
     });
+    document.querySelectorAll("[data-i18n-placeholder]").forEach(function (el) {
+      el.placeholder = msg(el.dataset.i18nPlaceholder);
+    });
+    document.querySelectorAll("[data-i18n-aria-label]").forEach(function (el) {
+      el.setAttribute("aria-label", msg(el.dataset.i18nAriaLabel));
+    });
+    document.querySelectorAll("[data-i18n-content]").forEach(function (el) {
+      el.setAttribute("content", msg(el.dataset.i18nContent));
+    });
     document.querySelectorAll("#langSeg button").forEach(function (b) {
       b.setAttribute("aria-pressed", String(b.dataset.lang === loc));
     });
+    localeUpdaters.forEach(function (update) { update(); });
     try { localStorage.setItem("kotonoha-site-locale", loc); } catch (e) {}
   }
   document.querySelectorAll("#langSeg button").forEach(function (b) {
@@ -270,14 +375,14 @@
     ovl.play.addEventListener("click", function () {
       running = !running;
       ovl.play.setAttribute("aria-pressed", String(running));
-      ovl.play.setAttribute("aria-label", running ? "暂停" : "播放");
+      ovl.play.setAttribute("aria-label", running ? msg("aria.pause") : msg("aria.play"));
     });
     var lock = document.getElementById("ovlLock");
     if (lock) {
       lock.addEventListener("click", function () {
         var on = lock.getAttribute("aria-pressed") !== "true";
         lock.setAttribute("aria-pressed", String(on));
-        lock.setAttribute("aria-label", on ? "已锁定位置" : "锁定位置");
+        lock.setAttribute("aria-label", on ? msg("aria.lockedPosition") : msg("aria.lockPosition"));
       });
     }
     window.setWordTiming = function (on) {
@@ -289,7 +394,7 @@
     if (stillness.matches) {
       running = false; t = 10.2;
       ovl.play.setAttribute("aria-pressed", "false");
-      ovl.play.setAttribute("aria-label", "播放");
+      ovl.play.setAttribute("aria-label", msg("aria.play"));
     }
     paint();
     requestAnimationFrame(tick);
@@ -302,38 +407,39 @@
   /* ---- the settings window drives the overlay, the way it does in the program.
      Panels are data: adding one is a row here, not a branch anywhere else. ---- */
   var PANELS = {
-    "通用": [
-      { kind: "select", label: "主题", id: "theme", options: [["light","浅色"],["dark","深色"],["system","跟随系统"]] },
-      { kind: "switch", label: "毛玻璃窗口", id: "frost", on: true },
-      { kind: "range", label: "窗口不透明度", id: "opacity", min: 40, max: 100, value: 80, unit: " %" },
-      { kind: "dots", label: "强调色", id: "accent" }
+    general: [
+      { kind: "select", labelKey: "settings.theme", id: "theme", options: [["light","settings.light"],["dark","settings.dark"],["system","settings.followSystem"]] },
+      { kind: "switch", labelKey: "settings.frosted", id: "frost", on: true },
+      { kind: "range", labelKey: "settings.opacity", id: "opacity", min: 40, max: 100, value: 80, unit: " %" },
+      { kind: "dots", labelKey: "settings.accent", id: "accent" }
     ],
-    "文字": [
-      { kind: "range", label: "字号", id: "size", min: 14, max: 34, value: 24, unit: " px" },
-      { kind: "select", label: "字重", id: "weight", options: [["400","常规"],["650","中黑"],["800","加粗"]] },
-      { kind: "range", label: "行距", id: "leading", min: 110, max: 190, value: 140, unit: " %" }
+    text: [
+      { kind: "range", labelKey: "settings.fontSize", id: "size", min: 14, max: 34, value: 24, unit: " px" },
+      { kind: "select", labelKey: "settings.weight", id: "weight", options: [["400","settings.regular"],["650","settings.semibold"],["800","settings.bold"]] },
+      { kind: "range", labelKey: "settings.lineHeight", id: "leading", min: 110, max: 190, value: 140, unit: " %" }
     ],
-    "效果": [
-      { kind: "switch", label: "当前行发光", id: "glow", on: false },
-      { kind: "switch", label: "高亮当前字", id: "pop", on: true },
-      { kind: "select", label: "换行动画", id: "rise", options: [["rise","上浮"],["fade","淡入"],["none","不动"]] }
+    effects: [
+      { kind: "switch", labelKey: "settings.currentGlow", id: "glow", on: false },
+      { kind: "switch", labelKey: "settings.currentWord", id: "pop", on: true },
+      { kind: "select", labelKey: "settings.transition", id: "rise", options: [["rise","settings.rise"],["fade","settings.fade"],["none","settings.none"]] }
     ],
-    "歌词": [
-      { kind: "switch", label: "显示翻译", id: "trans", on: true },
-      { kind: "switch", label: "逐字时间", id: "word", on: true },
-      { kind: "range", label: "同步微调", id: "nudge", min: -20, max: 20, value: 0, unit: " ×0.1s" }
+    lyrics: [
+      { kind: "switch", labelKey: "settings.translation", id: "trans", on: true },
+      { kind: "switch", labelKey: "settings.wordTiming", id: "word", on: true },
+      { kind: "range", labelKey: "settings.sync", id: "nudge", min: -20, max: 20, value: 0, unit: " ×0.1s" }
     ],
-    "位置": [
-      { kind: "range", label: "水平", id: "px", min: 0, max: 100, value: 50, unit: " %" },
-      { kind: "switch", label: "点击穿透", id: "through", on: false },
-      { kind: "switch", label: "锁定位置", id: "lock", on: true }
+    position: [
+      { kind: "range", labelKey: "settings.horizontal", id: "px", min: 0, max: 100, value: 50, unit: " %" },
+      { kind: "switch", labelKey: "settings.clickThrough", id: "through", on: false },
+      { kind: "switch", labelKey: "settings.lock", id: "lock", on: true }
     ]
   };
 
-  // The same eight glyphs the settings window draws, from icons.py.
-  var NAV_ICON = { "通用": "general", "文字": "text", "效果": "effects", "歌词": "lyrics", "位置": "position" };
+  // The same glyphs the settings window draws, from icons.py.
+  var NAV_ICON = { general: "general", text: "text", effects: "effects", lyrics: "lyrics", position: "position" };
   var kcard = document.getElementById("kcard");
   var knav = document.getElementById("knav");
+  var activePanel = null;
   var state = { size: 24, weight: "650", leading: 140, glow: false, pop: true,
                 trans: true, word: true, nudge: 0, px: 50, through: false, lock: true,
                 frost: true, opacity: 80, rise: "rise" };
@@ -342,7 +448,7 @@
     var row = document.createElement("label");
     row.className = "kfield";
     var name = document.createElement("span");
-    name.textContent = spec.label;
+    name.textContent = msg(spec.labelKey);
     row.append(name);
 
     if (spec.kind === "select") {
@@ -361,7 +467,7 @@
     } else if (spec.kind === "range") {
       var input = document.createElement("input");
       input.type = "range"; input.min = spec.min; input.max = spec.max;
-      input.value = String(state[spec.id]); input.setAttribute("aria-label", spec.label);
+      input.value = String(state[spec.id]); input.setAttribute("aria-label", msg(spec.labelKey));
       var out = document.createElement("b");
       out.textContent = state[spec.id] + spec.unit;
       input.addEventListener("input", function () {
@@ -373,11 +479,11 @@
       var wrap = document.createElement("span");
       wrap.className = "kdots";
       wrap.id = "kAccent";
-      [["--preset-pink","粉"],["--preset-cyan","蓝"],["--preset-green","绿"],["--preset-gold","金"]].forEach(function (tok, i) {
+      [["--preset-pink","settings.pink"],["--preset-cyan","settings.blue"],["--preset-green","settings.green"],["--preset-gold","settings.gold"]].forEach(function (tok, i) {
         var dot = document.createElement("button");
         dot.type = "button"; dot.dataset.a = tok[0];
         dot.style.setProperty("--dot", "var(" + tok[0] + ")");
-        dot.setAttribute("aria-label", tok[1]);
+        dot.setAttribute("aria-label", msg(tok[1]));
         dot.setAttribute("aria-pressed", String(i === 0));
         dot.addEventListener("click", function () {
           wrap.querySelectorAll("button").forEach(function (o) { o.setAttribute("aria-pressed", String(o === dot)); });
@@ -428,7 +534,8 @@
       var item = document.createElement("div");
       item.setAttribute("role", "option");
       item.id = list.id + "-" + i;
-      item.textContent = o[1];
+      item.dataset.labelKey = o[1];
+      item.textContent = msg(o[1]);
       item.dataset.value = o[0];
       item.setAttribute("aria-selected", String(o[0] === current));
       list.append(item);
@@ -521,62 +628,75 @@
     if (typeof setWordTiming === "function") { setWordTiming(state.word); }
   }
 
-  function panel(title) {
+  function panel(id) {
+    activePanel = id;
     kcard.replaceChildren();
-    PANELS[title].forEach(function (spec) { kcard.append(formRow(spec)); });
+    PANELS[id].forEach(function (spec) { kcard.append(formRow(spec)); });
     knav.querySelectorAll("button").forEach(function (b) {
-      if (b.textContent === title) { b.setAttribute("aria-current", "page"); }
+      if (b.dataset.panel === id) { b.setAttribute("aria-current", "page"); }
       else { b.removeAttribute("aria-current"); }
     });
   }
 
   if (kcard && knav) {
     knav.replaceChildren();
-    Object.keys(PANELS).forEach(function (title, i) {
+    Object.keys(PANELS).forEach(function (id, i) {
       var b = document.createElement("button");
       b.type = "button";
+      b.dataset.panel = id;
       var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
       svg.setAttribute("viewBox", "0 0 24 24"); svg.setAttribute("aria-hidden", "true");
       var use = document.createElementNS("http://www.w3.org/2000/svg", "use");
-      use.setAttribute("href", "#n-" + NAV_ICON[title]);
+      use.setAttribute("href", "#n-" + NAV_ICON[id]);
       use.setAttribute("width", "24"); use.setAttribute("height", "24");
-      svg.append(use); b.append(svg, document.createTextNode(title));
+      svg.append(use);
+      var label = document.createTextNode(msg("settings." + id));
+      b.append(svg, label);
+      b._localeLabel = label;
       if (i === 0) { b.setAttribute("aria-current", "page"); }
-      b.addEventListener("click", function () { panel(title); });
+      b.addEventListener("click", function () { panel(id); });
       knav.append(b);
     });
     panel(Object.keys(PANELS)[0]);
     reflect();
+    localeUpdaters.push(function () {
+      knav.querySelectorAll("button").forEach(function (b) {
+        b._localeLabel.nodeValue = msg("settings." + b.dataset.panel);
+      });
+      panel(activePanel || Object.keys(PANELS)[0]);
+    });
   }
 
 
   /* ---- install: one switcher, one block. Commands are the README's, verbatim.
      A second level appears only where a distribution really has two right
      answers, which here is the AUR helper. ---------------------------------- */
-  var KEYS = "\n\n# live ebuild 没有任何关键字\necho 'media-plugins/kotonoha **' | sudo tee /etc/portage/package.accept_keywords/kotonoha\n\nsudo emerge --ask media-plugins/kotonoha::gentoo-zh";
+  function liveKeys() {
+    return "\n\n# " + msg("get.live.comment") + "\necho 'media-plugins/kotonoha **' | sudo tee /etc/portage/package.accept_keywords/kotonoha\n\nsudo emerge --ask media-plugins/kotonoha::gentoo-zh";
+  }
   var GET = [
     { id: "gentoo", mark: "gentoo", label: "Gentoo",
       note: "",
       helpers: [
-        { id: "upstream", label: "官方源",
-          cmd: "sudo emerge --ask app-eselect/eselect-repository\nsudo eselect repository enable gentoo-zh\nsudo emaint sync -r gentoo-zh" + KEYS },
-        { id: "cernet", label: "CERNET 镜像",
-          cmd: "sudo emerge --ask app-eselect/eselect-repository\nsudo eselect repository add gentoo-zh git https://mirrors.cernet.edu.cn/gentoo-zh.git\nsudo emaint sync -r gentoo-zh" + KEYS },
-        { id: "manual", label: "手动 repos.conf",
-          cmd: "sudo tee /etc/portage/repos.conf/gentoo-zh.conf <<'EOF'\n[gentoo-zh]\nlocation = /var/db/repos/gentoo-zh\nsync-type = git\nsync-uri = https://mirrors.cernet.edu.cn/gentoo-zh.git\nauto-sync = yes\nEOF\n\nsudo emaint sync -r gentoo-zh" + KEYS }
+        { id: "upstream", labelKey: "get.official",
+          cmd: function () { return "sudo emerge --ask app-eselect/eselect-repository\nsudo eselect repository enable gentoo-zh\nsudo emaint sync -r gentoo-zh" + liveKeys(); } },
+        { id: "cernet", labelKey: "get.mirror",
+          cmd: function () { return "sudo emerge --ask app-eselect/eselect-repository\nsudo eselect repository add gentoo-zh git https://mirrors.cernet.edu.cn/gentoo-zh.git\nsudo emaint sync -r gentoo-zh" + liveKeys(); } },
+        { id: "manual", labelKey: "get.manual",
+          cmd: function () { return "sudo tee /etc/portage/repos.conf/gentoo-zh.conf <<'EOF'\n[gentoo-zh]\nlocation = /var/db/repos/gentoo-zh\nsync-type = git\nsync-uri = https://mirrors.cernet.edu.cn/gentoo-zh.git\nauto-sync = yes\nEOF\n\nsudo emaint sync -r gentoo-zh" + liveKeys(); } }
       ] },
     { id: "arch", mark: "archlinux", label: "Arch",
-      note: "AUR 包名是 kotonoha-git，构建自 main 分支最新提交。",
+      noteKey: "get.arch.note",
       helpers: [
         { id: "paru", label: "paru", cmd: "paru -S kotonoha-git" },
         { id: "yay", label: "yay", cmd: "yay -S kotonoha-git" },
         { id: "makepkg", label: "makepkg", cmd: "git clone https://aur.archlinux.org/kotonoha-git.git\ncd kotonoha-git\nmakepkg -si" }
       ] },
     { id: "nixos", mark: "nixos", label: "NixOS",
-      note: "加进 flake，再把包放进 systemPackages。",
+      noteKey: "get.nixos.note",
       cmd: 'inputs.kotonoha = {\n  url = "github:locez/kotonoha";\n  inputs.nixpkgs.follows = "nixpkgs";\n};\n\nenvironment.systemPackages = [\n  inputs.kotonoha.packages.${pkgs.stdenv.hostPlatform.system}.default\n];' },
-    { id: "source", label: "从源码编译",
-      note: "先装系统依赖。uv sync 会自动编译原生 Wayland 桥接。",
+    { id: "source", labelKey: "get.source",
+      noteKey: "get.source.note",
       cmd: "# Arch\nsudo pacman -S cmake qt6-base qt6-wayland layer-shell-qt\n# Gentoo\nsudo emerge -a dev-build/cmake kde-plasma/layer-shell-qt dev-qt/qtwayland\n\ngit clone https://github.com/locez/kotonoha.git\ncd kotonoha\nuv sync\nuv run kotonoha" }
   ];
 
@@ -588,9 +708,16 @@
     var getNote = document.getElementById("getNote");
     var picked = GET[0], helper = null;
 
+    function getLabel(item) {
+      return item.labelKey ? msg(item.labelKey) : item.label;
+    }
+    function getCommand(item) {
+      return typeof item.cmd === "function" ? item.cmd() : (item.cmd || "");
+    }
+
     function show() {
-      getCmd.textContent = helper ? helper.cmd : picked.cmd;
-      getNote.textContent = picked.note;
+      getCmd.textContent = getCommand(helper || picked);
+      getNote.textContent = picked.noteKey ? msg(picked.noteKey) : (picked.note || "");
       getSub.hidden = !picked.helpers;
       getTabs.querySelectorAll("button").forEach(function (b) {
         b.setAttribute("aria-selected", String(b.dataset.get === picked.id));
@@ -609,7 +736,9 @@
       if (!picked.helpers) { return; }
       picked.helpers.forEach(function (h, i) {
         var b = document.createElement("button");
-        b.type = "button"; b.role = "tab"; b.textContent = h.label; b.dataset.helper = h.id;
+        b.type = "button"; b.role = "tab"; b.dataset.helper = h.id;
+        var label = document.createTextNode(getLabel(h));
+        b.append(label); b._localeLabel = label; b._getHelper = h;
         b.addEventListener("click", function () { helper = h; show(); });
         getSub.append(b);
       });
@@ -627,12 +756,22 @@
         use.setAttribute("width", "24"); use.setAttribute("height", "24");
         svg.append(use); b.append(svg);
       }
-      b.append(document.createTextNode(entry.label));
+      var label = document.createTextNode(getLabel(entry));
+      b.append(label); b._localeLabel = label; b._getEntry = entry;
       b.addEventListener("click", function () { picked = entry; chooseHelpers(); show(); });
       getTabs.append(b);
     });
     chooseHelpers();
     show();
+    localeUpdaters.push(function () {
+      getTabs.querySelectorAll("button").forEach(function (b) {
+        b._localeLabel.nodeValue = getLabel(b._getEntry);
+      });
+      getSub.querySelectorAll("button").forEach(function (b) {
+        b._localeLabel.nodeValue = getLabel(b._getHelper);
+      });
+      show();
+    });
 
     // Copy reads the pane on screen, and falls back where the clipboard API is
     // absent — a page served over plain http does not get one.
@@ -1041,17 +1180,17 @@
      "高" falls under "中" alphabetically and "4:03" under "10:00", so match
      sorts by rank and length by seconds. */
   var RESULTS = [
-    { src: "来源 A", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字", conf: 2 },
-    { src: "来源 B", title: "何度でも立ち上がれ (TV Size)", artist: "结束乐队", album: "TV 主题曲集", len: 89, ver: "逐行", conf: 1 },
-    { src: "来源 C", title: "何度でも立ち上がれ (Live)", artist: "结束乐队", album: "现场辑", len: 267, ver: "逐行", conf: 0 },
-    { src: "来源 A", title: "何度でも立ち上がれ (Instrumental)", artist: "结束乐队", album: "结束バンド", len: 241, ver: "无时间", conf: 0 },
-    { src: "来源 D", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字 · 带翻译", conf: 2 },
-    { src: "来源 B", title: "立ち上がれ", artist: "另一位歌手", album: "单曲", len: 198, ver: "逐行", conf: 1 }
+    { src: "来源 A", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字", verKey: "search.verWord", conf: 2 },
+    { src: "来源 B", title: "何度でも立ち上がれ (TV Size)", artist: "结束乐队", album: "TV 主题曲集", len: 89, ver: "逐行", verKey: "search.verLine", conf: 1 },
+    { src: "来源 C", title: "何度でも立ち上がれ (Live)", artist: "结束乐队", album: "现场辑", len: 267, ver: "逐行", verKey: "search.verLine", conf: 0 },
+    { src: "来源 A", title: "何度でも立ち上がれ (Instrumental)", artist: "结束乐队", album: "结束バンド", len: 241, ver: "无时间", verKey: "search.verNone", conf: 0 },
+    { src: "来源 D", title: "何度でも立ち上がれ", artist: "结束乐队", album: "结束バンド", len: 243, ver: "逐字 · 带翻译", verKey: "search.verTranslation", conf: 2 },
+    { src: "来源 B", title: "立ち上がれ", artist: "另一位歌手", album: "单曲", len: 198, ver: "逐行", verKey: "search.verLine", conf: 1 }
   ];
   var CONF = [
-    { key: "none", label: "无" },
-    { key: "mid", label: "中" },
-    { key: "high", label: "高" }
+    { key: "none", labelKey: "search.confNone" },
+    { key: "mid", labelKey: "search.confMid" },
+    { key: "high", labelKey: "search.confHigh" }
   ];
 
   var res = document.getElementById("res");
@@ -1086,7 +1225,7 @@
           r.artist,
           r.album,
           { text: clock(r.len), cls: "num" },
-          { text: r.ver, cls: "ver" },
+          { text: msg(r.verKey), cls: "ver" },
           { conf: r.conf }
         ].forEach(function (cell) {
           var td = document.createElement("td");
@@ -1094,7 +1233,7 @@
             var tag = document.createElement("span");
             tag.className = "conf";
             tag.dataset.c = CONF[cell.conf].key;
-            tag.textContent = CONF[cell.conf].label;
+            tag.textContent = msg(CONF[cell.conf].labelKey);
             td.append(tag);
           } else if (cell && cell.text !== undefined) {
             td.className = cell.cls; td.textContent = cell.text;
@@ -1115,9 +1254,10 @@
         }
       });
       var hidden = RESULTS.length - list.length;
-      document.getElementById("swCount").textContent =
-        list.length + " 条结果" + (hidden ? "，另有 " + hidden + " 条隐藏" : "");
-      document.getElementById("swMiss").textContent = "不可用：两个来源未响应";
+      var count = msg("search.count").replace("%n", String(list.length));
+      if (hidden) { count += msg("search.hidden").replace("%n", String(hidden)); }
+      document.getElementById("swCount").textContent = count;
+      document.getElementById("swMiss").textContent = msg("search.unavailable");
     }
     res.querySelectorAll("th button").forEach(function (b) {
       b.addEventListener("click", function () {
@@ -1130,6 +1270,7 @@
       highOnly = this.checked; paintRes();
     });
     paintRes();
+    localeUpdaters.push(function () { paintRes(); });
   }
 
   var scene = document.getElementById("scene");
