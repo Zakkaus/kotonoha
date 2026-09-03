@@ -395,6 +395,10 @@ a { color: var(--accent); }
 
 /* ---- the overlay: centred, four rows, its own dark panel in both themes --- */
 .scene .ovl {
+  /* Above the settings window, which is what this layer is on the desktop. The
+     two never overlap in the mock, so it changed nothing until the hint hung
+     below the bar — and the window painted over it. */
+  z-index: 2;
   --tz: calc(var(--s) * 14);
   margin-inline: var(--ovl-shift, 0%) calc(var(--ovl-shift, 0%) * -1);
   background: color-mix(in srgb, var(--ovl-panel) var(--win-alpha), transparent);
@@ -472,6 +476,67 @@ a { color: var(--accent); }
    grab 说的是「捏起一个东西」，而这块面板不会被捏起来，它只会挪位置。 */
 .ovl[data-grab="1"] { cursor: move; touch-action: none; }
 .ovl[data-grab="1"] .ovl__line, .ovl[data-grab="1"] .ovl__side, .ovl[data-grab="1"] .ovl__sub { user-select: none; }
+
+/* A bubble under the lyric bar saying what can be done to it, which gets out of
+   the way the moment the pointer arrives — a hint that has to be dismissed is a
+   worse hint than none. It hangs off the bar itself, so it travels with it when
+   the bar is dragged, and it never takes a click: the thing behind it is the
+   thing to press. */
+.hint {
+  position: absolute; inset-block-start: calc(100% + var(--s-3)); inset-inline-start: 50%;
+  margin: 0; padding: var(--s-2) var(--s-4);
+  /* The page's own voice, not another control on the mock: the same accent
+     pill the install button is, so it reads as the site talking about the
+     window rather than as a white sticker laid on top of it. A card-coloured
+     bubble also stood on the card it points at and disappeared into it. */
+  background: var(--accent); color: var(--on-accent);
+  border: 0; border-radius: var(--r-pill);
+  font-size: 0.8125rem; font-weight: 600; white-space: nowrap;
+  pointer-events: none; opacity: 0; translate: -50% calc(var(--s) * -1.5);
+  transition: opacity 320ms var(--ease-enter), translate 320ms var(--ease-enter);
+}
+/* A real element, not a pseudo: the settings bubble's tail has to line up with a
+   dot that moves, and where it ends up has to be measurable. A pseudo-element
+   has no box to read back, so its position could only be argued from the rules
+   rather than checked — and the argument was three pixels out. */
+.hint__tail {
+  position: absolute; inset-block-start: -5px; inset-inline-start: calc(50% - 4px);
+  inline-size: 8px; block-size: 8px;
+  background: var(--accent);
+  rotate: 45deg;
+}
+.scene[data-hint="1"] .hint { opacity: 1; translate: -50% 0; }
+/* The second one sits in the empty part of the settings card, under the rows
+   and pointing back up at them. It hangs off the window rather than off the
+   card, because the card is rebuilt every time a page in it is opened — the
+   window is the thing that stays. */
+.hint--set {
+  inset-block-start: auto; inset-block-end: var(--s-6);
+  inset-inline: auto var(--s-6); translate: 0 calc(var(--s) * 1.5);
+}
+/* The settings tail stands under the dot it names; the script puts it there,
+   because where that dot falls depends on the language and on the page open in
+   the card. The fallback keeps it clear of the pill's rounded end. */
+.hint--set .hint__tail { inset-inline-start: calc(var(--s) * 9); }
+.scene[data-hint="1"] .hint--set { translate: 0 0; }
+
+/* Narrow: the window below is only as wide as the bar, and its title is on the
+   left, so a centred bubble lands on the words. Sent to the right, where the
+   window carries nothing but its close button. */
+@media (max-width: 899px) {
+  .hint {
+    inset-inline: auto var(--s-4); translate: 0 calc(var(--s) * -1.5);
+    padding-inline: var(--s-3); font-size: 0.75rem;
+  }
+  .hint .hint__tail { inset-inline: auto var(--s-6); }
+  .scene[data-hint="1"] .hint { translate: 0 0; }
+  /* One hint at a time on a small screen, and the settings window there is
+     taller than the viewport — a bubble at its foot would be shown to nobody. */
+  .hint--set { display: none; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .hint { transition: none; translate: -50% 0; }
+}
 
 
 

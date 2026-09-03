@@ -71,6 +71,8 @@
   "hero.lead": "Kotonoha reads MPRIS playback state over D-Bus and shows word-timed lyrics on a Wayland layer. Works with any MPRIS player. No player plugin required.",
   "hero.install": "Install",
   "hero.try": "Try it",
+  "hint.drag": "Try dragging the lyric bar",
+  "hint.accent": "Try another accent colour",
   "nav.design": "Design language",
   "nav.home": "Home",
   "design.title": "The site looks like the program<br>because the values are the same file.",

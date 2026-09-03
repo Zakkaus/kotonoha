@@ -92,6 +92,8 @@
         <div class="desk" aria-hidden="true"></div>
         <!-- 浮窗：上一行 / 当前行 / 翻译 / 下一行，居中，右上角两个小按钮。 -->
         <div class="ovl" id="ovl">
+          <!-- 提示长在它说的那个东西上，鼠标一到就让开。 -->
+          <p class="hint" id="ovlHint" aria-hidden="true"><i class="hint__tail"></i><span data-i18n="hint.drag">试试拖动歌词栏</span></p>
           <div class="ovl__chrome">
             <button type="button" class="ovl__ic" id="ovlPlay" aria-pressed="true" aria-label="暂停" data-i18n-aria-label="aria.pause">
               <svg class="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
@@ -112,6 +114,8 @@
         </div>
 
         <div class="kwin">
+          <!-- 同一套气泡的第二个：设置这一半也是活的，改了当场改整页。 -->
+          <p class="hint hint--set" id="setHint" aria-hidden="true"><i class="hint__tail" id="setTail"></i><span data-i18n="hint.accent">换个强调色试试</span></p>
           <div class="kwin__bar">
             <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
             <span class="kwin__title" data-i18n="settings.title">Kotonoha 设置</span>
