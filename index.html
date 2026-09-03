@@ -101,7 +101,6 @@
         <p class="lead" data-i18n="hero.lead">Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。</p>
         <div class="row">
           <a class="cta" href="#get"><span data-i18n="hero.install">安装</span></a>
-          <button type="button" class="ghost" id="tryIt" data-i18n="hero.try">尝试一下</button>
         </div>
       </div>
 
@@ -111,8 +110,6 @@
         <div class="desk" aria-hidden="true"></div>
         <!-- 浮窗：上一行 / 当前行 / 翻译 / 下一行，居中，右上角两个小按钮。 -->
         <div class="ovl" id="ovl">
-          <!-- 提示长在它说的那个东西上，鼠标一到就让开。 -->
-          <p class="hint" id="ovlHint" aria-hidden="true"><i class="hint__tail"></i><span data-i18n="hint.drag">试试拖动歌词栏</span></p>
           <div class="ovl__chrome">
             <button type="button" class="ovl__ic" id="ovlPlay" aria-pressed="true" aria-label="暂停" data-i18n-aria-label="aria.pause">
               <svg class="i-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
@@ -133,8 +130,6 @@
         </div>
 
         <div class="kwin">
-          <!-- 同一套气泡的第二个：设置这一半也是活的，改了当场改整页。 -->
-          <p class="hint hint--set" id="setHint" aria-hidden="true"><i class="hint__tail" id="setTail"></i><span data-i18n="hint.accent">换个强调色试试</span></p>
           <div class="kwin__bar">
             <svg class="leaf kwin__leaf" viewBox="0 0 24 24" aria-hidden="true"><use href="#leaf" width="24" height="24"/></svg>
             <span class="kwin__title" data-i18n="settings.title">Kotonoha 设置</span>
@@ -157,6 +152,9 @@
 
 
       </div>
+        <!-- 一行图注，不是一层浮标：这一页别处就是「一块内容 + 一行灰字」，
+             而浮在构图之上的东西无论怎么调色都像贴上去的。 -->
+        <button type="button" class="scene__note" id="tryIt"><span class="scene__note-body"><svg class="scene__note-icon" viewBox="0 0 24 24" aria-hidden="true"><use href="#n-position" width="24" height="24"></use></svg><span data-i18n="scene.note">点击可交互体验</span></span></button>
     </div>
   </div>
 </div>
@@ -352,6 +350,34 @@
   </div>
 </section>
 </main>
+
+<!-- 两块并排的去处：一块把人送回上面那块真正能动的面板，一块通向仓库。
+     各自带一块颗粒场，指针移过去就在它背后彙集出一个形状 —— 和能力那一节
+     同一套做法，只是那里由滚动触发，这里由指针触发。 -->
+<section id="ends">
+  <div class="shell">
+    <div class="ends">
+      <div class="end" id="endTry">
+        <canvas class="end__fx" aria-hidden="true"></canvas>
+        <div class="end__body">
+          <p class="kicker"><b data-i18n="ends.try.eb">可交互</b></p>
+          <h2 data-i18n="ends.try.title">顶部的窗口可以直接操作</h2>
+          <p class="section-lead" data-i18n="ends.try.lead">拖动歌词栏改变位置，锁定、点击穿透与设置项即时生效。</p>
+          <button type="button" class="cta" id="tryUp" data-i18n="ends.try.go">尝试一下</button>
+        </div>
+      </div>
+      <div class="end" id="endRepo">
+        <canvas class="end__fx" aria-hidden="true"></canvas>
+        <div class="end__body">
+          <p class="kicker"><b data-i18n="ends.repo.eb">源码</b><span>MIT</span></p>
+          <h2 data-i18n="ends.repo.title">源码在 GitHub</h2>
+          <p class="section-lead" data-i18n="ends.repo.lead">仓库包含 Wayland 图层、D-Bus 适配与歌词来源的实现。</p>
+          <a class="ghost" href="https://github.com/locez/kotonoha" rel="noreferrer" data-i18n="ends.repo.go">在 GitHub 上加星</a>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
 
 <footer class="foot">
   <div class="shell">
