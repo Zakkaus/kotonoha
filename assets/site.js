@@ -269,7 +269,6 @@
     el.addEventListener("pointerleave", function () { onMove(el, 0.5, 0.5); });
   }
 
-
   /* ---- the overlay demo: one timeline, two lyric shapes ------------------
      The word-timed source carries a start for every word, the line-timed one
      carries a start per line. Same player, same clock; what differs is how
@@ -395,9 +394,7 @@
     requestAnimationFrame(tick);
   }
 
-
   /* ---- the stack: click a window to bring it forward, tilt with the pointer */
-
 
   /* ---- the settings window drives the overlay, the way it does in the program.
      Panels are data: adding one is a row here, not a branch anywhere else. ---- */
@@ -493,7 +490,6 @@
     }
     return row;
   }
-
 
   /* A listbox drawn here rather than a native <select>: the browser's own popup
      is painted by the platform, so no stylesheet reaches it and the demo window
@@ -809,6 +805,8 @@
 
   // 提示只在读者还没碰过面板时出现，鼠标一到就撤，撤了不再回来。
   // 它不拦点击（pointer-events: none），所以它盖住的那块照样能按。
+  var showHints = null;
+
   function panelHint() {
     var sceneEl = document.getElementById("scene");
     var hint = document.getElementById("ovlHint");
@@ -873,11 +871,19 @@
     window.addEventListener("resize", function () {
       if (sceneEl.dataset.hint === "1") { place(); }
     });
-    var timer = setTimeout(function () {
-      // 面板不在视野里就不必提示，读者还没走到它跟前。
+    function show() {
       var box = sceneEl.getBoundingClientRect();
-      if (box.bottom > 0 && box.top < innerHeight) { place(); sceneEl.dataset.hint = "1"; }
-    }, 1100);
+      // 面板不在视野里就不必提示，读者还没走到它跟前。
+      if (box.bottom <= 0 || box.top >= innerHeight) { return; }
+      clearTimeout(dwell);
+      place();
+      sceneEl.dataset.hint = "1";
+    }
+    // 「尝试一下」是「我不知道这块能干嘛」的意思，所以它把提示叫回来，
+    // 哪怕之前已经撤过一次 —— 撤掉恰恰是把这个人最需要的两句话拿走。
+    showHints = show;
+    var timer = setTimeout(show, 1100);
+    var dwell = null;
     function drop() {
       clearTimeout(timer);
       delete sceneEl.dataset.hint;
@@ -885,7 +891,6 @@
     // 停留才算读到了，路过不算。去右上角切语言的那条路正好横穿这块面板，
     // 按「进入即撤」的话路过一次提示就没了 —— 若这一下发生在它出现之前，
     // 它根本不会出现。按下和键盘进入仍然立刻算。
-    var dwell = null;
     sceneEl.addEventListener("pointerenter", function () {
       clearTimeout(dwell);
       dwell = setTimeout(drop, 260);
@@ -893,9 +898,7 @@
     sceneEl.addEventListener("pointerleave", function () { clearTimeout(dwell); });
     sceneEl.addEventListener("pointerdown", drop);
     sceneEl.addEventListener("focusin", drop);
-    // 按了「尝试一下」也算说过了。
-    var btn = document.getElementById("tryIt");
-    if (btn) { btn.addEventListener("click", drop, { once: true }); }
+
   }
 
   function demoOverlay() {
@@ -953,6 +956,8 @@
       // 这里不动 woken。那个标记一设上就不再撤，是留给「读者真的碰过面板」
       // 用的；按钮设它等于把悬浮抬起、移开沉回那一套永久关掉。
       arrowPulse();
+      // 按下它的人正是还不知道这块能做什么的人：提示要回来，不是走掉。
+      if (showHints) { showHints(); }
       // 锁上时程序本来就不让拖，演示也不该骗人：先把锁打开，
       // 开锁这一下本身就说明了右上角那几个按钮是活的。
       if (state.lock) { apply1("lock", false); }
@@ -1054,7 +1059,6 @@
     });
   }
 
-
   /* ---- install: one switcher, one block. Commands are the README's, verbatim.
      A second level appears only where a distribution really has two right
      answers, which here is the AUR helper. ---------------------------------- */
@@ -1099,7 +1103,6 @@
       noteKey: "get.source.note",
       cmd: "# Arch\nsudo pacman -S cmake qt6-base qt6-wayland layer-shell-qt\n# Gentoo\nsudo emerge -a dev-build/cmake kde-plasma/layer-shell-qt dev-qt/qtwayland\n\ngit clone https://github.com/locez/kotonoha.git\ncd kotonoha\nuv sync\nuv run kotonoha" }
   ];
-
 
   var getTabs = document.getElementById("getTabs");
   if (getTabs) {
@@ -1208,7 +1211,6 @@
       }
     });
   }
-
 
   /* ---- entry ------------------------------------------------------------
      One mechanism for every browser: an observer marks a block seen and the
@@ -1629,7 +1631,6 @@
     }, { passive: true });
     drift();
   }
-
 
   /* ---- the search window ------------------------------------------------
      Sorting is the point of this demo: neither column sorts on what it shows.
