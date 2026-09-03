@@ -70,6 +70,7 @@
   "hero.title": "Wayland 桌面歌詞",
   "hero.lead": "Kotonoha 透過 D-Bus 讀取 MPRIS 播放狀態，在 Wayland 圖層上顯示逐字歌詞。支援任意 MPRIS 播放器，無需播放器外掛。",
   "hero.install": "安裝",
+  "hero.try": "嘗試一下",
   "nav.design": "設計語言",
   "nav.home": "首頁",
   "design.title": "網站長得像程式，<br>因為值是同一份。",

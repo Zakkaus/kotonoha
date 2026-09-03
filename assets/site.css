@@ -36,6 +36,12 @@
   --ovl-text: #ffffff;
   --ovl-dim: rgba(255, 255, 255, 0.62);
   --ovl-hover: rgba(255, 255, 255, 0.1);
+  /* 浮窗右上角那三个圆按钮，取自 src/kotonoha/ui/overlay/chrome.py 的
+     CONTROL_BUTTON_STYLE：底 28/255、悬停 60/255、按下 90/255、字形 210/255。 */
+  --ovl-ic: rgba(255, 255, 255, 0.11);
+  --ovl-ic-hover: rgba(255, 255, 255, 0.235);
+  --ovl-ic-down: rgba(255, 255, 255, 0.353);
+  --ovl-ic-glyph: rgba(255, 255, 255, 0.824);
   --desk-base: #6f7ba8;
   --accent-far: color-mix(in srgb, var(--accent) 48%, #ffffff);
   --on-accent: #ffffff;
@@ -367,6 +373,26 @@ a { color: var(--accent); }
 .lb__list [role="option"][data-active="true"] { background: var(--field); color: var(--text-strong); }
 .lb__list [role="option"][aria-selected="true"] { color: var(--accent); }
 
+/* 这一块是活的，而它画得像一张截图，所以没有人去点。它不写字，也不铺一层
+   东西在上面：静止时略微沉下去，指针进这一块就升起来——一个只有活的东西才会
+   做的动作。碰过一次之后就不再沉回去，那时话已经说完了。
+
+   opacity 而不是 filter: opacity()：窗口自己带 backdrop-filter，在它上面再叠一个
+   滤镜会让合成器在两者之间抖。粗指针上完全不沉——那里没有「靠近」这回事，
+   一直沉着就只是一直暗着。 */
+@media (hover: hover) and (prefers-reduced-motion: no-preference) {
+  .scene:not([data-woken="1"]) .kwin {
+    scale: 0.985; opacity: 0.84;
+    transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter);
+  }
+  .scene:not([data-woken="1"]):hover .kwin { scale: 1; opacity: 1; }
+  .scene[data-woken="1"] .kwin { transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter); }
+  /* One breath of the whole thing — the settings window and the lyric panel
+     above it together, since they are one window on the desktop. Moving only
+     the lyric bar was too small a thing to catch someone who had already
+     decided the panel was a screenshot. */
+}
+
 /* ---- the overlay: centred, four rows, its own dark panel in both themes --- */
 .scene .ovl {
   --tz: calc(var(--s) * 14);
@@ -380,17 +406,24 @@ a { color: var(--accent); }
 }
 .ovl { display: block; padding: var(--s-6) var(--s-8) var(--s-4); text-align: center; position: relative; }
 .ovl__chrome { position: absolute; inset-block-start: var(--s-2); inset-inline-end: var(--s-3); display: flex; gap: var(--s-1); }
+/* 圆的，不是圆角方的：程序里是 22×22 配 border-radius: 11px，也就是一个圆，
+   底色是一层很淡的白。网页上原先画成没有底的光秃字形，于是它们看着不像按钮。 */
 .ovl__ic {
-  appearance: none; border: 0; background: transparent; cursor: pointer; padding: 0;
-  inline-size: calc(var(--s) * 6); block-size: calc(var(--s) * 6);
-  display: inline-grid; place-items: center; border-radius: var(--r-md); color: var(--ovl-dim);
+  appearance: none; border: 0; cursor: pointer; padding: 0;
+  inline-size: 22px; block-size: 22px;
+  display: inline-grid; place-items: center;
+  border-radius: var(--r-pill); background: var(--ovl-ic); color: var(--ovl-ic-glyph);
   transition: color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
 }
-.ovl__ic svg { inline-size: calc(var(--s) * 3); block-size: calc(var(--s) * 3); grid-area: 1 / 1; }
+.ovl__ic svg { inline-size: 15px; block-size: 15px; grid-area: 1 / 1; }
+.ovl__ic:active { background: var(--ovl-ic-down); }
 .ovl__ic[aria-pressed="true"] { color: var(--accent); }
 #ovlPlay[aria-pressed="true"] { color: var(--ovl-dim); }
 #ovlPlay[aria-pressed="true"] .i-play, #ovlPlay[aria-pressed="false"] .i-pause { display: none; }
-@media (hover: hover) { .ovl__ic:hover { color: var(--ovl-text); background: var(--ovl-hover); } }
+/* 锁着和没锁是两个字形，不是同一个字形的两种颜色——程序里就是这么画的
+   （icons.py 的 lock / lock-open），而一个只会变色的锁读不出它现在是哪一头。 */
+#ovlLock[aria-pressed="true"] .i-unlocked, #ovlLock[aria-pressed="false"] .i-locked { display: none; }
+@media (hover: hover) { .ovl__ic:hover { color: var(--ovl-text); background: var(--ovl-ic-hover); } }
 /* An empty neighbour still holds its row. Reserving 1.5em instead of the
    line box itself left the placeholder 2.5px short of a filled one, so the
    panel changed height at the first and last line of the loop — and the
@@ -433,6 +466,12 @@ a { color: var(--accent); }
 .ovl[data-pop="true"] .ovl__line span[data-sung="now"] { --word-lit: var(--accent-soft); }
 .ovl[data-trans="false"] .ovl__sub { visibility: hidden; }
 .ovl[data-through="true"] { border-style: dashed; }
+/* 抓得住的时候才给出抓得住的样子。锁上或者开了点击穿透，它就不是一个能抓的东西
+   ——一个显示成可抓、却抓不动的面板，比一个明说抓不动的更让人困惑。 */
+/* move，不是 grab：这是一个窗口，桌面上拖窗口给的就是这个光标。
+   grab 说的是「捏起一个东西」，而这块面板不会被捏起来，它只会挪位置。 */
+.ovl[data-grab="1"] { cursor: move; touch-action: none; }
+.ovl[data-grab="1"] .ovl__line, .ovl[data-grab="1"] .ovl__side, .ovl[data-grab="1"] .ovl__sub { user-select: none; }
 
 
 

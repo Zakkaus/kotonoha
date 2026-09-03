@@ -79,6 +79,7 @@
       "hero.title": "Wayland 桌面歌词",
       "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。",
       "hero.install": "安装",
+      "hero.try": "尝试一下",
       "nav.design": "设计语言",
       "nav.home": "首页",
       "design.title": "网站长得像程序，<br>因为值是同一份。",
@@ -385,14 +386,6 @@
       ovl.play.setAttribute("aria-pressed", String(running));
       ovl.play.setAttribute("aria-label", running ? msg("aria.pause") : msg("aria.play"));
     });
-    var lock = document.getElementById("ovlLock");
-    if (lock) {
-      lock.addEventListener("click", function () {
-        var on = lock.getAttribute("aria-pressed") !== "true";
-        lock.setAttribute("aria-pressed", String(on));
-        lock.setAttribute("aria-label", on ? msg("aria.lockedPosition") : msg("aria.lockPosition"));
-      });
-    }
     window.setWordTiming = function (on) {
       var want = on ? 0 : 1;
       if (src !== want) { src = want; paint(); }
@@ -449,7 +442,7 @@
   var knav = document.getElementById("knav");
   var activePanel = null;
   var state = { size: 24, weight: "650", leading: 140, glow: false, pop: true,
-                trans: true, word: true, nudge: 0, px: 50, through: false, lock: true,
+                trans: true, word: true, nudge: 0, px: 50, through: false, lock: false,
                 frost: true, opacity: 80, rise: "rise" };
 
   function formRow(spec) {
@@ -464,6 +457,7 @@
     } else if (spec.kind === "switch") {
       var sw = document.createElement("button");
       sw.type = "button"; sw.className = "ksw"; sw.setAttribute("role", "switch");
+      sw.dataset.bind = spec.id;
       sw.setAttribute("aria-checked", String(state[spec.id]));
       sw.append(document.createElement("i"));
       sw.addEventListener("click", function () {
@@ -476,7 +470,9 @@
       var input = document.createElement("input");
       input.type = "range"; input.min = spec.min; input.max = spec.max;
       input.value = String(state[spec.id]); input.setAttribute("aria-label", msg(spec.labelKey));
+      input.dataset.bind = spec.id;
       var out = document.createElement("b");
+      out.dataset.bind = spec.id;
       out.textContent = state[spec.id] + spec.unit;
       input.addEventListener("input", function () {
         out.textContent = input.value + spec.unit;
@@ -641,6 +637,18 @@
     ovlEl.dataset.pop = String(state.pop);
     ovlEl.dataset.trans = String(state.trans);
     ovlEl.dataset.through = String(state.through);
+    ovlEl.dataset.grab = !state.lock && !state.through ? "1" : "0";
+    // 「锁定位置」有三个视图：浮窗上的按钮、设置里的开关、面板抓不抓得住。
+    // 三个都从这一份状态读，所以它们不会各说各话。
+    var lockBtn = document.getElementById("ovlLock");
+    if (lockBtn) {
+      lockBtn.setAttribute("aria-pressed", String(state.lock));
+      lockBtn.setAttribute("aria-label", msg(state.lock ? "aria.lockedPosition" : "aria.lockPosition"));
+    }
+    document.querySelectorAll(".ksw[data-bind]").forEach(function (sw) {
+      var want = String(!!state[sw.dataset.bind]);
+      if (sw.getAttribute("aria-checked") !== want) { sw.setAttribute("aria-checked", want); }
+    });
     ovlEl.style.setProperty("--ovl-shift", (state.px - 50) / 5 + "%");
     document.querySelectorAll(".kwin, .scene .ovl").forEach(function (w) {
       w.style.backdropFilter = state.frost ? "" : "none";
@@ -649,6 +657,271 @@
     // what made it read as a cheap demo rather than as the program.
     root.style.setProperty("--win-alpha", state.opacity + "%");
     if (typeof setWordTiming === "function") { setWordTiming(state.word); }
+  }
+
+  /* 浮窗可以直接拖。它和「水平」那根滑杆做的是同一件事，所以写同一份状态，
+     不是第二份副本——两份状态迟早会说出两个不同的位置。
+
+     「锁定位置」与「点击穿透」都在这里被读到。在此之前两个开关都没有任何读者：
+     按下去界面上什么都不会发生，而那正是它们要演示的功能。 */
+  /* 浮窗右上角那两个按钮此前一个只翻自己的样子、一个什么都不做。
+     锁写进同一份状态；搜索把人带到下面那个搜索窗口——它就在这一页上，
+     一个点了没有任何反应的按钮，比没有这个按钮更糟。 */
+  /* 沉下去只是为了让人第一次注意到它。人一旦动过手，这句话就说完了，
+     再沉回去只是每次移开鼠标都闪一下。 */
+  function wakeSceneOnce() {
+    var sceneEl = document.getElementById("scene");
+    if (!sceneEl || sceneEl.dataset.wired === "1") { return; }
+    sceneEl.dataset.wired = "1";
+    ["pointerdown", "keydown"].forEach(function (kind) {
+      sceneEl.addEventListener(kind, function () { sceneEl.dataset.woken = "1"; }, true);
+    });
+  }
+
+  function wireOverlayChrome() {
+    var lockBtn = document.getElementById("ovlLock");
+    if (lockBtn && lockBtn.dataset.wired !== "1") {
+      lockBtn.dataset.wired = "1";
+      lockBtn.addEventListener("click", function () {
+        apply1("lock", lockBtn.getAttribute("aria-pressed") !== "true");
+      });
+    }
+    var searchBtn = document.getElementById("ovlSearch");
+    if (searchBtn && searchBtn.dataset.wired !== "1") {
+      searchBtn.dataset.wired = "1";
+      searchBtn.addEventListener("click", function () {
+        var target = document.getElementById("search");
+        if (target) { target.scrollIntoView({ behavior: "smooth", block: "start" }); }
+      });
+    }
+  }
+
+  // 大多数读者以为右边那块是一张图，鼠标根本不会移过去，所以任何要先悬停
+  // 才出现的提示都等不到人。这个按钮不写字解释，它把歌词栏推出去再拉回来：
+  // 面板动过一次，加上滑杆同步跟着走，能不能拖就不用讲了。
+  // 宽屏时面板在右边，窄屏时它在下面，箭头得指对地方。
+  // 按下之后，背景那片颗粒彙集成一支指向面板的箭头。这一页别处就是这么说话的
+  // ——能力那一节的图标就是同一批颗粒聚出来的——所以这里不必再发明一种效果。
+  var heroField = null, heroOpts = null, heroAim = false, heroCentre = null;
+
+  // 取样要走 getPointAtLength，一支箭上千个点，每按一次重算会卡一下。
+  var arrowCache = {};
+
+  function arrowPoints(beside) {
+    var key = beside ? "beside" : "below";
+    if (arrowCache[key]) { return arrowCache[key]; }
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    var path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    // 弯的，不是直的：一支手画的箭比一条几何线更像有人在指，而这一页的
+    // 颗粒本来就不是印出来的形状。头是单独一笔，尖端落在曲线的末点上。
+    // 头要占到整个盒子的四分之一。上一版的倒钩只有 4/24，缩到一百多像素、
+    // 再用 5px 宽的乱向碎片去画，两根倒钩糊成一团，整支读起来没有方向。
+    // 头是闭合三角，不是两根倒钩。倒钩在这个画法下（5px 宽、朝向随机的碎片）
+    // 只会糊成一团，看不出哪头是尖；三角的周长把点吃满，方向立刻读得出来。
+    // 两种排版各画一支，不是同一支镜像：宽屏是从文案下方抬起来横扫向右，
+    // 窄屏是从左上落下去、指进下面的面板。
+    // 两种排版两支不同的箭，不是同一支镜像。
+    // 宽屏是手画的那种：从左上荡出去、绕一个圈、再落向右下的面板。圈是它读起来
+    // 像有人随手一指而不是像一个图标的原因。
+    // 窄屏是直的：那一条只有一百来像素高，绕圈缩到那个尺寸只会糊成一团。
+    var d = beside
+      ? ["M1.5 6.5C6 3.5 12.5 4.5 13.5 8C14.2 10.5 10.5 11.8 8 10.4C5.4 8.9 9.5 6.6 13 9.2C16.5 11.8 19 13.6 22 15.5",
+         "M22 15.5 17.4 15.7 20.2 11.3Z"]
+      : ["M12 2.5V15", "M12 20.5 5 12.5 19 12.5Z"];
+    path.setAttribute("d", d[0]);
+    svg.appendChild(path);
+    var head = document.createElementNS("http://www.w3.org/2000/svg", "path");
+    head.setAttribute("d", d[1]);
+    svg.appendChild(head);
+    // getTotalLength 要求元素在渲染树里，取完样再摘掉。
+    svg.style.cssText = "position:absolute;inline-size:0;block-size:0;overflow:hidden";
+    document.body.append(svg);
+    var pts = glyphOf(svg, "0 0 24 24");
+    svg.remove();
+    arrowCache[key] = pts;
+    return pts;
+  }
+
+  // 箭头落在按钮行以下那条空带里，不压在标题和正文上。位置从量到的盒子算，
+  // 不写死：这一节的排版随宽度换过两种，写死的坐标只在其中一种下成立。
+  // 宽屏那支箭在 24 的盒子里只占中间一条：横向 1.5–22、纵向 3.5–16。
+  // 下面几个数就是这条墨迹的占比，位置和尺寸都从它算，不从盒子算。
+  var INK = { w: 20.5 / 24, h: 12.5 / 24, cy: 9.75 / 24, right: 22 / 24 };
+
+  function arrowPlace() {
+    var canvas = document.getElementById("field");
+    var row = document.querySelector("#hero .row");
+    var sceneEl = document.getElementById("scene");
+    if (!canvas || !row || !sceneEl) { return null; }
+    var c = canvas.getBoundingClientRect();
+    var r = row.getBoundingClientRect();
+    var s = sceneEl.getBoundingClientRect();
+    // 面板在旁边还是在下面，问它自己的位置，不问断点：断点会和布局各改各的。
+    var beside = s.left > r.right;
+    var h1 = document.querySelector("#hero h1");
+    var x, y, span;
+    if (beside && h1) {
+      // 盒子是正方的，而这支箭是扁的，所以尺寸和位置都按墨迹在盒子里的实际
+      // 占比反算：只按盒子摆，上下会空掉一大截，右端也够不到面板。
+      var lid = h1.getBoundingClientRect().top;
+      var room = (lid - c.top) * 0.9;
+      span = Math.max(180, Math.min(380, Math.min(room / INK.h, (s.left - c.left - 40) / INK.w)));
+      x = s.left - 24 - INK.right * span + span / 2;
+      y = (c.top + lid) / 2 + (0.5 - INK.cy) * span;
+    } else {
+      // 按钮行与面板之间量到只有 48px，箭头放那儿一定被面板切掉一半。
+      // 按钮右边那块（正文以下、面板以上、最后一个按钮以右）是空的，
+      // 而且紧挨着要指的东西。
+      var tb = document.getElementById("tryIt");
+      var lead = document.querySelector("#hero .lead");
+      var right = tb ? tb.getBoundingClientRect().right : r.left;
+      var edge = lead ? lead.getBoundingClientRect().bottom : r.top;
+      span = Math.max(80, Math.min(200, Math.min(r.right - right, s.top - edge) * 0.96));
+      x = (right + r.right) / 2;
+      y = (edge + s.top) / 2;
+    }
+    return {
+      beside: beside,
+      at: (x - c.left) / Math.max(c.width, 1),
+      tall: span / Math.max(c.height, 1),
+      centre: y - c.top
+    };
+  }
+
+  var arrowHold = null, arrowDrop = null;
+
+  function arrowPulse() {
+    // 静止偏好下这片场只在滚动时重画一帧，彙集会变成一次跳变，不如不做。
+    if (!heroField || stillness.matches) { return; }
+    var spot = arrowPlace();
+    if (!spot) { return; }
+    // 上一轮的两个定时器必须先撤。一轮箭头五秒，而按钮三秒就放开，
+    // 第二次按下时上一轮那个「撤掉形状」会在新箭头成形到一半时开火，
+    // 颗粒当场瞬移——那就是再按一次会卡一下的原因。
+    clearTimeout(arrowHold);
+    clearTimeout(arrowDrop);
+    heroOpts.at = spot.at;
+    heroOpts.tall = spot.tall;
+    heroCentre = spot.centre;
+    heroField.setAim(arrowPoints(spot.beside));
+    heroAim = true;
+    arrowHold = setTimeout(function () {
+      heroAim = false;
+      // 形状要等颗粒回到散落的位置再撤。还在形上就撤，它们会瞬移。
+      arrowDrop = setTimeout(function () { heroField.setAim(null); }, 2400);
+    }, 2600);
+  }
+
+  function demoOverlay() {
+    var btn = document.getElementById("tryIt");
+    var ovlEl = document.getElementById("ovl");
+    var sceneEl = document.getElementById("scene");
+    if (!btn || !ovlEl || !sceneEl || btn.dataset.wired === "1") { return; }
+    btn.dataset.wired = "1";
+    var running = false;
+
+    function put(value) {
+      state.px = value;
+      reflect();
+      document.querySelectorAll('[data-bind="px"]').forEach(function (el) {
+        if (el.tagName === "INPUT") { el.value = String(value); }
+        else { el.textContent = value + " %"; }
+      });
+    }
+
+    function slide(from, to, ms, then) {
+      var t0 = null;
+      requestAnimationFrame(function step(now) {
+        if (t0 === null) { t0 = now; }
+        var k = Math.min(1, (now - t0) / ms);
+        // 走的是和面板同一条缓动：读者看到的是这块面板在动，不是一个动画在跑。
+        var e = k < 0.5 ? 4 * k * k * k : 1 - Math.pow(-2 * k + 2, 3) / 2;
+        put(Math.round(from + (to - from) * e));
+        if (k < 1) { requestAnimationFrame(step); } else { then(); }
+      });
+    }
+
+    function play() {
+      var from = state.px;
+      // 往还有余地的那一边推。停在边上再往外推是看不出来的。
+      var to = Math.max(0, Math.min(100, from <= 50 ? from + 26 : from - 26));
+      if (stillness.matches) {
+        put(to);
+        setTimeout(function () { put(from); running = false; }, 700);
+        return;
+      }
+      slide(from, to, 760, function () {
+        setTimeout(function () {
+          slide(to, from, 880, function () { running = false; });
+        }, 300);
+      });
+    }
+
+    btn.addEventListener("click", function (e) {
+      // 鼠标点完不留焦点环。这一页的焦点环是给键盘用的，而一部分浏览器在
+      // 鼠标点击之后仍然匹配 :focus-visible，于是按钮上留下一圈亮边。
+      // detail 为 0 的是键盘触发的 click，那种要留。
+      if (e && e.detail > 0 && btn.blur) { btn.blur(); }
+      if (running) { return; }
+      running = true;
+      sceneEl.dataset.woken = "1";
+      arrowPulse();
+      // 锁上时程序本来就不让拖，演示也不该骗人：先把锁打开，
+      // 开锁这一下本身就说明了右上角那几个按钮是活的。
+      if (state.lock) { apply1("lock", false); }
+      var box = ovlEl.getBoundingClientRect();
+      var off = box.top < 0 || box.bottom > innerHeight;
+      // 箭头先立起来，指够一会儿再让面板动：先说看哪儿，再说它会动。
+      var wait = stillness.matches ? 0 : 1100;
+      if (off) {
+        sceneEl.scrollIntoView({ behavior: stillness.matches ? "auto" : "smooth", block: "center" });
+        wait += stillness.matches ? 0 : 520;
+      }
+      setTimeout(play, wait);
+    });
+  }
+
+  function dragOverlay() {
+    var ovlEl = document.getElementById("ovl");
+    var sceneEl = document.getElementById("scene");
+    if (!ovlEl || !sceneEl || ovlEl.dataset.draggable === "1") { return; }
+    ovlEl.dataset.draggable = "1";
+    var from = 0, began = 50, span = 1, dragging = false;
+
+    ovlEl.addEventListener("pointerdown", function (e) {
+      // 右上角那几个按钮有自己的活，拖动不抢它们。
+      if (state.lock || state.through) { return; }
+      if (e.button !== 0 || (e.target.closest && e.target.closest("button"))) { return; }
+      dragging = true;
+      from = e.clientX;
+      began = state.px;
+      span = sceneEl.getBoundingClientRect().width;
+      ovlEl.setPointerCapture(e.pointerId);
+      ovlEl.dataset.dragging = "1";
+      e.preventDefault();
+    });
+    ovlEl.addEventListener("pointermove", function (e) {
+      if (!dragging) { return; }
+      // 面板的位移是 (px-50)/5 个百分点的内联外边距，左右各一次，
+      // 所以滑满 100 点等于走过场景宽度的 20%。
+      var moved = (e.clientX - from) / Math.max(span, 1) * 500;
+      var next = Math.max(0, Math.min(100, Math.round(began + moved)));
+      if (next === state.px) { return; }
+      state.px = next;
+      reflect();
+      // 滑杆在场上就让它跟着走：读者看到的是一个值，不是两个。
+      document.querySelectorAll('[data-bind="px"]').forEach(function (el) {
+        if (el.tagName === "INPUT") { el.value = String(next); }
+        else { el.textContent = next + " %"; }
+      });
+    });
+    ["pointerup", "pointercancel"].forEach(function (kind) {
+      ovlEl.addEventListener(kind, function () {
+        dragging = false;
+        delete ovlEl.dataset.dragging;
+      });
+    });
   }
 
   function panel(id) {
@@ -682,6 +955,10 @@
     });
     panel(Object.keys(PANELS)[0]);
     reflect();
+    dragOverlay();
+    demoOverlay();
+    wireOverlayChrome();
+    wakeSceneOnce();
     localeUpdaters.push(function () {
       knav.querySelectorAll("button").forEach(function (b) {
         b._localeLabel.nodeValue = msg("settings." + b.dataset.panel);
@@ -928,7 +1205,9 @@
       hues = ["--preset-pink", "--preset-cyan", "--preset-green", "--preset-gold", "--accent"]
         .map(function (t) { return cs.getPropertyValue(t).trim(); })
         .filter(Boolean);
-      motes.forEach(function (m, i) { m.hue = hues[i % hues.length]; });
+      // 颜色挂在每颗自己的号上，不挂在它在数组里的下标上：形状是按步长取的，
+      // 步长一旦和颜色数成倍数（彙集那一节正好是 5），选中的就永远是同一色。
+      motes.forEach(function (m) { m.hue = hues[m.tint % hues.length]; });
     }
     function size() {
       var r = canvas.getBoundingClientRect();
@@ -977,11 +1256,14 @@
           // at. The sampler walks a 2px lattice, and a glyph drawn straight
           // onto that lattice reads as print rather than as a swarm.
           turn: Math.random(),
+          tint: Math.floor(Math.random() * 5),
           jx: (Math.random() - 0.5) * 0.062,
           jy: (Math.random() - 0.5) * 0.062,
-          hue: hues[i % Math.max(hues.length, 1)]
+          hue: ""
         });
       }
+      // 播完统一按各自的号上色，和 readHues 用同一条规则。
+      motes.forEach(function (m) { m.hue = hues[m.tint % Math.max(hues.length, 1)]; });
     }
     function step(still) {
       var w = canvas.width / ddpr, h = canvas.height / ddpr;
@@ -1015,13 +1297,18 @@
       // through the outline's points, and every fleck outside the quota fades
       // to nothing as the shape stands — leaving it at a low alpha instead put
       // a crowd around the glyph, worst on a short outline like the sun.
-      var used = aim ? Math.min(motes.length, 460) : 0;
+      // 取的是「每隔几颗取一颗」，不是「前几颗」。颗粒是按行播种的，取前 460 颗
+      // 等于只征用最上面那几行：形状底下那一片从头到尾没参与过，看起来就是
+      // 上半边散开、下半边一直空着。跨步取则整片都在动。
+      var used = aim ? Math.min(motes.length, opts.quota || 460) : 0;
+      var stride = used ? Math.max(1, Math.floor(motes.length / used)) : 0;
+      var picked = stride ? Math.ceil(motes.length / stride) : 1;
       var count = aim ? aim.length : 1;
-      var pace = count / Math.max(used, 1);
+      var pace = count / Math.max(picked, 1);
       var faint = 0.22;
       for (var i = 0; i < motes.length; i++) {
         var tx, ty;
-        var drawn = i < used;
+        var drawn = stride > 0 && i % stride === 0;
         var m = motes[i];
         // The scatter belongs to the page, not to the canvas. On a canvas that
         // is pinned to the viewport, homes measured in canvas coordinates stand
@@ -1042,7 +1329,7 @@
         var mix = drawn ? Math.min(1, Math.max(0, (pull - m.turn * 0.72) / 0.28)) : 0;
         mix = mix * mix * (3 - 2 * mix);
         if (drawn) {
-          var pt = aim[Math.floor(i * pace) % count];
+          var pt = aim[Math.floor((i / stride) * pace) % count];
           tx = hx + (ox + (pt[0] + m.jx) * span - hx) * mix;
           ty = hy + (oy + (pt[1] + m.jy) * span - hy) * mix;
         }
@@ -1068,8 +1355,10 @@
         // shape appears, they read as part of the shape arriving.
         // A field with no glyph to form is all "loose" and must not fade at all:
         // the hero and the two window sections are nothing but loose flecks.
+        // 淡出的陡度可调。彙集那一节要的是杂散颗粒快速消失，而英雄区这支箭头
+        // 是按出来的：3.5 让它们在 0.2 秒内整片开关一次，散回时就像凭空冒出来。
         var weight = drawn ? faint + (1 - faint) * mix
-                   : aim ? faint * Math.max(0, 1 - pull * 3.5) : faint;
+                   : aim ? faint * Math.max(0, 1 - pull * (opts.shed || 3.5)) : faint;
         g.globalAlpha = Math.min(1, m.alpha + 0.55) * weight;
         g.beginPath();
         g.moveTo(m.x - ex / 2, m.y - ey / 2);
@@ -1195,8 +1484,28 @@
     var canvas = document.getElementById(pair[0]);
     var host = document.getElementById(pair[1]);
     if (canvas && host) {
-      dotField(canvas, { fill: 0.5, centreOf: function (c, h) { return { centre: h / 2 }; } })
-        .watch(host);
+      var hero = pair[0] === "field";
+      // Only the hero has a shape to make, and only while the reader has asked
+      // for it: `ready` is what the gather runs off, so a false here keeps this
+      // field a plain scatter exactly as the other two are.
+      var opts = hero
+        ? {
+            fill: 0.5, at: 0.34, tall: 0.4, shed: 1.15, quota: 300,
+            // Where the reader is looking, not the middle of the canvas. On a
+            // narrow screen this section is several screens tall, so its middle
+            // is far below the fold: the flecks all left to build a shape
+            // nobody could see, and the hero simply emptied.
+            centreOf: function (c, h) {
+              var r = c.getBoundingClientRect();
+              // 有量好的位置就用它；还没按过按钮时退回视口中央，那时也没有形状。
+              var y = heroCentre === null ? innerHeight / 2 - r.top : heroCentre;
+              return { centre: Math.min(Math.max(y, 0), h), ready: heroAim };
+            }
+          }
+        : { fill: 0.5, centreOf: function (c, h) { return { centre: h / 2 }; } };
+      var made = dotField(canvas, opts);
+      made.watch(host);
+      if (hero) { heroField = made; heroOpts = opts; }
     }
   });
 
