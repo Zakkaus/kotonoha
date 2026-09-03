@@ -1022,7 +1022,12 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
   font-weight: 600;
 }
 .cap__table tbody td { color: var(--text-dim); }
-.cap__table code { white-space: nowrap; font-size: 0.75rem; }
+/* Not nowrap: `overflow-wrap` has no effect under it, and in a fixed-layout
+   three-column table `ext-background-effect-v1` is 168px of identifier in a
+   152px column — it ran 23px into the column beside it. Breaking a token is
+   worse than not breaking one and better than printing it over the next
+   cell, and `anywhere` only breaks the ones that do not fit. */
+.cap__table code { overflow-wrap: anywhere; font-size: 0.75rem; }
 .cap__table tr:last-child th,
 .cap__table tr:last-child td { border-block-end: 0; }
 .cap__table-label { display: none; }
