@@ -75,24 +75,12 @@
       "theme.light": "浅色",
       "theme.dark": "深色",
       "theme.system": "系统",
-      "chip.draft": "设计语言 · 草案",
       "hero.title": "Wayland 桌面歌词",
       "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。",
       "hero.install": "安装",
       "hero.try": "尝试一下",
       "hint.drag": "试试拖动歌词栏",
       "hint.accent": "换个强调色试试",
-      "nav.design": "设计语言",
-      "nav.home": "首页",
-      "design.title": "网站长得像程序，<br>因为值是同一份。",
-      "design.lead": "颜色一个都不另取——全部来自 <code>theme.py</code> 与 <code>models.py</code>。这一页记录取值、组件，以及哪些规则能报红。",
-      "s.calibrate": "先答五个问题",
-      "s.color": "颜色",
-      "s.type": "字级",
-      "s.shape": "圆角与间距",
-      "s.parts": "组件",
-      "s.parts.lead": "一个角色一份实现。它们在这里并排出现，是因为一起看才看得出哪一个跑偏了。",
-      "s.does": "能力与前提",
       "does.follow.a": "浅色 / 深色 / 跟随系统",
       "does.follow.b": "简体 · 繁體 · English",
       "s.search": "搜索窗口",
@@ -133,14 +121,10 @@
       "search.confNone": "无",
       "search.confMid": "中",
       "search.confHigh": "高",
-      "s.motion": "动效预算",
-      "s.not": "刻意不做",
       "s.get": "安装",
       "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；Debian/Ubuntu 可直接安装 DEB，Fedora 等 RPM 系可安装 RPM，也可以从源码构建。",
-      "eb.does": "概览",
       "eb.search": "歌词来源",
       "eb.get": "软件包",
-      "s.red": "什么能报红",
       "copy": "复制",
       "copied": "已复制",
       "get.distribution": "发行版",
@@ -1587,28 +1571,38 @@
     var canvas = document.getElementById(pair[0]);
     var host = document.getElementById(pair[1]);
     if (canvas && host) {
-      var hero = pair[0] === "field";
-      // Only the hero has a shape to make, and only while the reader has asked
-      // for it: `ready` is what the gather runs off, so a false here keeps this
-      // field a plain scatter exactly as the other two are.
-      var opts = hero
-        ? {
-            fill: 0.5, at: 0.34, tall: 0.4, shed: 1.15, quota: 300,
-            // Where the reader is looking, not the middle of the canvas. On a
-            // narrow screen this section is several screens tall, so its middle
-            // is far below the fold: the flecks all left to build a shape
-            // nobody could see, and the hero simply emptied.
-            centreOf: function (c, h) {
-              var r = c.getBoundingClientRect();
-              // 有量好的位置就用它；还没按过按钮时退回视口中央，那时也没有形状。
-              var y = heroCentre === null ? innerHeight / 2 - r.top : heroCentre;
-              return { centre: Math.min(Math.max(y, 0), h), ready: heroAim };
+      // 播一块场要遍历上千颗，四块在加载时一起播，量到占了启动那个 159ms 长任务里的
+      // 一百毫秒，而那一刻最多只有一两块在视口里。等它快进画面了再建。
+      var start = function () {
+        var hero = pair[0] === "field";
+        // Only the hero has a shape to make, and only while the reader has asked
+        // for it: `ready` is what the gather runs off, so a false here keeps this
+        // field a plain scatter exactly as the other two are.
+        var opts = hero
+          ? {
+              fill: 0.5, at: 0.34, tall: 0.4, shed: 1.15, quota: 300,
+              // Where the reader is looking, not the middle of the canvas. On a
+              // narrow screen this section is several screens tall, so its middle
+              // is far below the fold: the flecks all left to build a shape
+              // nobody could see, and the hero simply emptied.
+              centreOf: function (c, h) {
+                var r = c.getBoundingClientRect();
+                // 有量好的位置就用它；还没按过按钮时退回视口中央，那时也没有形状。
+                var y = heroCentre === null ? innerHeight / 2 - r.top : heroCentre;
+                return { centre: Math.min(Math.max(y, 0), h), ready: heroAim };
+              }
             }
-          }
-        : { fill: 0.5, centreOf: function (c, h) { return { centre: h / 2 }; } };
-      var made = dotField(canvas, opts);
-      made.watch(host);
-      if (hero) { heroField = made; heroOpts = opts; }
+          : { fill: 0.5, centreOf: function (c, h) { return { centre: h / 2 }; } };
+        var made = dotField(canvas, opts);
+        made.watch(host);
+        if (hero) { heroField = made; heroOpts = opts; }
+      };
+      var near = new IntersectionObserver(function (es) {
+        if (!es[0].isIntersecting) { return; }
+        near.disconnect();
+        start();
+      }, { rootMargin: "300px" });
+      near.observe(host);
     }
   });
 
