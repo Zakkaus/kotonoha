@@ -1228,7 +1228,7 @@
     // created after the observer ran never gets marked, and the hidden half of
     // the rule would keep it hidden for good.
     var waiting = [].slice.call(
-      document.querySelectorAll(".rise, .sec-head--top > *, .rail-body > *, .swin > *, .get > *"));
+      document.querySelectorAll(".rise, .sec-head--top > *, .rail-body > *"));
     waiting.forEach(function (el) { seen.observe(el); });
     // The bottom margin above means an element sitting at the very end of the
     // page can be on screen and still never cross the line — the page has no

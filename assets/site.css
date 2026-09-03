@@ -1219,9 +1219,7 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
    so nothing here can leave the page blank. */
 :root[data-reveal="js"] .rise,
 :root[data-reveal="js"] .sec-head--top > *,
-:root[data-reveal="js"] .rail-body > *,
-:root[data-reveal="js"] .swin > *,
-:root[data-reveal="js"] .get > * {
+:root[data-reveal="js"] .rail-body > * {
   transition: opacity 700ms var(--ease-enter), translate 700ms var(--ease-enter);
 }
 :root[data-reveal="js"] .rise:not([data-seen]),
@@ -1229,10 +1227,9 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
 :root[data-reveal="js"] .rail-body > *:not([data-seen]) {
   opacity: 0; translate: 0 calc(var(--s) * 20);
 }
-:root[data-reveal="js"] .swin > *:not([data-seen]),
-:root[data-reveal="js"] .get > *:not([data-seen]) {
-  opacity: 0; translate: 0 calc(var(--s) * 4);
-}
+/* 面板整块一起出现，不再逐个子元素各自揭示：两层叠在一起时，面板自己已经显形，
+   而它下缘的页脚还在等自己的观察器 —— 于是「应用所选歌词」和「关闭」要等读者
+   再滚一段才补上，而那 16px 的下推还把它们顶出面板、被 overflow 裁掉一截。 */
 
 @keyframes settle {
   from { opacity: 0; translate: 0 calc(var(--s) * 5); }
