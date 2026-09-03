@@ -269,7 +269,11 @@ a { color: var(--accent); }
 .kwin__title { font-weight: 600; color: var(--text-strong); font-size: 0.9375rem; flex: 1; }
 .kwin__x { color: var(--text-dim); display: inline-grid; place-items: center; inline-size: calc(var(--s) * 6); block-size: calc(var(--s) * 6); }
 .kwin__x svg { inline-size: calc(var(--s) * 3); block-size: calc(var(--s) * 3); }
-.kwin__body { display: grid; grid-template-columns: calc(var(--s) * 28) 1fr; gap: var(--s-3); padding: 0 var(--s-4) var(--s-4); min-block-size: calc(var(--s) * 46); }
+/* The rail is at least this wide and grows to whatever the longest label in the
+   current locale needs. Fixed, it fitted two-character Chinese and overflowed by
+   2px in English — and a grid item will not shrink below its content, so the
+   selected row's background crossed the rail's own rounded border. */
+.kwin__body { display: grid; grid-template-columns: minmax(calc(var(--s) * 28), max-content) 1fr; gap: var(--s-3); padding: 0 var(--s-4) var(--s-4); min-block-size: calc(var(--s) * 46); }
 
 /* The rail: a filled row with a short accent bar inside it, before the glyph.
    This is the program's own signature, carried over unchanged. */
@@ -857,7 +861,14 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
   .scene { padding: var(--s-3); gap: var(--s-4); }
   .kwin__body { grid-template-columns: minmax(0, 1fr); gap: var(--s-3); }
   .knav { display: flex; overflow-x: auto; gap: var(--s-1); padding-block-end: var(--s-2); }
-  .knav button { white-space: nowrap; }
+  /* Centred, and the indicator moves to the bottom edge: the left gutter exists
+     to hold a vertical bar beside a column of rows, and in a row of pills it is
+     only an asymmetric padding that pushes every label off centre. */
+  .knav button { white-space: nowrap; justify-content: center; padding-inline: var(--s-3); }
+  .knav button[aria-current]::before {
+    inset-inline: var(--s-3); inset-block: auto 2px; translate: none;
+    inline-size: auto; block-size: 2px;
+  }
   .kfield { flex-wrap: wrap; row-gap: var(--s-1); }
   .kfield > span { inline-size: 100%; }
   .kfield b { min-inline-size: 0; }
