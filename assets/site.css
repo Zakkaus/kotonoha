@@ -478,7 +478,11 @@ a { color: var(--accent); }
 .swin__label svg { inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4); color: var(--text-dim); }
 .swin__miss { flex: 1; min-inline-size: 0; color: var(--text-dim); font-size: 0.75rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .swin__only { display: inline-flex; align-items: center; gap: var(--s-2); font-size: 0.75rem; color: var(--text-dim); cursor: pointer; flex: none; }
-.swin__only input { accent-color: var(--accent); }
+/* The label says the whole row is pressable and the box is the part most
+   people aim at, so it has to agree: a checkbox keeps the arrow unless it
+   is told otherwise, and the pointer changed shape halfway across one
+   control. */
+.swin__only input { accent-color: var(--accent); cursor: pointer; }
 
 .tablewrap { overflow-x: auto; padding-inline: var(--s-4); }
 /* Seven columns of real result rows do not fit a phone, and squeezing them
