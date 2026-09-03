@@ -377,26 +377,6 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
 .lb__list [role="option"][data-active="true"] { background: var(--field); color: var(--text-strong); }
 .lb__list [role="option"][aria-selected="true"] { color: var(--accent); }
 
-/* 这一块是活的，而它画得像一张截图，所以没有人去点。它不写字，也不铺一层
-   东西在上面：静止时略微沉下去，指针进这一块就升起来——一个只有活的东西才会
-   做的动作。碰过一次之后就不再沉回去，那时话已经说完了。
-
-   opacity 而不是 filter: opacity()：窗口自己带 backdrop-filter，在它上面再叠一个
-   滤镜会让合成器在两者之间抖。粗指针上完全不沉——那里没有「靠近」这回事，
-   一直沉着就只是一直暗着。 */
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .scene:not([data-woken="1"]) .kwin {
-    scale: 0.985; opacity: 0.84;
-    transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter);
-  }
-  .scene:not([data-woken="1"]):hover .kwin { scale: 1; opacity: 1; }
-  .scene[data-woken="1"] .kwin { transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter); }
-  /* One breath of the whole thing — the settings window and the lyric panel
-     above it together, since they are one window on the desktop. Moving only
-     the lyric bar was too small a thing to catch someone who had already
-     decided the panel was a screenshot. */
-}
-
 /* ---- the overlay: centred, four rows, its own dark panel in both themes --- */
 .scene .ovl {
   /* Above the settings window, which is what this layer is on the desktop. The
@@ -487,7 +467,11 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
    the bar is dragged, and it never takes a click: the thing behind it is the
    thing to press. */
 .hint {
-  position: absolute; inset-block-start: calc(100% + var(--s-3)); inset-inline-start: 50%;
+  /* Above the bar, not below it. Below, it hangs over the settings window's
+     title on a wide screen and over its close button on a narrow one; above,
+     it stands in the padding the desk already keeps clear and covers nothing
+     either window is using. */
+  position: absolute; inset-block: auto calc(100% + var(--s-2)); inset-inline-start: 50%;
   margin: 0; padding: var(--s-2) var(--s-4);
   /* The page's own voice, not another control on the mock: the same accent
      pill the install button is, so it reads as the site talking about the
@@ -496,7 +480,7 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
   background: var(--accent); color: var(--on-accent);
   border: 0; border-radius: var(--r-pill);
   font-size: 0.8125rem; font-weight: 600; white-space: nowrap;
-  pointer-events: none; opacity: 0; translate: -50% calc(var(--s) * -1.5);
+  pointer-events: none; opacity: 0; translate: -50% calc(var(--s) * 1.5);
   transition: opacity 320ms var(--ease-enter), translate 320ms var(--ease-enter);
 }
 /* A real element, not a pseudo: the settings bubble's tail has to line up with a
@@ -504,7 +488,7 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
    has no box to read back, so its position could only be argued from the rules
    rather than checked — and the argument was three pixels out. */
 .hint__tail {
-  position: absolute; inset-block-start: -5px; inset-inline-start: calc(50% - 4px);
+  position: absolute; inset-block: auto -5px; inset-inline-start: calc(50% - 4px);
   inline-size: 8px; block-size: 8px;
   background: var(--accent);
   rotate: 45deg;
@@ -528,12 +512,11 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
    left, so a centred bubble lands on the words. Sent to the right, where the
    window carries nothing but its close button. */
 @media (max-width: 899px) {
-  .hint {
-    inset-inline: auto var(--s-4); translate: 0 calc(var(--s) * -1.5);
-    padding-inline: var(--s-3); font-size: 0.75rem;
-  }
-  .hint .hint__tail { inset-inline: auto var(--s-6); }
-  .scene[data-hint="1"] .hint { translate: 0 0; }
+  /* Above the bar, pointing down at it. Below it there is 24px between the bar
+     and the settings window and the bubble is half again that, so it sat across
+     that window's title and its close button. Above, it stands in the padding
+     the desk already keeps clear. */
+  .hint { padding: var(--s-1) var(--s-3); font-size: 0.6875rem; }
   /* One hint at a time on a small screen, and the settings window there is
      taller than the viewport — a bubble at its foot would be shown to nobody. */
   .hint--set { display: none; }
