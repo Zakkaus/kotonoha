@@ -451,7 +451,6 @@ a { color: var(--accent); }
    than the toolbar height it has everywhere else: aligned bottoms with two
    different heights read as one of them being crooked. */
 .swin__fields .cta--sm { flex: none; white-space: nowrap; min-block-size: calc(var(--s) * 8); }
-.ghost--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
 
 /* ---- the search window ------------------------------------------------- */
 .swin {
@@ -723,10 +722,21 @@ section, .foot { scroll-margin-block-start: calc(var(--s) * 6); }
 .cta:active { transform: translateY(1px); }
 .ghost {
   display: inline-flex; align-items: center; gap: var(--s-2); min-block-size: calc(var(--s) * 11);
-  padding-inline: var(--s-4); background: transparent; color: var(--text);
-  border: 1px solid var(--field-edge); border-radius: var(--r-lg); font: inherit; cursor: pointer; text-decoration: none;
+  /* A transparent secondary button beside a filled one reads as disabled on the
+     pale theme, where its only edge is 11% black over a near-white page. It
+     carries the card's own surface instead, which is what every other raised
+     thing on this page stands on. */
+  /* Same padding and same weight as the filled button beside it: the two are
+     one pair, and only the fill should tell them apart. */
+  padding-inline: var(--s-6); background: var(--card-solid); color: var(--text);
+  border: 1px solid var(--field-edge); border-radius: var(--r-lg); font: inherit; font-weight: 600;
+  cursor: pointer; text-decoration: none;
   transition: border-color var(--dur) var(--ease-enter), background-color var(--dur) var(--ease-enter);
 }
+/* After .ghost, not before it: the two carry one class each, so the rule that
+   comes later wins and this variant set nothing at all — the small button was
+   the full height from the day it was written. */
+.ghost--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
 @media (hover: hover) { .ghost:hover { background: var(--field); border-color: var(--text-dim); } }
 /* A label, not a button: filled, square-ish, no border. An outlined pill reads
    as something to press, which is what made these look like stray controls. */
