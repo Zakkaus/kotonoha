@@ -920,6 +920,7 @@
     var g = canvas.getContext("2d");
     var ddpr = Math.min(window.devicePixelRatio || 1, 3);
     var motes = [], hues = [], aim = null, live = false, centre = 0, gather = 0;
+    var sown = 0;
     var pointer = { x: -1e4, y: -1e4 };
 
     function readHues() {
@@ -936,13 +937,25 @@
       // A pinned canvas needs enough flecks for the whole thing it scrolls
       // over, not just for one screen of it.
       var reach = opts.scrollWith ? opts.scrollWith.getBoundingClientRect().height : r.height;
-      seed(r.width, Math.max(r.height, reach));
+      var tall = Math.max(r.height, reach);
+      // A fleck's home is normalised, so it keeps its place through a change of
+      // box and only the number of them depends on the area. Reseeding on every
+      // box change threw the whole field away twice a chorus: a lyric line that
+      // wraps grows the panel, and the hero with it, by two pixels, and the
+      // observer fired. Reseed only when the box genuinely calls for a
+      // different number of flecks.
+      var want = countFor(r.width, tall);
+      if (!motes.length || Math.abs(want - sown) > sown * 0.12) { seed(r.width, tall); }
       centre = r.height / 2;
     }
     // Scatter homes sit on a jittered grid rather than at random points: pure
     // random clumps, and a field that clumps reads as dirt on the screen.
+    function countFor(w, h) {
+      return Math.max(800, Math.min(2600, Math.round((w * h) / 1600)));
+    }
     function seed(w, h) {
-      var count = Math.max(800, Math.min(2600, Math.round((w * h) / 1600)));
+      var count = countFor(w, h);
+      sown = count;
       var cols = Math.max(1, Math.round(Math.sqrt(count * (w / Math.max(h, 1)))));
       var rows = Math.max(1, Math.ceil(count / cols));
       motes = [];
