@@ -659,14 +659,6 @@
      一个点了没有任何反应的按钮，比没有这个按钮更糟。 */
   /* 沉下去只是为了让人第一次注意到它。人一旦动过手，这句话就说完了，
      再沉回去只是每次移开鼠标都闪一下。 */
-  function wakeSceneOnce() {
-    var sceneEl = document.getElementById("scene");
-    if (!sceneEl || sceneEl.dataset.wired === "1") { return; }
-    sceneEl.dataset.wired = "1";
-    ["pointerdown", "keydown"].forEach(function (kind) {
-      sceneEl.addEventListener(kind, function () { sceneEl.dataset.woken = "1"; }, true);
-    });
-  }
 
   function wireOverlayChrome() {
     var lockBtn = document.getElementById("ovlLock");
@@ -1050,7 +1042,6 @@
     demoOverlay();
     panelHint();
     wireOverlayChrome();
-    wakeSceneOnce();
     localeUpdaters.push(function () {
       knav.querySelectorAll("button").forEach(function (b) {
         b._localeLabel.nodeValue = msg("settings." + b.dataset.panel);

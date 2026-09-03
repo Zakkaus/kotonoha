@@ -377,26 +377,6 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
 .lb__list [role="option"][data-active="true"] { background: var(--field); color: var(--text-strong); }
 .lb__list [role="option"][aria-selected="true"] { color: var(--accent); }
 
-/* 这一块是活的，而它画得像一张截图，所以没有人去点。它不写字，也不铺一层
-   东西在上面：静止时略微沉下去，指针进这一块就升起来——一个只有活的东西才会
-   做的动作。碰过一次之后就不再沉回去，那时话已经说完了。
-
-   opacity 而不是 filter: opacity()：窗口自己带 backdrop-filter，在它上面再叠一个
-   滤镜会让合成器在两者之间抖。粗指针上完全不沉——那里没有「靠近」这回事，
-   一直沉着就只是一直暗着。 */
-@media (hover: hover) and (prefers-reduced-motion: no-preference) {
-  .scene:not([data-woken="1"]) .kwin {
-    scale: 0.985; opacity: 0.84;
-    transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter);
-  }
-  .scene:not([data-woken="1"]):hover .kwin { scale: 1; opacity: 1; }
-  .scene[data-woken="1"] .kwin { transition: scale 460ms var(--ease-enter), opacity 460ms var(--ease-enter); }
-  /* One breath of the whole thing — the settings window and the lyric panel
-     above it together, since they are one window on the desktop. Moving only
-     the lyric bar was too small a thing to catch someone who had already
-     decided the panel was a screenshot. */
-}
-
 /* ---- the overlay: centred, four rows, its own dark panel in both themes --- */
 .scene .ovl {
   /* Above the settings window, which is what this layer is on the desktop. The
