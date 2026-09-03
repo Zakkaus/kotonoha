@@ -78,9 +78,7 @@
       "hero.title": "Wayland 桌面歌词",
       "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。",
       "hero.install": "安装",
-      "hero.try": "尝试一下",
-      "hint.drag": "试试拖动歌词栏",
-      "hint.accent": "换个强调色试试",
+      "scene.note": "点击可交互体验",
       "does.follow.a": "浅色 / 深色 / 跟随系统",
       "does.follow.b": "简体 · 繁體 · English",
       "s.search": "搜索窗口",
@@ -124,6 +122,14 @@
       "s.get": "安装",
       "get.lead": "Gentoo 用 <code>gentoo-zh</code>，Arch 用 AUR 的 <code>kotonoha-git</code>，NixOS 用 flake；Debian/Ubuntu 可直接安装 DEB，Fedora 等 RPM 系可安装 RPM，也可以从源码构建。",
       "eb.search": "歌词来源",
+      "ends.try.eb": "可交互",
+      "ends.try.title": "顶部的窗口可以直接操作",
+      "ends.try.lead": "拖动歌词栏改变位置，锁定、点击穿透与设置项即时生效。",
+      "ends.try.go": "尝试一下",
+      "ends.repo.eb": "源码",
+      "ends.repo.title": "源码在 GitHub",
+      "ends.repo.lead": "仓库包含 Wayland 图层、D-Bus 适配与歌词来源的实现。",
+      "ends.repo.go": "在 GitHub 上加星",
       "eb.get": "软件包",
       "copy": "复制",
       "copied": "已复制",
@@ -689,6 +695,27 @@
   // 取样要走 getPointAtLength，一支箭上千个点，每按一次重算会卡一下。
   var arrowCache = {};
 
+  // 把一条路径取样成颗粒的目标点。箭头和下面两块去处共用这一条，
+  // 免得同一件事写两遍。
+  var pathCache = {};
+  function pathPoints(d) {
+    if (pathCache[d]) { return pathCache[d]; }
+    var svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+    svg.setAttribute("viewBox", "0 0 24 24");
+    d.split("|").forEach(function (one) {
+      var p = document.createElementNS("http://www.w3.org/2000/svg", "path");
+      p.setAttribute("d", one);
+      svg.appendChild(p);
+    });
+    // getTotalLength 要求元素在渲染树里，取完样再摘掉。
+    svg.style.cssText = "position:absolute;inline-size:0;block-size:0;overflow:hidden";
+    document.body.append(svg);
+    var pts = glyphOf(svg, "0 0 24 24");
+    svg.remove();
+    pathCache[d] = pts;
+    return pts;
+  }
+
   function arrowPoints(beside) {
     var key = beside ? "beside" : "below";
     if (arrowCache[key]) { return arrowCache[key]; }
@@ -795,102 +822,19 @@
     }, 2600);
   }
 
-  // 提示只在读者还没碰过面板时出现，鼠标一到就撤，撤了不再回来。
-  // 它不拦点击（pointer-events: none），所以它盖住的那块照样能按。
-  var showHints = null;
-
-  function panelHint() {
+  // 读到下面几节的人多半已经滑过了那块面板。这一行把人送回去，等滚动停下
+  // 再把彙集跑一次 —— 跳过去只是到了跟前，指出来才算说完。
+  function backToPanel() {
+    var btn = document.getElementById("tryUp");
     var sceneEl = document.getElementById("scene");
-    var hint = document.getElementById("ovlHint");
-    if (!sceneEl || !hint || sceneEl.dataset.hinted === "1") { return; }
-    sceneEl.dataset.hinted = "1";
-    // 设置那个气泡钉在窗口底部时，换成英文后「Window opacity」折成两行、
-    // 把强调色那排顶了下来，气泡正好盖住它要指的东西。位置改成量出来的：
-    // 贴着卡片最后一行的下沿放，与语言和当前分页都无关。
-    function place() {
-      var set = document.getElementById("setHint");
-      var card = document.getElementById("kcard");
-      var win = card && card.closest(".kwin");
-      if (!set || !card || !win || !card.lastElementChild) { return; }
-      var rows = card.lastElementChild.getBoundingClientRect();
-      var box = win.getBoundingClientRect();
-      var top = rows.bottom - box.top + 12;
-      // 放不下就不放：宁可少说一句，也不要压在它指的那一行上。
-      if (top + set.offsetHeight > box.height - 8) { set.style.display = "none"; return; }
-      set.style.insetBlockStart = top + "px";
-      set.style.insetBlockEnd = "auto";
-      // 气泡挂在选中的那颗色点正下方，尾巴指着它。靠右钉死时，中文那句短，
-      // 气泡够不到色点，尾巴只能夹在胶囊端点上 —— 而胶囊两端是半圆，
-      // 落在圆弧上就成了歪挂在角上。横向位置和尾巴用同一次测量算。
-      // 选中状态记在 aria-pressed 上，不是 aria-checked。写错的那个永远取不到，
-      // 于是一直退回「第一颗」——默认选中的正好是第一颗，所以看不出来，
-      // 而我的验证脚本用了同一个错选择器，自己确认了自己。
-      var dot = card.querySelector('.kdots button[aria-pressed="true"]')
-             || card.querySelector(".kdots button");
-      if (!dot) { return; }
-      var pill = set.getBoundingClientRect();
-      var mid = dot.getBoundingClientRect();
-      var mark = mid.left + mid.width / 2;
-      var pad = 10;
-      var left = Math.min(Math.max(mark - pill.width / 2, box.left + pad),
-                          box.right - pill.width - pad);
-      set.style.insetInlineStart = Math.round(left - box.left) + "px";
-      set.style.insetInlineEnd = "auto";
-      // 放完之后量一次真实位置再纠偏：推出来的坐标和画出来的差了三像素，
-      // 而这一步不需要知道差在哪 —— 它读的是画出来的那个。
-      var tail = document.getElementById("setTail");
-      if (!tail) { return; }
-      var edge = 26;
-      var at = Math.min(Math.max(mark - left, edge), pill.width - edge);
-      tail.style.insetInlineStart = Math.round(at) + "px";
-      tail.style.insetInlineEnd = "auto";
-      var got = tail.getBoundingClientRect();
-      var off = mark - (got.left + got.width / 2);
-      if (Math.abs(off) >= 0.5) {
-        tail.style.insetInlineStart = Math.round(at + off) + "px";
-      }
-    }
-    // 位置量过一次就不能当它永远成立：切语言会把卡片整个重建，换主题、
-    // 改窗口宽度也会让那几行挪位，而气泡还停在旧坐标上。
-    if (window.ResizeObserver) {
-      var card = document.getElementById("kcard");
-      if (card) {
-        new ResizeObserver(function () {
-          if (sceneEl.dataset.hint === "1") { place(); }
-        }).observe(card);
-      }
-    }
-    window.addEventListener("resize", function () {
-      if (sceneEl.dataset.hint === "1") { place(); }
+    if (!btn || !sceneEl || btn.dataset.wired === "1") { return; }
+    btn.dataset.wired = "1";
+    btn.addEventListener("click", function (e) {
+      if (e && e.detail > 0 && btn.blur) { btn.blur(); }
+      var soft = !stillness.matches;
+      sceneEl.scrollIntoView({ behavior: soft ? "smooth" : "auto", block: "center" });
+      setTimeout(arrowPulse, soft ? 700 : 0);
     });
-    function show() {
-      var box = sceneEl.getBoundingClientRect();
-      // 面板不在视野里就不必提示，读者还没走到它跟前。
-      if (box.bottom <= 0 || box.top >= innerHeight) { return; }
-      clearTimeout(dwell);
-      place();
-      sceneEl.dataset.hint = "1";
-    }
-    // 「尝试一下」是「我不知道这块能干嘛」的意思，所以它把提示叫回来，
-    // 哪怕之前已经撤过一次 —— 撤掉恰恰是把这个人最需要的两句话拿走。
-    showHints = show;
-    var timer = setTimeout(show, 1100);
-    var dwell = null;
-    function drop() {
-      clearTimeout(timer);
-      delete sceneEl.dataset.hint;
-    }
-    // 停留才算读到了，路过不算。去右上角切语言的那条路正好横穿这块面板，
-    // 按「进入即撤」的话路过一次提示就没了 —— 若这一下发生在它出现之前，
-    // 它根本不会出现。按下和键盘进入仍然立刻算。
-    sceneEl.addEventListener("pointerenter", function () {
-      clearTimeout(dwell);
-      dwell = setTimeout(drop, 260);
-    });
-    sceneEl.addEventListener("pointerleave", function () { clearTimeout(dwell); });
-    sceneEl.addEventListener("pointerdown", drop);
-    sceneEl.addEventListener("focusin", drop);
-
   }
 
   function demoOverlay() {
@@ -948,8 +892,6 @@
       // 这里不动 woken。那个标记一设上就不再撤，是留给「读者真的碰过面板」
       // 用的；按钮设它等于把悬浮抬起、移开沉回那一套永久关掉。
       arrowPulse();
-      // 按下它的人正是还不知道这块能做什么的人：提示要回来，不是走掉。
-      if (showHints) { showHints(); }
       // 锁上时程序本来就不让拖，演示也不该骗人：先把锁打开，
       // 开锁这一下本身就说明了右上角那几个按钮是活的。
       if (state.lock) { apply1("lock", false); }
@@ -1040,7 +982,7 @@
     reflect();
     dragOverlay();
     demoOverlay();
-    panelHint();
+    backToPanel();
     wireOverlayChrome();
     localeUpdaters.push(function () {
       knav.querySelectorAll("button").forEach(function (b) {
@@ -1310,7 +1252,8 @@
     // Scatter homes sit on a jittered grid rather than at random points: pure
     // random clumps, and a field that clumps reads as dirt on the screen.
     function countFor(w, h) {
-      return Math.max(800, Math.min(2600, Math.round((w * h) / 1600)));
+      // 下限是给整屏宽的场设的；卡片那么小的画布按这个下限播，就成了一锅碎纸。
+      return Math.max(opts.seedMin || 800, Math.min(2600, Math.round((w * h) / 1600)));
     }
     function seed(w, h) {
       var count = countFor(w, h);
@@ -1328,7 +1271,7 @@
           // scatter looks like.
           hx: -0.14 + 1.28 * Math.min(1, Math.max(0, gx + (Math.random() - 0.5) * 2.5 / cols)),
           hy: -0.14 + 1.28 * Math.min(1, Math.max(0, gy + (Math.random() - 0.5) * 2.5 / rows)),
-          len: 7 + Math.random() * 12,
+          len: (7 + Math.random() * 12) * (opts.len || 1),
           a: Math.random() * Math.PI,
           spin: (Math.random() - 0.5) * 0.004,
           alpha: 0.3 + Math.random() * 0.5,
@@ -1371,7 +1314,7 @@
       var half = span * 0.34;
       var oy = Math.min(Math.max(centre, half), h - half) - span / 2;
       g.lineCap = "round";
-      g.lineWidth = 5;
+      g.lineWidth = opts.weight || 5;
       // The scatter needs flecks for the whole scrolled height; the glyph needs
       // far fewer or it packs solid. So a fixed quota draws the shape, cycling
       // through the outline's points, and every fleck outside the quota fades
@@ -1597,6 +1540,40 @@
       }, { rootMargin: "300px" });
       near.observe(host);
     }
+  });
+
+  /* 两个去处各带一块场：指针进来才彙集，离开就散回去。能力那一节是滚到中间
+     就聚，这里是移过去才聚 —— 同一批颗粒、同一个动作，触发的人不同。 */
+  /* 一圈圆角框，不是一个图形：图形有实心的笔画，会从文字和按钮身上穿过去 ——
+     箭头和星都是这样，无论放多大都在字上划一道。框的笔画只走外围，文字落在
+     它围出来的空里，这也正是那张参考图里的做法。 */
+  /* 各聚各的符号：一支指针说「去试」，一颗星说「给星」。框虽然能把文字围住，
+     却把两块的区别一起抹平了 —— 这一节的意思本来就在符号上。 */
+  var ENDS = {
+    endTry: "M3 3 10.07 19.97 12.58 12.58 19.97 10.07Z",
+    endRepo: "M12 2.6 14.9 8.5 21.4 9.4 16.7 14 17.8 20.5 12 17.5 6.2 20.5 7.3 14 2.6 9.4 9.1 8.5Z"
+  };
+  Object.keys(ENDS).forEach(function (id) {
+    var host = document.getElementById(id);
+    var canvas = host && host.querySelector(".end__fx");
+    if (!canvas) { return; }
+    var on = false;
+    var field = dotField(canvas, {
+      // 形状要比这段字大一圈，才像围着它而不是压在它上面；同时点少一些，
+      // 让它读起来是一圈颗粒勾出来的轮廓，不是一团实心。
+      // 细一点短一点：参考里那圈是细点勾出来的，而这一页默认的碎片是 5px 宽、
+      // 最长 19px 的粗划，同样的形状会显得笨重。
+      fill: 0.95, tall: 0.96, quota: 220, shed: 1.5, seedMin: 180, weight: 3, len: 0.5,
+      centreOf: function (c, h) { return { centre: h / 2, ready: on }; }
+    });
+    field.watch(host);
+    // 静止偏好下这片场只在滚动时重画一帧，彙集会变成一次跳变，不如不做。
+    if (stillness.matches) { return; }
+    host.addEventListener("pointerenter", function () {
+      field.setAim(pathPoints(ENDS[id]));
+      on = true;
+    });
+    host.addEventListener("pointerleave", function () { on = false; });
   });
 
   if (capsCanvas) {

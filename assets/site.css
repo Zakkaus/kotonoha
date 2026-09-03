@@ -461,69 +461,67 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
 .ovl[data-grab="1"] { cursor: move; touch-action: none; }
 .ovl[data-grab="1"] .ovl__line, .ovl[data-grab="1"] .ovl__side, .ovl[data-grab="1"] .ovl__sub { user-select: none; }
 
-/* A bubble under the lyric bar saying what can be done to it, which gets out of
-   the way the moment the pointer arrives — a hint that has to be dismissed is a
-   worse hint than none. It hangs off the bar itself, so it travels with it when
-   the bar is dragged, and it never takes a click: the thing behind it is the
-   thing to press. */
-.hint {
-  /* Above the bar, not below it. Below, it hangs over the settings window's
-     title on a wide screen and over its close button on a narrow one; above,
-     it stands in the padding the desk already keeps clear and covers nothing
-     either window is using. */
-  position: absolute; inset-block: auto calc(100% + var(--s-2)); inset-inline-start: 50%;
-  margin: 0; padding: var(--s-2) var(--s-4);
-  /* The page's own voice, not another control on the mock: the same accent
-     pill the install button is, so it reads as the site talking about the
-     window rather than as a white sticker laid on top of it. A card-coloured
-     bubble also stood on the card it points at and disappeared into it. */
-  background: var(--accent); color: var(--on-accent);
-  border: 0; border-radius: var(--r-pill);
-  font-size: 0.8125rem; font-weight: 600; white-space: nowrap;
-  pointer-events: none; opacity: 0; translate: -50% calc(var(--s) * 1.5);
-  transition: opacity 320ms var(--ease-enter), translate 320ms var(--ease-enter);
-}
-/* A real element, not a pseudo: the settings bubble's tail has to line up with a
-   dot that moves, and where it ends up has to be measurable. A pseudo-element
-   has no box to read back, so its position could only be argued from the rules
-   rather than checked — and the argument was three pixels out. */
-.hint__tail {
-  position: absolute; inset-block: auto -5px; inset-inline-start: calc(50% - 4px);
-  inline-size: 8px; block-size: 8px;
-  background: var(--accent);
-  rotate: 45deg;
-}
-.scene[data-hint="1"] .hint { opacity: 1; translate: -50% 0; }
-/* The second one sits in the empty part of the settings card, under the rows
-   and pointing back up at them. It hangs off the window rather than off the
-   card, because the card is rebuilt every time a page in it is opened — the
-   window is the thing that stays. */
-.hint--set {
-  inset-block-start: auto; inset-block-end: var(--s-6);
-  inset-inline: auto var(--s-6); translate: 0 calc(var(--s) * 1.5);
-}
-/* The settings tail stands under the dot it names; the script puts it there,
-   because where that dot falls depends on the language and on the page open in
-   the card. The fallback keeps it clear of the pill's rounded end. */
-.hint--set .hint__tail { inset-inline-start: calc(var(--s) * 9); }
-.scene[data-hint="1"] .hint--set { translate: 0 0; }
+/* 面板下的一行说明，而这一行本身就是触发器：说明和演示是同一个念头，没必要
+   在它旁边再摆一个按钮。气泡这个形式换不掉那股「贴上去的通知」味，因为浮在
+   构图之上正是它的定义；这一页解释一样东西的语言是「东西 + 底下一行字」。
 
-/* Narrow: the window below is only as wide as the bar, and its title is on the
-   left, so a centred bubble lands on the words. Sent to the right, where the
-   window carries nothing but its close button. */
-@media (max-width: 899px) {
-  /* Above the bar, pointing down at it. Below it there is 24px between the bar
-     and the settings window and the bubble is half again that, so it sat across
-     that window's title and its close button. Above, it stands in the padding
-     the desk already keeps clear. */
-  .hint { padding: var(--s-1) var(--s-3); font-size: 0.6875rem; }
-  /* One hint at a time on a small screen, and the settings window there is
-     taller than the viewport — a bubble at its foot would be shown to nobody. */
-  .hint--set { display: none; }
+   它是网格的第三个子元素，默认落到下一格 —— 也就是左栏底下 —— 所以点名第二列；
+   再减掉网格自己的行间距，否则它离面板太远，读起来像下一段的开头。
+   只占自己那几个字：满列宽的按钮，任何一点边或底色都会画成一条横杠。 */
+.scene__note {
+  appearance: none; border: 0; background: none; cursor: pointer;
+  justify-self: center; inline-size: max-content; max-inline-size: 100%;
+  grid-column: 2; margin: calc(var(--s-4) - var(--s-16)) 0 0;
+  padding-inline: var(--s-4); text-align: center;
+  color: var(--accent); font: inherit; font-size: 1rem; font-weight: 600; line-height: 1.5;
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: center;
+  gap: var(--s-1) var(--s-2);
 }
-@media (prefers-reduced-motion: reduce) {
-  .hint { transition: none; translate: -50% 0; }
+/* 悬停给一点回应，但不加下划线：下划线在这一行上读起来像链接，
+   而它指的是旁边那块面板，不是一个要跳过去的地方。 */
+@media (hover: hover) {
+  .scene__note { transition: color var(--dur) var(--ease-enter); }
+  .scene__note:hover { color: var(--accent-soft); }
 }
+/* 图标和它说明的那句话是一个整体：分开当两个 flex 项，窄屏换行时图标会自己
+   占掉一行。 */
+.scene__note-body { display: inline-flex; align-items: center; gap: var(--s-2); }
+.scene__note-icon {
+  flex: none; inline-size: calc(var(--s) * 4); block-size: calc(var(--s) * 4);
+  color: var(--accent);
+}
+@media (max-width: 62rem) {
+  .scene__note { grid-column: auto; margin-block-start: calc(var(--s-4) - var(--s-12)); }
+}
+/* 同一行说明的第二处，但它不在英雄区那张网格里，所以为网格算的那两个值要归位。
+   读到搜索这一节的人多半已经滑过了上面那块面板、没发现它能动 —— 这一行把人送
+   回去，到位之后再把彙集跑一次：跳过去只是到了跟前，指出来才算说完。 */
+/* 入口放在常驻的页首，而不是某一节里的一行：要解决的是「读者根本没发现上面
+   那块能动」，而页首每个滚动位置都看得见。另开一页的话，那一页的内容就是同一
+   块面板的副本，而副本会漂。 */
+/* 两个去处并排。每块自己一块颗粒场，指针进来才在它背后彙集出形状 ——
+   能力那一节是滚到中间就聚，这里是移过去才聚，同一套颗粒、同一种动作。 */
+.ends {
+  display: grid; grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--s-6);
+}
+@media (max-width: 62rem) { .ends { grid-template-columns: minmax(0, 1fr); } }
+.end {
+  position: relative; isolation: isolate;
+  display: grid; place-items: center;
+  /* 上下留够，形状才有地方绕过文字：跨度受卡片高度限制，卡片太矮它就只能
+     压在字上。 */
+  padding: calc(var(--s) * 38) var(--s-8);
+  border-radius: var(--r-2xl);
+}
+.end__fx {
+  position: absolute; inset: 0; z-index: 0;
+  display: block; inline-size: 100%; block-size: 100%; pointer-events: none;
+}
+.end__body { position: relative; z-index: 1; display: grid; justify-items: center; gap: var(--s-3); text-align: center; }
+.end__body .section-lead { margin: 0; max-inline-size: 34ch; }
+.end__body h2 { margin: 0; }
+.end__body .cta, .end__body .ghost { margin-block-start: var(--s-2); }
 
 
 
@@ -803,11 +801,11 @@ section, .foot { scroll-margin-block-start: calc(var(--s) * 6); }
   padding-inline: var(--s-6); background: var(--accent); color: var(--on-accent);
   border: 0; border-radius: var(--r-lg); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
   transition: background-color var(--dur) var(--ease-enter), transform var(--dur) var(--ease-exit);
-}
-/* 和 .ghost--sm 同一个毛病：这条写在 .cta 前面，两条各带一个类、特指度相同，
+}/* 和 .ghost--sm 同一个毛病：这条写在 .cta 前面，两条各带一个类、特指度相同，
    后来的赢，于是这个小尺寸从写下来就没生效过 —— 搜索窗页脚里「应用所选歌词」
    是 44px，紧挨着的「关闭」是 36px。 */
 .cta--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
+
 /* The icon inside had no size at all: nothing on a shrink-to-fit button, where
    it collapsed to 0 and simply never appeared, and 204px on a full-width one,
    where it took the whole button. */
@@ -1227,9 +1225,9 @@ footer { border-block-start: 1px solid var(--card-edge); padding-block: var(--s-
 :root[data-reveal="js"] .rail-body > *:not([data-seen]) {
   opacity: 0; translate: 0 calc(var(--s) * 20);
 }
-/* 面板整块一起出现，不再逐个子元素各自揭示：两层叠在一起时，面板自己已经显形，
-   而它下缘的页脚还在等自己的观察器 —— 于是「应用所选歌词」和「关闭」要等读者
-   再滚一段才补上，而那 16px 的下推还把它们顶出面板、被 overflow 裁掉一截。 */
+/* 面板整块一起出现，不再逐个子元素各自揭示。两层叠在一起时，面板自己已经
+   显形，而它下缘的页脚还在等自己的观察器 —— 于是「应用所选歌词」和「关闭」
+   要等读者再滚一段才补上，看着像面板缺了一角。 */
 
 @keyframes settle {
   from { opacity: 0; translate: 0 calc(var(--s) * 5); }
