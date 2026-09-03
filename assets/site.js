@@ -80,6 +80,8 @@
       "hero.lead": "Kotonoha 通过 D-Bus 读取 MPRIS 播放状态，在 Wayland 图层上显示逐字歌词。支持任意 MPRIS 播放器，无需播放器插件。",
       "hero.install": "安装",
       "hero.try": "尝试一下",
+      "hint.drag": "试试拖动歌词栏",
+      "hint.accent": "换个强调色试试",
       "nav.design": "设计语言",
       "nav.home": "首页",
       "design.title": "网站长得像程序，<br>因为值是同一份。",
@@ -813,6 +815,97 @@
     }, 2600);
   }
 
+  // 提示只在读者还没碰过面板时出现，鼠标一到就撤，撤了不再回来。
+  // 它不拦点击（pointer-events: none），所以它盖住的那块照样能按。
+  function panelHint() {
+    var sceneEl = document.getElementById("scene");
+    var hint = document.getElementById("ovlHint");
+    if (!sceneEl || !hint || sceneEl.dataset.hinted === "1") { return; }
+    sceneEl.dataset.hinted = "1";
+    // 设置那个气泡钉在窗口底部时，换成英文后「Window opacity」折成两行、
+    // 把强调色那排顶了下来，气泡正好盖住它要指的东西。位置改成量出来的：
+    // 贴着卡片最后一行的下沿放，与语言和当前分页都无关。
+    function place() {
+      var set = document.getElementById("setHint");
+      var card = document.getElementById("kcard");
+      var win = card && card.closest(".kwin");
+      if (!set || !card || !win || !card.lastElementChild) { return; }
+      var rows = card.lastElementChild.getBoundingClientRect();
+      var box = win.getBoundingClientRect();
+      var top = rows.bottom - box.top + 12;
+      // 放不下就不放：宁可少说一句，也不要压在它指的那一行上。
+      if (top + set.offsetHeight > box.height - 8) { set.style.display = "none"; return; }
+      set.style.insetBlockStart = top + "px";
+      set.style.insetBlockEnd = "auto";
+      // 气泡挂在选中的那颗色点正下方，尾巴指着它。靠右钉死时，中文那句短，
+      // 气泡够不到色点，尾巴只能夹在胶囊端点上 —— 而胶囊两端是半圆，
+      // 落在圆弧上就成了歪挂在角上。横向位置和尾巴用同一次测量算。
+      // 选中状态记在 aria-pressed 上，不是 aria-checked。写错的那个永远取不到，
+      // 于是一直退回「第一颗」——默认选中的正好是第一颗，所以看不出来，
+      // 而我的验证脚本用了同一个错选择器，自己确认了自己。
+      var dot = card.querySelector('.kdots button[aria-pressed="true"]')
+             || card.querySelector(".kdots button");
+      if (!dot) { return; }
+      var pill = set.getBoundingClientRect();
+      var mid = dot.getBoundingClientRect();
+      var mark = mid.left + mid.width / 2;
+      var pad = 10;
+      var left = Math.min(Math.max(mark - pill.width / 2, box.left + pad),
+                          box.right - pill.width - pad);
+      set.style.insetInlineStart = Math.round(left - box.left) + "px";
+      set.style.insetInlineEnd = "auto";
+      // 放完之后量一次真实位置再纠偏：推出来的坐标和画出来的差了三像素，
+      // 而这一步不需要知道差在哪 —— 它读的是画出来的那个。
+      var tail = document.getElementById("setTail");
+      if (!tail) { return; }
+      var edge = 26;
+      var at = Math.min(Math.max(mark - left, edge), pill.width - edge);
+      tail.style.insetInlineStart = Math.round(at) + "px";
+      tail.style.insetInlineEnd = "auto";
+      var got = tail.getBoundingClientRect();
+      var off = mark - (got.left + got.width / 2);
+      if (Math.abs(off) >= 0.5) {
+        tail.style.insetInlineStart = Math.round(at + off) + "px";
+      }
+    }
+    // 位置量过一次就不能当它永远成立：切语言会把卡片整个重建，换主题、
+    // 改窗口宽度也会让那几行挪位，而气泡还停在旧坐标上。
+    if (window.ResizeObserver) {
+      var card = document.getElementById("kcard");
+      if (card) {
+        new ResizeObserver(function () {
+          if (sceneEl.dataset.hint === "1") { place(); }
+        }).observe(card);
+      }
+    }
+    window.addEventListener("resize", function () {
+      if (sceneEl.dataset.hint === "1") { place(); }
+    });
+    var timer = setTimeout(function () {
+      // 面板不在视野里就不必提示，读者还没走到它跟前。
+      var box = sceneEl.getBoundingClientRect();
+      if (box.bottom > 0 && box.top < innerHeight) { place(); sceneEl.dataset.hint = "1"; }
+    }, 1100);
+    function drop() {
+      clearTimeout(timer);
+      delete sceneEl.dataset.hint;
+    }
+    // 停留才算读到了，路过不算。去右上角切语言的那条路正好横穿这块面板，
+    // 按「进入即撤」的话路过一次提示就没了 —— 若这一下发生在它出现之前，
+    // 它根本不会出现。按下和键盘进入仍然立刻算。
+    var dwell = null;
+    sceneEl.addEventListener("pointerenter", function () {
+      clearTimeout(dwell);
+      dwell = setTimeout(drop, 260);
+    });
+    sceneEl.addEventListener("pointerleave", function () { clearTimeout(dwell); });
+    sceneEl.addEventListener("pointerdown", drop);
+    sceneEl.addEventListener("focusin", drop);
+    // 按了「尝试一下」也算说过了。
+    var btn = document.getElementById("tryIt");
+    if (btn) { btn.addEventListener("click", drop, { once: true }); }
+  }
+
   function demoOverlay() {
     var btn = document.getElementById("tryIt");
     var ovlEl = document.getElementById("ovl");
@@ -958,6 +1051,7 @@
     reflect();
     dragOverlay();
     demoOverlay();
+    panelHint();
     wireOverlayChrome();
     wakeSceneOnce();
     localeUpdaters.push(function () {
