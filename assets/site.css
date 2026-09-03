@@ -391,7 +391,12 @@ a { color: var(--accent); }
 #ovlPlay[aria-pressed="true"] { color: var(--ovl-dim); }
 #ovlPlay[aria-pressed="true"] .i-play, #ovlPlay[aria-pressed="false"] .i-pause { display: none; }
 @media (hover: hover) { .ovl__ic:hover { color: var(--ovl-text); background: var(--ovl-hover); } }
-.ovl__side { margin: 0; color: var(--ovl-dim); font-size: 0.8125rem; min-block-size: 1.5em; }
+/* An empty neighbour still holds its row. Reserving 1.5em instead of the
+   line box itself left the placeholder 2.5px short of a filled one, so the
+   panel changed height at the first and last line of the loop — and the
+   hero with it, which resized the canvas behind the whole page twice a
+   chorus. `1lh` is that row whatever is in it. */
+.ovl__side { margin: 0; color: var(--ovl-dim); font-size: 0.8125rem; min-block-size: 1lh; }
 .ovl__line {
   margin: var(--s-2) 0 var(--s-1); display: block;
   font-size: var(--ovl-size, 1.5rem); font-weight: var(--ovl-weight, 650);
