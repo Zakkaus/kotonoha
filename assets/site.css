@@ -602,7 +602,6 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
 .conf[data-c="none"] { color: var(--chip-text); background: var(--chip); }
 .swin__foot { display: flex; align-items: center; gap: var(--s-4); padding: var(--s-4) var(--s-6); border-block-start: 1px solid var(--card-edge); }
 .swin__foot span { flex: 1; color: var(--text-dim); font-size: 0.8125rem; }
-.cta--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
 
 /* ---- install: one switcher feeding one block ---------------------------- */
 .get { margin-block-start: var(--s-8); background: var(--card-solid); border: 1px solid var(--card-edge); border-radius: var(--r-xl); overflow: hidden; }
@@ -805,6 +804,10 @@ section, .foot { scroll-margin-block-start: calc(var(--s) * 6); }
   border: 0; border-radius: var(--r-lg); font: inherit; font-weight: 600; cursor: pointer; text-decoration: none;
   transition: background-color var(--dur) var(--ease-enter), transform var(--dur) var(--ease-exit);
 }
+/* 和 .ghost--sm 同一个毛病：这条写在 .cta 前面，两条各带一个类、特指度相同，
+   后来的赢，于是这个小尺寸从写下来就没生效过 —— 搜索窗页脚里「应用所选歌词」
+   是 44px，紧挨着的「关闭」是 36px。 */
+.cta--sm { min-block-size: calc(var(--s) * 9); padding-inline: var(--s-4); font-size: 0.8125rem; }
 /* The icon inside had no size at all: nothing on a shrink-to-fit button, where
    it collapsed to 0 and simply never appeared, and 204px on a full-width one,
    where it took the whole button. */
