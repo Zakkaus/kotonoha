@@ -3,6 +3,25 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<script>
+  /* The markup is the source catalogue, so a reader who chose another language
+     was shown Chinese for one frame every visit: the page paints, then the
+     script reads the choice, then it fetches. Not a slow fetch — the file came
+     back in 32ms — an order of events. This starts the fetch while the rest of
+     the head is still parsing, and marks the page so the first paint leaves the
+     translated text blank instead of wrong. */
+  (function () {
+    var loc;
+    try { loc = localStorage.getItem("kotonoha-site-locale"); } catch (e) { return; }
+    if (!loc || loc === "zh-Hans" || !/^[\w-]+$/.test(loc)) { return; }
+    document.documentElement.dataset.langPending = "1";
+    window.__locale = { at: loc, table: fetch("assets/i18n/" + loc + ".json")
+      .then(function (r) { return r.ok ? r.json() : {}; })
+      .catch(function () { return {}; }) };
+    /* Never leave the words blank on a fetch that hangs: worse than wrong. */
+    setTimeout(function () { delete document.documentElement.dataset.langPending; }, 1500);
+  })();
+</script>
 <title data-i18n="site.title">Kotonoha — Wayland 桌面歌词</title>
 <meta name="description" content="Kotonoha：Wayland 桌面歌词，支持任意 MPRIS 播放器，无需播放器插件。" data-i18n-content="site.description">
 <link rel="icon" href="assets/leaf-pink.svg" type="image/svg+xml">
