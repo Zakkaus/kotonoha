@@ -269,7 +269,6 @@
     el.addEventListener("pointerleave", function () { onMove(el, 0.5, 0.5); });
   }
 
-
   /* ---- the overlay demo: one timeline, two lyric shapes ------------------
      The word-timed source carries a start for every word, the line-timed one
      carries a start per line. Same player, same clock; what differs is how
@@ -395,9 +394,7 @@
     requestAnimationFrame(tick);
   }
 
-
   /* ---- the stack: click a window to bring it forward, tilt with the pointer */
-
 
   /* ---- the settings window drives the overlay, the way it does in the program.
      Panels are data: adding one is a row here, not a branch anywhere else. ---- */
@@ -493,7 +490,6 @@
     }
     return row;
   }
-
 
   /* A listbox drawn here rather than a native <select>: the browser's own popup
      is painted by the platform, so no stylesheet reaches it and the demo window
@@ -893,9 +889,7 @@
     sceneEl.addEventListener("pointerleave", function () { clearTimeout(dwell); });
     sceneEl.addEventListener("pointerdown", drop);
     sceneEl.addEventListener("focusin", drop);
-    // 按了「尝试一下」也算说过了。
-    var btn = document.getElementById("tryIt");
-    if (btn) { btn.addEventListener("click", drop, { once: true }); }
+
   }
 
   function demoOverlay() {
@@ -1054,7 +1048,6 @@
     });
   }
 
-
   /* ---- install: one switcher, one block. Commands are the README's, verbatim.
      A second level appears only where a distribution really has two right
      answers, which here is the AUR helper. ---------------------------------- */
@@ -1099,7 +1092,6 @@
       noteKey: "get.source.note",
       cmd: "# Arch\nsudo pacman -S cmake qt6-base qt6-wayland layer-shell-qt\n# Gentoo\nsudo emerge -a dev-build/cmake kde-plasma/layer-shell-qt dev-qt/qtwayland\n\ngit clone https://github.com/locez/kotonoha.git\ncd kotonoha\nuv sync\nuv run kotonoha" }
   ];
-
 
   var getTabs = document.getElementById("getTabs");
   if (getTabs) {
@@ -1208,7 +1200,6 @@
       }
     });
   }
-
 
   /* ---- entry ------------------------------------------------------------
      One mechanism for every browser: an observer marks a block seen and the
@@ -1629,7 +1620,6 @@
     }, { passive: true });
     drift();
   }
-
 
   /* ---- the search window ------------------------------------------------
      Sorting is the point of this demo: neither column sorts on what it shows.
