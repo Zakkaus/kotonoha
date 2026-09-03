@@ -528,12 +528,19 @@ html[data-lang-pending="1"] [data-i18n] { color: transparent; }
    left, so a centred bubble lands on the words. Sent to the right, where the
    window carries nothing but its close button. */
 @media (max-width: 899px) {
+  /* Above the bar, pointing down at it. Below it there is 24px between the bar
+     and the settings window and the bubble is half again that, so it sat across
+     that window's title and its close button. Above, it stands in the padding
+     the desk already keeps clear. */
   .hint {
-    inset-inline: auto var(--s-4); translate: 0 calc(var(--s) * -1.5);
-    padding-inline: var(--s-3); font-size: 0.75rem;
+    inset-block: auto calc(100% + var(--s-1));
+    inset-inline: 50% auto; translate: -50% calc(var(--s) * 1.5);
+    padding: var(--s-1) var(--s-3); font-size: 0.6875rem;
   }
-  .hint .hint__tail { inset-inline: auto var(--s-6); }
-  .scene[data-hint="1"] .hint { translate: 0 0; }
+  .hint .hint__tail {
+    inset-block: auto -5px; inset-inline-start: calc(50% - 4px);
+  }
+  .scene[data-hint="1"] .hint { translate: -50% 0; }
   /* One hint at a time on a small screen, and the settings window there is
      taller than the viewport — a bubble at its foot would be shown to nobody. */
   .hint--set { display: none; }
