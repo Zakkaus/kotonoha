@@ -865,7 +865,8 @@
       if (e && e.detail > 0 && btn.blur) { btn.blur(); }
       if (running) { return; }
       running = true;
-      sceneEl.dataset.woken = "1";
+      // 这里不动 woken。那个标记一设上就不再撤，是留给「读者真的碰过面板」
+      // 用的；按钮设它等于把悬浮抬起、移开沉回那一套永久关掉。
       arrowPulse();
       // 锁上时程序本来就不让拖，演示也不该骗人：先把锁打开，
       // 开锁这一下本身就说明了右上角那几个按钮是活的。
