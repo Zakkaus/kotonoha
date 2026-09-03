@@ -184,6 +184,12 @@
   }
   function loadLocale(loc, then) {
     if (loc === SOURCE || MESSAGES[loc]) { then(); return; }
+    // head 里可能已经把这一份发出去了，再要一次就是白白多走一个来回。
+    var early = window.__locale;
+    if (early && early.at === loc) {
+      early.table.then(function (table) { MESSAGES[loc] = table; then(); });
+      return;
+    }
     fetch("assets/i18n/" + loc + ".json")
       .then(function (r) { return r.ok ? r.json() : {}; })
       .then(function (table) { MESSAGES[loc] = table; then(); },
@@ -216,6 +222,8 @@
       b.setAttribute("aria-pressed", String(b.dataset.lang === loc));
     });
     localeUpdaters.forEach(function (update) { update(); });
+    // 第一帧把译文留白而不是画错的那份，画完就撤掉这个标记。
+    delete root.dataset.langPending;
     try { localStorage.setItem("kotonoha-site-locale", loc); } catch (e) {}
   }
   document.querySelectorAll("#langSeg button").forEach(function (b) {
